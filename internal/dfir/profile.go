@@ -36,6 +36,21 @@ type Profile struct {
 	// Category loosely groups profiles for listing/documentation, e.g.
 	// "triage", "ransomware", "ioc", "timeline".
 	Category string `yaml:"category"`
+
+	// RiskLevel classifies the sensitivity of the profile. Supported
+	// values are "low", "medium", and "high".
+	RiskLevel string `yaml:"risk_level"`
+
+	// RequiresApproval states whether this profile needs explicit approval
+	// before use in collection/hunt workflows.
+	RequiresApproval bool `yaml:"requires_approval"`
+
+	// MaxRuntimeSeconds, MaxResultRows, and MaxResultBytes bound profile
+	// execution and returned data volume when future collection/hunt tools
+	// apply the profile metadata.
+	MaxRuntimeSeconds int   `yaml:"max_runtime_seconds"`
+	MaxResultRows     int   `yaml:"max_result_rows"`
+	MaxResultBytes    int64 `yaml:"max_result_bytes"`
 }
 
 // ProfileArtifact is one artifact entry within a profile, with any fixed

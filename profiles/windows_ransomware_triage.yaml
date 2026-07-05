@@ -24,6 +24,11 @@ description: >
   connections.
 target_os: windows
 category: ransomware
+risk_level: high
+requires_approval: true
+max_runtime_seconds: 300
+max_result_rows: 1000
+max_result_bytes: 5242880
 artifacts:
   - name: Generic.Client.Info
   - name: Windows.System.Pslist
