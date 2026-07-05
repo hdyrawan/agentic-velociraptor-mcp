@@ -1,0 +1,284 @@
+# Security model
+
+Status: draft. This document is the canonical statement of the threat
+model and controls; keep it in sync as tools are implemented.
+
+## Premise
+
+Velociraptor is a highly privileged DFIR backend: it can read arbitrary
+files, list processes, and (depending on artifact) execute commands on
+every enrolled endpoint. An MCP server that exposes Velociraptor to an
+LLM-driven agent is exposing a very large blast radius if it gets this
+wrong. Two premises drive every design decision in this repository:
+
+1. **The MCP server must not be the only security boundary.**
+   Velociraptor-native controls (API client ACLs, artifact-level
+   permissions) are the primary boundary. MCP-layer policy
+   (`internal/policy`), approval (`internal/approval`), and validation
+   (`internal/validation`) are a second, independent layer on top —
+   not a replacement.
+2. **Agents are not trusted, and endpoints are not trusted either.**
+   An MCP client (agent) may be manipulated by prompt injection from
+   data it reads elsewhere. Tool responses must not overstate what an
+   endpoint reports: a compromised, disabled, or misconfigured
+   Velociraptor client can return incomplete or actively misleading
+   data, and tool responses should say so rather than imply
+   ground truth.
+
+## Trust boundaries
+
+```
+Untrusted: MCP client / agent input (tool arguments, free text)
+   |
+   v
+Boundary 1: internal/validation  — syntactic allowlisting of every input
+   |
+   v
+Boundary 2: internal/policy      — artifact/profile allowlists, mode
+   |                                (read_only vs controlled), target-all
+   |                                gating, raw VQL always denied
+   v
+Boundary 3: internal/approval    — human sign-off for write-capable ops,
+   |                                tied to case ID + reason
+   v
+Boundary 4: internal/velociraptor — split read/write mTLS identities
+   |
+   v
+Boundary 5 (primary): Velociraptor server-side ACLs on each API identity
+   |
+   v
+Endpoints (untrusted data source — see "evidence honesty" below)
+```
+
+Boundaries 1–4 are this project's responsibility. Boundary 5 is operator
+responsibility, documented in
+[velociraptor-permissions.md](velociraptor-permissions.md), and is the
+one that must hold even if 1–4 have a bug.
+
+## Why no raw VQL, ever, in the stable core
+
+VQL is a full query language with plugins that can read files, execute
+processes, and write to disk depending on which Velociraptor plugins the
+API identity's ACLs permit. A `run_vql` tool with any non-trivial ACL
+set is a generic remote command execution primitive wrapped in MCP
+framing. Restricting *which* VQL strings an agent can submit (e.g. via
+a blocklist of dangerous plugins) is a losing pattern — blocklists over
+an expressive query language are bypassable. The stable core therefore
+never accepts caller-supplied VQL text at all: every operation maps to a
+pre-authored, reviewed Velociraptor artifact or a fixed internal
+template (`internal/vql`), invoked with bound parameters.
+
+## Why not hidden/obscure artifacts as a control
+
+"Security by artifact-name obscurity" (relying on an agent not knowing
+an artifact exists) is not a control. Every artifact reachable by any
+tool must be in the explicit `policy.allowed_artifacts` allowlist,
+reviewed the same way regardless of how likely an agent is to guess its
+name.
+
+## Approval model
+
+See [approval-flow.md](approval-flow.md) for the full workflow. Summary
+invariant: any operation that changes endpoint state (collection start,
+hunt start/cancel, flow cancel) or discloses raw evidence bytes (upload
+download) must have a corresponding, matching, single-use
+`approval.Decision` before `internal/velociraptor`'s write-identity
+client is called. The requesting agent/session must not be able to
+self-approve.
+
+## Least privilege for the MCP API identities
+
+Neither the read nor the write API identity may hold:
+
+- `administrator`
+- `ARTIFACT_WRITER`
+- `SERVER_ARTIFACT_WRITER`
+- `EXECVE`
+- `FILESYSTEM_WRITE`
+- `SERVER_ADMIN`
+
+See [velociraptor-permissions.md](velociraptor-permissions.md) for the
+full recommended ACL set per identity and the reasoning per excluded
+permission.
+
+## Secrets handling
+
+API config files (`read_api_config_path`, `write_api_config_path`)
+contain client private keys and certificates and must be treated as
+secrets: filesystem permissions restricting access to the service
+account only, never logged, never included in audit events or error
+messages. `internal/audit/sanitize.go` is the single choke point
+responsible for redacting `client_private_key`, `client_cert`,
+`ca_certificate`, `api_key`, `approval_token`, `password`, and `secret`
+fields (configurable, additive, via `audit.redact_fields`) from every
+audit event before it is written.
+
+As of v0.1.0-alpha.2, `read_api_config_path` is actually loaded and
+used (`internal/velociraptor.LoadAPIConfig` /
+`internal/velociraptor/grpcclient.go`). Several layers enforce the
+"never logged" requirement for this specific file, independent of the
+audit sanitizer above (which operates on structured `audit.Event`
+fields, not on this struct):
+
+- `LoadAPIConfig` refuses to read a file that is group/other
+  readable/writable on POSIX platforms (must be `chmod 0600` or
+  stricter) — a defense against the file being left accidentally
+  world-readable, not just a logging concern.
+- `APIConfig.String()` and `APIConfig.GoString()` are hard-coded to a
+  fixed redacted string, so passing an `APIConfig` value to `fmt`,
+  `log`, or an `%v`/`%+v`-formatted error can never print key material,
+  regardless of who writes that code in the future.
+- `internal/velociraptor.sanitizeTLSError` strips anything that looks
+  like a PEM block (`-----BEGIN`) out of gRPC/TLS error text before it
+  reaches `velo_health_check`'s output or the audit log, as a
+  belt-and-suspenders measure — standard library TLS/x509 errors don't
+  actually embed key bytes, but a health-check error message is exactly
+  the kind of string that tends to get pasted into a ticket or chat
+  without a second thought.
+- Error messages about a bad API config file **do** include the file
+  *path* (an operator-supplied, non-sensitive location string) — only
+  the file's *contents* are treated as secret.
+
+## Evidence honesty
+
+Tool response text must not claim more certainty than the underlying
+Velociraptor data supports. Concretely:
+
+- Result-set responses must state when results were truncated by
+  `max_rows`/`max_result_bytes`, not silently present a partial view as
+  complete.
+- Absence of a finding (e.g. "no persistence artifacts found") must be
+  phrased as "the endpoint did not report X in the collected data,"
+  not "the endpoint has no X" — the client agent may be offline,
+  compromised, or the collection may have failed partially.
+- Flow/hunt status responses should surface `error`/`cancelled` states
+  plainly rather than only reporting rows returned.
+- `velo_health_check` (v0.1.0-alpha.2) is the first concrete example of
+  this principle: a real-mode health check that fails to reach
+  Velociraptor returns `velociraptor_connected: false` with a
+  `status: "error"` and an explanatory message as a normal, successful
+  tool result — not a Go-level tool error — because "Velociraptor is
+  unreachable" is data the caller asked for, not a failure of the
+  health-check tool itself. A mock-mode response never claims
+  `velociraptor_connected: true`.
+
+## Dependency surface: no upstream Velociraptor server module
+
+The real gRPC client added in v0.1.0-alpha.2 does not import
+`github.com/Velocidex/velociraptor` (the upstream server's own Go
+module). That module is an entire DFIR server — CGO dependencies,
+YARA/Capstone bindings, a datastore layer, VQL execution engine, and
+dozens of unrelated gRPC services — none of which this project needs or
+wants in its dependency tree or binary. Pulling it in would mean this
+project's supply-chain surface includes code paths (arbitrary VQL
+execution, artifact writing, server administration) that everything
+else in this document argues against exposing at all.
+
+Instead, `internal/velociraptor/veloapi/health.proto` is a small,
+hand-authored `.proto` file defining only the one RPC this project
+calls (`API.Check`), with field names, field numbers, and
+package/service names copied from upstream's own
+`api/proto/health.proto` and `api/proto/api.proto` so the generated
+client is wire-compatible with a real Velociraptor server. It's compiled
+with `buf` + `protoc-gen-go`/`protoc-gen-go-grpc` (see the comment at
+the top of `health.proto` for the regeneration command) into ordinary,
+auditable generated Go code — not hand-rolled wire encoding. Extending
+this project to a new RPC (e.g. a real `Query` call, if that's ever
+justified for a specific, reviewed reason) means adding the specific
+message/service definitions needed for that one call, not vendoring the
+upstream module.
+
+## Out of scope for this MCP server (by design)
+
+- Generic remote command execution / shell (no `run_vql`, no arbitrary
+  process-execution tool).
+- Acting as the sole authorization boundary — operators must still
+  configure least-privilege Velociraptor ACLs.
+- HTTP/SSE transports before stdio is stable and explicitly requested;
+  see PROJECT_PLAN.md.
+
+## MCP-specific security practices
+
+These follow the Model Context Protocol's own security guidance, layered
+on top of the Velociraptor-specific controls above. As of
+v0.1.0-alpha.1, `internal/mcpserver` implements the transport and
+tool-minimization items below; the rest (approval binding, HTTP-mode
+authorization) are forward-looking constraints on future milestones and
+are recorded here so they aren't relitigated when v0.2.0/HTTP-mode work
+starts.
+
+### Transport: stdio only, for now
+
+The server only supports the stdio transport
+(`internal/mcpserver.Server.Run` calls `mcp.StdioTransport{}` exclusively).
+There is no HTTP/SSE/streamable HTTP listener, so there is no network
+attack surface to reason about yet. See
+[PROJECT_PLAN.md](../PROJECT_PLAN.md)'s "MCP Security Best-Practice
+Integration" section for the authorization/binding requirements any
+future HTTP transport must satisfy before it ships, and note in
+particular: **session IDs must never be treated as authentication or
+authorization**, even once a session-oriented transport exists.
+
+### No credential passthrough
+
+No MCP tool accepts Velociraptor API keys, client certificates, private
+keys, bearer tokens, or raw `api.config.yaml` contents as an argument.
+Velociraptor credentials are exclusively server-side secrets, loaded
+once at startup from `velociraptor.read_api_config_path` /
+`write_api_config_path` (see [configuration.md](configuration.md)). An
+MCP client can request *that an operation happen*; it can never supply
+*which credential* performs it. This also means a malicious or
+compromised MCP client cannot exfiltrate Velociraptor credentials
+through a tool call, because no code path ever accepts them as input in
+the first place.
+
+### No arbitrary URL fetching
+
+No tool in the stable core fetches a caller-supplied URL. Every tool's
+network behavior is bounded to a single, statically configured
+Velociraptor server per (`read_api_config_path` /
+`write_api_config_path`); nothing in a tool's arguments can redirect a
+call elsewhere. This forecloses the common MCP-server SSRF pattern
+where an agent is tricked into making the server fetch an
+attacker-controlled URL.
+
+### Unimplemented tools are never registered
+
+`internal/mcpserver` only calls `mcp.AddTool` for tools that are fully
+implemented and reviewed for the current milestone —
+`registerVisibilityTools` and `registerProfileTools` as of
+v0.1.0-alpha.1. The other 20 planned tools exist only as `ToolSpec`
+metadata in `tools_flows.go`, `tools_collection.go`, `tools_hunts.go`,
+and `tools_ioc.go` (used for `docs/tool-reference.md` generation) and
+are not reachable by any MCP client — confirmed in
+`internal/mcpserver/server_test.go`'s exact-tool-inventory test. A
+planned tool becomes callable only when its milestone lands with real
+validation, policy, and (where required) approval wiring, not when its
+metadata is added.
+
+### Confused-deputy mitigation for future approval-gated tools
+
+None of the 4 tools registered in this milestone require approval. For
+the approval-gated tools coming in v0.2.0+ (collection, hunt
+start/cancel, flow cancel, upload download), `internal/approval`'s
+design already anticipates this: `approval.RequestFingerprint` hashes
+the security-relevant fields of a `Request` (operation, case ID,
+client/artifact/profile/hunt/flow), and a tool handler must recompute
+this fingerprint for the operation it is about to perform and confirm it
+matches the fingerprint of the *approved* request before calling
+Velociraptor. An approval is a grant for one exact, hashed payload — not
+a standing grant of "this operation category is now approved." See
+[approval-flow.md](approval-flow.md).
+
+### Tool and scope minimization is intentional
+
+The stable core deliberately exposes 24 narrow tools rather than a small
+number of broad, parameterizable ones (and no raw-VQL escape hatch at
+all). This milestone goes further: only 4 of those 24 are registered at
+all. Minimizing the callable surface at every point in time — not just
+in the final v1.0.0 design — reduces both the attack surface and the
+chance an agent misuses a capability it didn't need for the task at
+hand. When a future HTTP/remote transport is added, this same principle
+should extend to authorization scopes (see PROJECT_PLAN.md's scope list,
+e.g. `velo:read`, `velo:profiles:read`) rather than an all-or-nothing
+API token.

@@ -1,0 +1,23 @@
+# DFIR profile: linux_basic_triage
+#
+# Baseline first-look triage for a single Linux endpoint: process list,
+# network connections, and client metadata.
+#
+# NOTE: artifact names below are illustrative and must be verified
+# against the artifact catalog of the target Velociraptor
+# server/version (via velo_list_artifact_names once implemented) before
+# being added to policy.allowed_artifacts.
+#
+# Status: definition only. No tool collects this yet (see
+# PROJECT_PLAN.md v0.2.0/v0.4.0).
+name: linux_basic_triage
+display_name: "Linux Basic Triage"
+description: >
+  Initial triage snapshot of a Linux endpoint: identity, running
+  processes, and active network connections.
+target_os: linux
+category: triage
+artifacts:
+  - name: Generic.Client.Info
+  - name: Linux.Sys.Pslist
+  - name: Linux.Network.Netstat

@@ -1,0 +1,33 @@
+# DFIR profile: windows_ransomware_triage
+#
+# Ransomware-focused triage for a single Windows endpoint: process list,
+# recently modified/encrypted files, persistence locations commonly
+# abused by ransomware, and network connections.
+#
+# NOTE: the artifacts below are NOT all present in the default
+# policy.allowed_artifacts in config.Default(). An operator must
+# explicitly add each one to allowed_artifacts before this profile can
+# pass internal/dfir.ValidateProfile / be used by any tool. This is
+# intentional: expanding the allowlist is a reviewed, deliberate action,
+# not a side effect of adding a profile file.
+#
+# Status: definition only. No tool collects this yet (see
+# PROJECT_PLAN.md v0.2.0/v0.4.0). Artifact names below are illustrative
+# and must be verified against the artifact catalog of the target
+# Velociraptor server/version (via velo_list_artifact_names once
+# implemented) before being added to policy.allowed_artifacts.
+name: windows_ransomware_triage
+display_name: "Windows Ransomware Triage"
+description: >
+  Triage snapshot focused on ransomware indicators: running processes,
+  recently modified files, common persistence locations, and network
+  connections.
+target_os: windows
+category: ransomware
+artifacts:
+  - name: Generic.Client.Info
+  - name: Windows.System.Pslist
+  - name: Windows.Network.Netstat
+  - name: Windows.Detection.RecentlyModifiedFiles
+  - name: Windows.Sys.StartupItems
+  - name: Windows.Registry.RunMRU

@@ -1,0 +1,20 @@
+# DFIR profile: windows_basic_triage
+#
+# Baseline first-look triage for a single Windows endpoint: process
+# list, network connections, and client metadata. Every artifact below
+# must also be present in policy.allowed_artifacts before this profile
+# can be used; see internal/dfir/validate.go.
+#
+# Status: definition only. No tool collects this yet (see
+# PROJECT_PLAN.md v0.2.0/v0.4.0).
+name: windows_basic_triage
+display_name: "Windows Basic Triage"
+description: >
+  Initial triage snapshot of a Windows endpoint: identity, running
+  processes, and active network connections.
+target_os: windows
+category: triage
+artifacts:
+  - name: Generic.Client.Info
+  - name: Windows.System.Pslist
+  - name: Windows.Network.Netstat
