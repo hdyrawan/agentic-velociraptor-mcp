@@ -2,11 +2,13 @@ package mcpserver
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/hdyrawan/agentic-velociraptor-mcp/internal/audit"
+	"github.com/hdyrawan/agentic-velociraptor-mcp/internal/response"
 	"github.com/hdyrawan/agentic-velociraptor-mcp/internal/validation"
 	"github.com/hdyrawan/agentic-velociraptor-mcp/internal/velociraptor"
 )
@@ -214,11 +216,13 @@ type SearchClientsInput struct {
 // SearchClientsOutput reports results plus, honestly, whether this was a
 // real Velociraptor call at all (see HealthCheckOutput's doc comment for
 // why Mode/Message exist even on a tool whose "normal" response is a
-// data list).
+// data list). The embedded response.Result carries the v0.2.0 status
+// envelope (success/empty/error) so callers can branch on Status instead
+// of string-matching Message; see internal/response's doc comment.
 type SearchClientsOutput struct {
+	response.Result
 	Mode    string                `json:"mode"`
 	Clients []ClientSummaryOutput `json:"clients"`
-	Message string                `json:"message,omitempty"`
 }
 
 func newSearchClientsHandler(deps Deps) mcp.ToolHandlerFor[SearchClientsInput, SearchClientsOutput] {
@@ -239,9 +243,9 @@ func newSearchClientsHandler(deps Deps) mcp.ToolHandlerFor[SearchClientsInput, S
 				Reason:  "mock mode, no Velociraptor call made",
 			})
 			return nil, SearchClientsOutput{
+				Result:  response.Success("MCP server is running in mock mode (velociraptor.read_api_config_path is not configured); no Velociraptor call was made"),
 				Mode:    VelociraptorModeMock,
 				Clients: []ClientSummaryOutput{},
-				Message: "MCP server is running in mock mode (velociraptor.read_api_config_path is not configured); no Velociraptor call was made",
 			}, nil
 		}
 
@@ -252,9 +256,9 @@ func newSearchClientsHandler(deps Deps) mcp.ToolHandlerFor[SearchClientsInput, S
 				Reason:  "VelociraptorReadMode is real but ReadClient is nil",
 			})
 			return nil, SearchClientsOutput{
+				Result:  response.Error("real mode is configured but no Velociraptor client is available"),
 				Mode:    VelociraptorModeReal,
 				Clients: []ClientSummaryOutput{},
-				Message: "real mode is configured but no Velociraptor client is available",
 			}, nil
 		}
 
@@ -266,9 +270,9 @@ func newSearchClientsHandler(deps Deps) mcp.ToolHandlerFor[SearchClientsInput, S
 				Reason:  err.Error(),
 			})
 			return nil, SearchClientsOutput{
+				Result:  response.Error(err.Error()),
 				Mode:    VelociraptorModeReal,
 				Clients: []ClientSummaryOutput{},
-				Message: err.Error(),
 			}, nil
 		}
 
@@ -283,7 +287,11 @@ func newSearchClientsHandler(deps Deps) mcp.ToolHandlerFor[SearchClientsInput, S
 			RowCount: len(out),
 		})
 
-		return nil, SearchClientsOutput{Mode: VelociraptorModeReal, Clients: out}, nil
+		return nil, SearchClientsOutput{
+			Result:  response.Result{Status: response.StatusForCount(len(out))},
+			Mode:    VelociraptorModeReal,
+			Clients: out,
+		}, nil
 	}
 }
 
@@ -312,11 +320,15 @@ type GetClientInfoInput struct {
 
 // GetClientInfoOutput reports the client detail plus, honestly, mode and
 // any failure message; Client is nil whenever no data was returned (mock
-// mode or a failed real call).
+// mode or a failed real call). Status distinguishes a genuine "no such
+// client" lookup (response.StatusNotFound, via
+// velociraptor.ErrClientNotFound) from any other connectivity/RPC
+// failure (response.StatusError) — both were previously reported through
+// the same Message-only path with no machine-readable distinction.
 type GetClientInfoOutput struct {
-	Mode    string              `json:"mode"`
-	Client  *ClientDetailOutput `json:"client,omitempty"`
-	Message string              `json:"message,omitempty"`
+	response.Result
+	Mode   string              `json:"mode"`
+	Client *ClientDetailOutput `json:"client,omitempty"`
 }
 
 func newGetClientInfoHandler(deps Deps) mcp.ToolHandlerFor[GetClientInfoInput, GetClientInfoOutput] {
@@ -339,8 +351,8 @@ func newGetClientInfoHandler(deps Deps) mcp.ToolHandlerFor[GetClientInfoInput, G
 				Reason:   "mock mode, no Velociraptor call made",
 			})
 			return nil, GetClientInfoOutput{
-				Mode:    VelociraptorModeMock,
-				Message: "MCP server is running in mock mode (velociraptor.read_api_config_path is not configured); no Velociraptor call was made",
+				Result: response.Success("MCP server is running in mock mode (velociraptor.read_api_config_path is not configured); no Velociraptor call was made"),
+				Mode:   VelociraptorModeMock,
 			}, nil
 		}
 
@@ -352,8 +364,8 @@ func newGetClientInfoHandler(deps Deps) mcp.ToolHandlerFor[GetClientInfoInput, G
 				Reason:   "VelociraptorReadMode is real but ReadClient is nil",
 			})
 			return nil, GetClientInfoOutput{
-				Mode:    VelociraptorModeReal,
-				Message: "real mode is configured but no Velociraptor client is available",
+				Result: response.Error("real mode is configured but no Velociraptor client is available"),
+				Mode:   VelociraptorModeReal,
 			}, nil
 		}
 
@@ -365,9 +377,13 @@ func newGetClientInfoHandler(deps Deps) mcp.ToolHandlerFor[GetClientInfoInput, G
 				ClientID: in.ClientID,
 				Reason:   err.Error(),
 			})
+			result := response.Error(err.Error())
+			if errors.Is(err, velociraptor.ErrClientNotFound) {
+				result = response.NotFound(err.Error())
+			}
 			return nil, GetClientInfoOutput{
-				Mode:    VelociraptorModeReal,
-				Message: err.Error(),
+				Result: result,
+				Mode:   VelociraptorModeReal,
 			}, nil
 		}
 
@@ -378,7 +394,11 @@ func newGetClientInfoHandler(deps Deps) mcp.ToolHandlerFor[GetClientInfoInput, G
 			ClientID: in.ClientID,
 		})
 
-		return nil, GetClientInfoOutput{Mode: VelociraptorModeReal, Client: &out}, nil
+		return nil, GetClientInfoOutput{
+			Result: response.Result{Status: response.StatusSuccess},
+			Mode:   VelociraptorModeReal,
+			Client: &out,
+		}, nil
 	}
 }
 
@@ -401,9 +421,9 @@ type ListArtifactNamesInput struct{}
 // by default; see newListArtifactNamesHandler) plus, honestly, mode and
 // any failure message.
 type ListArtifactNamesOutput struct {
+	response.Result
 	Mode      string                  `json:"mode"`
 	Artifacts []ArtifactSummaryOutput `json:"artifacts"`
-	Message   string                  `json:"message,omitempty"`
 }
 
 // filterAllowedArtifacts restricts summaries to deps.Policy's artifact
@@ -433,9 +453,9 @@ func newListArtifactNamesHandler(deps Deps) mcp.ToolHandlerFor[ListArtifactNames
 				Reason:  "mock mode, no Velociraptor call made",
 			})
 			return nil, ListArtifactNamesOutput{
+				Result:    response.Success("MCP server is running in mock mode (velociraptor.read_api_config_path is not configured); no Velociraptor call was made"),
 				Mode:      VelociraptorModeMock,
 				Artifacts: []ArtifactSummaryOutput{},
-				Message:   "MCP server is running in mock mode (velociraptor.read_api_config_path is not configured); no Velociraptor call was made",
 			}, nil
 		}
 
@@ -446,9 +466,9 @@ func newListArtifactNamesHandler(deps Deps) mcp.ToolHandlerFor[ListArtifactNames
 				Reason:  "VelociraptorReadMode is real but ReadClient is nil",
 			})
 			return nil, ListArtifactNamesOutput{
+				Result:    response.Error("real mode is configured but no Velociraptor client is available"),
 				Mode:      VelociraptorModeReal,
 				Artifacts: []ArtifactSummaryOutput{},
-				Message:   "real mode is configured but no Velociraptor client is available",
 			}, nil
 		}
 
@@ -460,9 +480,9 @@ func newListArtifactNamesHandler(deps Deps) mcp.ToolHandlerFor[ListArtifactNames
 				Reason:  err.Error(),
 			})
 			return nil, ListArtifactNamesOutput{
+				Result:    response.Error(err.Error()),
 				Mode:      VelociraptorModeReal,
 				Artifacts: []ArtifactSummaryOutput{},
-				Message:   err.Error(),
 			}, nil
 		}
 
@@ -478,7 +498,11 @@ func newListArtifactNamesHandler(deps Deps) mcp.ToolHandlerFor[ListArtifactNames
 			RowCount: len(out),
 		})
 
-		return nil, ListArtifactNamesOutput{Mode: VelociraptorModeReal, Artifacts: out}, nil
+		return nil, ListArtifactNamesOutput{
+			Result:    response.Result{Status: response.StatusForCount(len(out))},
+			Mode:      VelociraptorModeReal,
+			Artifacts: out,
+		}, nil
 	}
 }
 
@@ -526,10 +550,13 @@ type GetArtifactDetailsInput struct {
 // GetArtifactDetailsOutput reports the artifact's parameter schema plus,
 // honestly, mode and any failure message; Artifact is nil whenever no
 // data was returned (mock mode, policy block, or a failed real call).
+// Status distinguishes a genuine "no such artifact" lookup
+// (response.StatusNotFound, via velociraptor.ErrArtifactNotFound) from
+// any other connectivity/RPC failure (response.StatusError).
 type GetArtifactDetailsOutput struct {
+	response.Result
 	Mode     string                `json:"mode"`
 	Artifact *ArtifactDetailOutput `json:"artifact,omitempty"`
-	Message  string                `json:"message,omitempty"`
 }
 
 func newGetArtifactDetailsHandler(deps Deps) mcp.ToolHandlerFor[GetArtifactDetailsInput, GetArtifactDetailsOutput] {
@@ -564,8 +591,8 @@ func newGetArtifactDetailsHandler(deps Deps) mcp.ToolHandlerFor[GetArtifactDetai
 				Reason:   "mock mode, no Velociraptor call made",
 			})
 			return nil, GetArtifactDetailsOutput{
-				Mode:    VelociraptorModeMock,
-				Message: "MCP server is running in mock mode (velociraptor.read_api_config_path is not configured); no Velociraptor call was made",
+				Result: response.Success("MCP server is running in mock mode (velociraptor.read_api_config_path is not configured); no Velociraptor call was made"),
+				Mode:   VelociraptorModeMock,
 			}, nil
 		}
 
@@ -577,8 +604,8 @@ func newGetArtifactDetailsHandler(deps Deps) mcp.ToolHandlerFor[GetArtifactDetai
 				Reason:   "VelociraptorReadMode is real but ReadClient is nil",
 			})
 			return nil, GetArtifactDetailsOutput{
-				Mode:    VelociraptorModeReal,
-				Message: "real mode is configured but no Velociraptor client is available",
+				Result: response.Error("real mode is configured but no Velociraptor client is available"),
+				Mode:   VelociraptorModeReal,
 			}, nil
 		}
 
@@ -590,9 +617,13 @@ func newGetArtifactDetailsHandler(deps Deps) mcp.ToolHandlerFor[GetArtifactDetai
 				Artifact: in.Name,
 				Reason:   err.Error(),
 			})
+			result := response.Error(err.Error())
+			if errors.Is(err, velociraptor.ErrArtifactNotFound) {
+				result = response.NotFound(err.Error())
+			}
 			return nil, GetArtifactDetailsOutput{
-				Mode:    VelociraptorModeReal,
-				Message: err.Error(),
+				Result: result,
+				Mode:   VelociraptorModeReal,
 			}, nil
 		}
 
@@ -603,6 +634,10 @@ func newGetArtifactDetailsHandler(deps Deps) mcp.ToolHandlerFor[GetArtifactDetai
 			Artifact: in.Name,
 		})
 
-		return nil, GetArtifactDetailsOutput{Mode: VelociraptorModeReal, Artifact: &out}, nil
+		return nil, GetArtifactDetailsOutput{
+			Result:   response.Result{Status: response.StatusSuccess},
+			Mode:     VelociraptorModeReal,
+			Artifact: &out,
+		}, nil
 	}
 }

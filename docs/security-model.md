@@ -177,6 +177,22 @@ Velociraptor data supports. Concretely:
   policy-allowlist blocks are reported as Go-level tool errors, since
   those are static defects in the request itself, not information about
   Velociraptor's state.
+- **v0.2.0** formalized this pattern with a shared `internal/response`
+  envelope (a `status` field: `"success"` / `"empty"` / `"not_found"` /
+  `"error"`, embedded into `SearchClientsOutput`, `GetClientInfoOutput`,
+  `ListArtifactNamesOutput`, and `GetArtifactDetailsOutput`) so callers
+  can branch on `status` instead of inferring outcome from `mode` plus
+  the presence/absence of a data field. This is additive to the wire
+  shape (a new top-level `status` key) and did not change any existing
+  field's meaning. `velo_health_check`'s pre-existing `status` field
+  (`"ok"`/`"error"`, from v0.1.0-alpha.2, predating this envelope) is
+  deliberately left untouched to avoid a breaking wire-value change. As
+  part of the same pass, `velo_get_client_info` and
+  `velo_get_artifact_details` gained a distinct `"not_found"` status for
+  a genuine "no such client"/"no such artifact" lookup (via
+  `velociraptor.ErrClientNotFound` / the new `velociraptor.ErrArtifactNotFound`
+  sentinel), which was previously indistinguishable from any other
+  real-mode connectivity/RPC failure.
 - `velo_get_client_info` and `velo_search_clients` return exactly what
   Velociraptor's `ApiClient` record reports for a given endpoint
   (hostname, OS, last-seen time, labels, ...) with no independent

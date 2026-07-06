@@ -3,10 +3,12 @@ package mcpserver
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/hdyrawan/agentic-velociraptor-mcp/internal/audit"
+	"github.com/hdyrawan/agentic-velociraptor-mcp/internal/response"
 	"github.com/hdyrawan/agentic-velociraptor-mcp/internal/velociraptor"
 )
 
@@ -47,6 +49,9 @@ func TestSearchClientsHandlerMockMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("handler: %v", err)
 	}
+	if out.Status != response.StatusSuccess {
+		t.Errorf("Status = %q, want %q", out.Status, response.StatusSuccess)
+	}
 	if out.Mode != "mock" {
 		t.Errorf("Mode = %q, want %q", out.Mode, "mock")
 	}
@@ -78,6 +83,9 @@ func TestSearchClientsHandlerRealModeSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("handler: %v", err)
 	}
+	if out.Status != response.StatusSuccess {
+		t.Errorf("Status = %q, want %q", out.Status, response.StatusSuccess)
+	}
 	if out.Mode != "real" {
 		t.Errorf("Mode = %q, want %q", out.Mode, "real")
 	}
@@ -88,6 +96,34 @@ func TestSearchClientsHandlerRealModeSuccess(t *testing.T) {
 	evt, ok := sink.last()
 	if !ok || evt.Outcome != audit.OutcomeSuccess || evt.RowCount != 1 {
 		t.Errorf("audit event = %+v, ok=%v, want success with row_count=1", evt, ok)
+	}
+}
+
+// TestSearchClientsHandlerRealModeEmptyResultIsStatusEmpty covers the
+// "valid real call, zero matches" case: not an error, not mock mode, but
+// distinct from a populated result so callers can tell "found nothing"
+// apart from "found something" without inspecting len(Clients)
+// themselves.
+func TestSearchClientsHandlerRealModeEmptyResultIsStatusEmpty(t *testing.T) {
+	deps, _ := testDeps(t)
+	deps.VelociraptorReadMode = VelociraptorModeReal
+	deps.ReadClient = &fakeVisibilityClient{
+		Client: velociraptor.NewClient(),
+		searchClients: func(ctx context.Context, query string, limit int) ([]velociraptor.ClientSummary, error) {
+			return nil, nil
+		},
+	}
+
+	handler := newSearchClientsHandler(deps)
+	_, out, err := handler(context.Background(), nil, SearchClientsInput{Query: "no-such-host"})
+	if err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	if out.Status != response.StatusEmpty {
+		t.Errorf("Status = %q, want %q", out.Status, response.StatusEmpty)
+	}
+	if len(out.Clients) != 0 {
+		t.Errorf("Clients = %+v, want empty", out.Clients)
 	}
 }
 
@@ -109,6 +145,9 @@ func TestSearchClientsHandlerRealModeErrorIsSafeStructuredResult(t *testing.T) {
 	if res != nil && res.IsError {
 		t.Error("CallToolResult.IsError = true, want a normal structured result")
 	}
+	if out.Status != response.StatusError {
+		t.Errorf("Status = %q, want %q", out.Status, response.StatusError)
+	}
 	if out.Mode != "real" {
 		t.Errorf("Mode = %q, want %q", out.Mode, "real")
 	}
@@ -119,6 +158,24 @@ func TestSearchClientsHandlerRealModeErrorIsSafeStructuredResult(t *testing.T) {
 	evt, ok := sink.last()
 	if !ok || evt.Outcome != audit.OutcomeError {
 		t.Errorf("audit event = %+v, ok=%v, want error outcome", evt, ok)
+	}
+}
+
+func TestSearchClientsHandlerRealModeReadClientNilIsStatusError(t *testing.T) {
+	deps, _ := testDeps(t)
+	deps.VelociraptorReadMode = VelociraptorModeReal
+	deps.ReadClient = nil
+
+	handler := newSearchClientsHandler(deps)
+	_, out, err := handler(context.Background(), nil, SearchClientsInput{})
+	if err != nil {
+		t.Fatalf("handler returned a Go error for a misconfigured server: %v", err)
+	}
+	if out.Status != response.StatusError {
+		t.Errorf("Status = %q, want %q", out.Status, response.StatusError)
+	}
+	if out.Message == "" {
+		t.Error("Message is empty, want an explanatory message")
 	}
 }
 
@@ -160,6 +217,9 @@ func TestGetClientInfoHandlerMockMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("handler: %v", err)
 	}
+	if out.Status != response.StatusSuccess {
+		t.Errorf("Status = %q, want %q", out.Status, response.StatusSuccess)
+	}
 	if out.Mode != "mock" {
 		t.Errorf("Mode = %q, want %q", out.Mode, "mock")
 	}
@@ -186,6 +246,9 @@ func TestGetClientInfoHandlerRealModeSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("handler: %v", err)
 	}
+	if out.Status != response.StatusSuccess {
+		t.Errorf("Status = %q, want %q", out.Status, response.StatusSuccess)
+	}
 	if out.Client == nil || out.Client.Hostname != "srv1" || len(out.Client.Labels) != 1 {
 		t.Errorf("Client = %+v, unexpected", out.Client)
 	}
@@ -193,6 +256,43 @@ func TestGetClientInfoHandlerRealModeSuccess(t *testing.T) {
 	evt, ok := sink.last()
 	if !ok || evt.Outcome != audit.OutcomeSuccess || evt.ClientID != "C.1234abcd5678ef90" {
 		t.Errorf("audit event = %+v, ok=%v, want success with client_id set", evt, ok)
+	}
+}
+
+// TestGetClientInfoHandlerRealModeNotFound covers a well-formed client ID
+// that Velociraptor has no record of (velociraptor.ErrClientNotFound).
+// Before the v0.2.0 response envelope, this was indistinguishable from
+// any other real-mode failure (both reported Mode="real" plus a Message,
+// with no field a caller could branch on); now Status is
+// response.StatusNotFound specifically, not response.StatusError.
+func TestGetClientInfoHandlerRealModeNotFound(t *testing.T) {
+	deps, sink := testDeps(t)
+	deps.VelociraptorReadMode = VelociraptorModeReal
+	deps.ReadClient = &fakeVisibilityClient{
+		Client: velociraptor.NewClient(),
+		getClientInfo: func(ctx context.Context, clientID string) (velociraptor.ClientDetail, error) {
+			return velociraptor.ClientDetail{}, fmt.Errorf("velociraptor: get client info: %w", velociraptor.ErrClientNotFound)
+		},
+	}
+
+	handler := newGetClientInfoHandler(deps)
+	_, out, err := handler(context.Background(), nil, GetClientInfoInput{ClientID: "C.1234abcd5678ef90"})
+	if err != nil {
+		t.Fatalf("handler returned a Go error for a not-found lookup: %v", err)
+	}
+	if out.Status != response.StatusNotFound {
+		t.Errorf("Status = %q, want %q", out.Status, response.StatusNotFound)
+	}
+	if out.Client != nil {
+		t.Errorf("Client = %+v, want nil for a not-found lookup", out.Client)
+	}
+	if out.Message == "" {
+		t.Error("Message is empty, want an explanatory message")
+	}
+
+	evt, ok := sink.last()
+	if !ok || evt.Outcome != audit.OutcomeError {
+		t.Errorf("audit event = %+v, ok=%v, want error outcome", evt, ok)
 	}
 }
 
@@ -220,6 +320,9 @@ func TestGetClientInfoHandlerRealModeErrorDoesNotLeakSecrets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("handler returned a Go error for a connectivity failure: %v", err)
 	}
+	if out.Status != response.StatusError {
+		t.Errorf("Status = %q, want %q (a generic connectivity failure, not a not-found lookup)", out.Status, response.StatusError)
+	}
 	if strings.Contains(out.Message, "BEGIN") || strings.Contains(out.Message, "secret") {
 		t.Errorf("Message leaks certificate content: %q", out.Message)
 	}
@@ -241,11 +344,43 @@ func TestListArtifactNamesHandlerMockMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("handler: %v", err)
 	}
+	if out.Status != response.StatusSuccess {
+		t.Errorf("Status = %q, want %q", out.Status, response.StatusSuccess)
+	}
 	if out.Mode != "mock" {
 		t.Errorf("Mode = %q, want %q", out.Mode, "mock")
 	}
 	if len(out.Artifacts) != 0 {
 		t.Errorf("Artifacts = %v, want empty in mock mode", out.Artifacts)
+	}
+}
+
+// TestListArtifactNamesHandlerRealModeEmptyResultIsStatusEmpty covers a
+// real, successful call whose allowlist filtering (or an empty upstream
+// catalog) leaves zero artifacts — a valid outcome, not a failure, but
+// distinct from a populated list.
+func TestListArtifactNamesHandlerRealModeEmptyResultIsStatusEmpty(t *testing.T) {
+	deps, _ := testDeps(t)
+	deps.VelociraptorReadMode = VelociraptorModeReal
+	deps.ReadClient = &fakeVisibilityClient{
+		Client: velociraptor.NewClient(),
+		listArtifactNames: func(ctx context.Context) ([]velociraptor.ArtifactSummary, error) {
+			return []velociraptor.ArtifactSummary{
+				{Name: "Windows.EventLogs.RDPAuth", Description: "not allowlisted by config.Default()"},
+			}, nil
+		},
+	}
+
+	handler := newListArtifactNamesHandler(deps)
+	_, out, err := handler(context.Background(), nil, ListArtifactNamesInput{})
+	if err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	if out.Status != response.StatusEmpty {
+		t.Errorf("Status = %q, want %q", out.Status, response.StatusEmpty)
+	}
+	if len(out.Artifacts) != 0 {
+		t.Errorf("Artifacts = %+v, want empty (allowlist filters out the only entry)", out.Artifacts)
 	}
 }
 
@@ -267,6 +402,9 @@ func TestListArtifactNamesHandlerFiltersToAllowlistByDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("handler: %v", err)
 	}
+	if out.Status != response.StatusSuccess {
+		t.Errorf("Status = %q, want %q", out.Status, response.StatusSuccess)
+	}
 	if len(out.Artifacts) != 1 || out.Artifacts[0].Name != "Generic.Client.Info" {
 		t.Errorf("Artifacts = %+v, want only the allowlisted entry (config.Default() allows Generic.Client.Info, Windows.System.Pslist, Windows.Network.Netstat)", out.Artifacts)
 	}
@@ -274,6 +412,21 @@ func TestListArtifactNamesHandlerFiltersToAllowlistByDefault(t *testing.T) {
 	evt, ok := sink.last()
 	if !ok || evt.Outcome != audit.OutcomeSuccess || evt.RowCount != 1 {
 		t.Errorf("audit event = %+v, ok=%v, want success with row_count=1", evt, ok)
+	}
+}
+
+func TestListArtifactNamesHandlerRealModeReadClientNilIsStatusError(t *testing.T) {
+	deps, _ := testDeps(t)
+	deps.VelociraptorReadMode = VelociraptorModeReal
+	deps.ReadClient = nil
+
+	handler := newListArtifactNamesHandler(deps)
+	_, out, err := handler(context.Background(), nil, ListArtifactNamesInput{})
+	if err != nil {
+		t.Fatalf("handler returned a Go error for a misconfigured server: %v", err)
+	}
+	if out.Status != response.StatusError {
+		t.Errorf("Status = %q, want %q", out.Status, response.StatusError)
 	}
 }
 
@@ -327,6 +480,9 @@ func TestGetArtifactDetailsHandlerRealModeSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("handler: %v", err)
 	}
+	if out.Status != response.StatusSuccess {
+		t.Errorf("Status = %q, want %q", out.Status, response.StatusSuccess)
+	}
 	if out.Artifact == nil || out.Artifact.Name != "Generic.Client.Info" || len(out.Artifact.Parameters) != 1 {
 		t.Errorf("Artifact = %+v, unexpected", out.Artifact)
 	}
@@ -334,6 +490,39 @@ func TestGetArtifactDetailsHandlerRealModeSuccess(t *testing.T) {
 	evt, ok := sink.last()
 	if !ok || evt.Outcome != audit.OutcomeSuccess || evt.Artifact != "Generic.Client.Info" {
 		t.Errorf("audit event = %+v, ok=%v, want success with artifact set", evt, ok)
+	}
+}
+
+// TestGetArtifactDetailsHandlerRealModeNotFound covers a syntactically
+// valid, allowlisted artifact name that Velociraptor's real catalog has
+// no entry for (velociraptor.ErrArtifactNotFound) — distinct from a
+// generic connectivity/RPC failure, same as
+// TestGetClientInfoHandlerRealModeNotFound.
+func TestGetArtifactDetailsHandlerRealModeNotFound(t *testing.T) {
+	deps, sink := testDeps(t)
+	deps.VelociraptorReadMode = VelociraptorModeReal
+	deps.ReadClient = &fakeVisibilityClient{
+		Client: velociraptor.NewClient(),
+		getArtifactDetails: func(ctx context.Context, name string) (velociraptor.ArtifactDetail, error) {
+			return velociraptor.ArtifactDetail{}, fmt.Errorf("velociraptor: artifact %q not found: %w", name, velociraptor.ErrArtifactNotFound)
+		},
+	}
+
+	handler := newGetArtifactDetailsHandler(deps)
+	_, out, err := handler(context.Background(), nil, GetArtifactDetailsInput{Name: "Generic.Client.Info"})
+	if err != nil {
+		t.Fatalf("handler returned a Go error for a not-found lookup: %v", err)
+	}
+	if out.Status != response.StatusNotFound {
+		t.Errorf("Status = %q, want %q", out.Status, response.StatusNotFound)
+	}
+	if out.Artifact != nil {
+		t.Errorf("Artifact = %+v, want nil for a not-found lookup", out.Artifact)
+	}
+
+	evt, ok := sink.last()
+	if !ok || evt.Outcome != audit.OutcomeError {
+		t.Errorf("audit event = %+v, ok=%v, want error outcome", evt, ok)
 	}
 }
 
@@ -356,6 +545,9 @@ func TestGetArtifactDetailsHandlerRealModeErrorDoesNotLeakSecrets(t *testing.T) 
 	_, out, err := handler(context.Background(), nil, GetArtifactDetailsInput{Name: "Generic.Client.Info"})
 	if err != nil {
 		t.Fatalf("handler returned a Go error for a connectivity failure: %v", err)
+	}
+	if out.Status != response.StatusError {
+		t.Errorf("Status = %q, want %q (a generic connectivity failure, not a not-found lookup)", out.Status, response.StatusError)
 	}
 	if strings.Contains(out.Message, "BEGIN") || strings.Contains(out.Message, "secret") {
 		t.Errorf("Message leaks key material: %q", out.Message)

@@ -432,6 +432,9 @@ func TestGRPCClientGetArtifactDetailsNotFound(t *testing.T) {
 	if err == nil {
 		t.Fatal("GetArtifactDetails: expected error for unknown artifact, got nil")
 	}
+	if !errors.Is(err, ErrArtifactNotFound) {
+		t.Errorf("GetArtifactDetails error = %v, want wrapping ErrArtifactNotFound", err)
+	}
 }
 
 func TestGRPCClientGetArtifactDetailsErrorDoesNotLeakSecrets(t *testing.T) {

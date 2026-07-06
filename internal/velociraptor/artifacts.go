@@ -1,6 +1,17 @@
 package velociraptor
 
-import "context"
+import (
+	"context"
+	"errors"
+)
+
+// ErrArtifactNotFound is returned by GetArtifactDetails when Velociraptor
+// has no artifact matching the requested name. Mirrors ErrClientNotFound
+// (see clients.go): a distinguishable sentinel instead of a bare
+// fmt.Errorf lets callers (and their audit/response-status handling)
+// tell "no such artifact" apart from a connectivity or transport
+// failure.
+var ErrArtifactNotFound = errors.New("velociraptor: artifact not found")
 
 // ArtifactSummary is a minimal artifact catalog entry.
 type ArtifactSummary struct {

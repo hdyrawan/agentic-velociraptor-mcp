@@ -18,6 +18,15 @@ Legend: RO = read-only, no approval. Approval = requires a matching
 `approval.Decision` (see [approval-flow.md](approval-flow.md)) before any
 Velociraptor call is made.
 
+**Response envelope (v0.2.0):** `velo_search_clients`,
+`velo_get_client_info`, `velo_list_artifact_names`, and
+`velo_get_artifact_details` each embed `internal/response.Result`, adding
+a top-level `status` field (`"success"` / `"empty"` / `"not_found"` /
+`"error"`) alongside their existing `mode`/data/`message` fields — see
+docs/security-model.md's "Evidence honesty" section for the full
+contract, including why `velo_health_check`'s own pre-existing `status`
+field (`"ok"`/`"error"`) was left as-is rather than migrated.
+
 ## Visibility tools (`tools_visibility.go`)
 
 | Tool | Kind | Description | Target milestone | Implemented |
@@ -35,17 +44,17 @@ Velociraptor call is made.
 | `velo_list_flows` | RO | List flows for a client. | v0.1.0 | no |
 | `velo_get_flow_status` | RO | State of one flow. | v0.1.0 | no |
 | `velo_get_flow_results` | RO | Result rows for one flow, bounded. | v0.1.0 | no |
-| `velo_list_flow_uploads` | RO | List uploads attached to a flow. | v0.2.0 | no |
-| `velo_get_flow_upload_metadata` | RO | Metadata for one upload. | v0.2.0 | no |
-| `velo_download_flow_upload_with_approval` | Approval | Download upload bytes, bounded by `max_upload_bytes`. | v0.2.0 | no |
+| `velo_list_flow_uploads` | RO | List uploads attached to a flow. | unscheduled (was v0.2.0; see PROJECT_PLAN.md's v0.2.0 re-scope note) | no |
+| `velo_get_flow_upload_metadata` | RO | Metadata for one upload. | unscheduled (was v0.2.0; see PROJECT_PLAN.md's v0.2.0 re-scope note) | no |
+| `velo_download_flow_upload_with_approval` | Approval | Download upload bytes, bounded by `max_upload_bytes`. | unscheduled (was v0.2.0; see PROJECT_PLAN.md's v0.2.0 re-scope note) | no |
 
 ## Collection tools (`tools_collection.go`)
 
 | Tool | Kind | Description | Target milestone | Implemented |
 |------|------|-------------|-------------------|-------------|
-| `velo_collect_artifact_with_approval` | Approval | Collect one allowlisted artifact from one client. | v0.2.0 | no |
-| `velo_collect_dfir_profile_with_approval` | Approval | Collect every artifact in an allowlisted DFIR profile from one client. | v0.2.0 | no |
-| `velo_cancel_flow_with_approval` | Approval | Cancel a running flow. | v0.2.0 | no |
+| `velo_collect_artifact_with_approval` | Approval | Collect one allowlisted artifact from one client. | unscheduled (was v0.2.0; see PROJECT_PLAN.md's v0.2.0 re-scope note) | no |
+| `velo_collect_dfir_profile_with_approval` | Approval | Collect every artifact in an allowlisted DFIR profile from one client. | unscheduled (was v0.2.0; see PROJECT_PLAN.md's v0.2.0 re-scope note) | no |
+| `velo_cancel_flow_with_approval` | Approval | Cancel a running flow. | unscheduled (was v0.2.0; see PROJECT_PLAN.md's v0.2.0 re-scope note) | no |
 
 ## Hunt tools (`tools_hunts.go`)
 
