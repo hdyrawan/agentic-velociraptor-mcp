@@ -648,11 +648,13 @@ func registerHuntTools(s *mcp.Server, deps Deps) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "velo_start_hunt_with_approval",
 		Description: HuntTools[1].Description,
+		Annotations: writeAnnotations("Start hunt (approval-gated)"),
 	}, newStartHuntHandler(deps))
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "velo_start_dfir_hunt_with_approval",
 		Description: HuntTools[2].Description,
+		Annotations: writeAnnotations("Start DFIR profile hunt (approval-gated)"),
 	}, newStartDFIRHuntHandler(deps))
 
 	mcp.AddTool(s, &mcp.Tool{
@@ -676,6 +678,7 @@ func registerHuntTools(s *mcp.Server, deps Deps) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "velo_cancel_hunt_with_approval",
 		Description: HuntTools[6].Description,
+		Annotations: writeAnnotations("Cancel hunt (approval-gated)"),
 	}, newCancelHuntHandler(deps))
 }
 

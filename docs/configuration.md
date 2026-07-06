@@ -46,6 +46,7 @@ policy:
     - cancel_flow
     - cancel_hunt
     - download_flow_upload
+    - hunt_ioc
   allowed_artifacts:
     - Generic.Client.Info
     - Windows.System.Pslist

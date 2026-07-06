@@ -15,13 +15,16 @@
 // agentic-velociraptor-mcp `approve` CLI subcommand (never an MCP tool,
 // so no MCP client — including the LLM driving one — can create or
 // decide its own approval), then hands the reference to whoever is
-// running the MCP session. The write-capable MCP tools
-// (velo_collect_artifact_with_approval,
-// velo_collect_dfir_profile_with_approval,
-// velo_cancel_flow_with_approval, velo_download_flow_upload_with_approval)
-// only ever call Store.Get/IsApproved/Consume for a caller-supplied
-// reference; none of them can call Store.Create or Store.Decide. See
-// docs/approval-flow.md for the full operator workflow.
+// running the MCP session. Every approval-gated MCP tool (v0.4.0's
+// velo_collect_artifact_with_approval, velo_collect_dfir_profile_with_approval,
+// velo_cancel_flow_with_approval, velo_download_flow_upload_with_approval;
+// v0.6.0's velo_start_hunt_with_approval, velo_start_dfir_hunt_with_approval,
+// velo_cancel_hunt_with_approval; v0.7.0's velo_hunt_ioc_with_approval)
+// only ever calls Store.Get/IsApproved/Consume for a caller-supplied
+// reference and always via verifyAndConsumeApproval's
+// RequestFingerprint check; none of them can call Store.Create or
+// Store.Decide. See docs/approval-flow.md for the full operator
+// workflow.
 package approval
 
 import "time"
@@ -39,6 +42,11 @@ const (
 	OperationCancelFlow         Operation = "cancel_flow"
 	OperationCancelHunt         Operation = "cancel_hunt"
 	OperationDownloadFlowUpload Operation = "download_flow_upload"
+
+	// OperationHuntIOC is velo_hunt_ioc_with_approval's operation
+	// category: starting a hunt for one validated IOC (hash, IP, domain,
+	// process, or path) via a fixed vql template, never raw VQL.
+	OperationHuntIOC Operation = "hunt_ioc"
 )
 
 // Request captures everything needed for a human to make an informed

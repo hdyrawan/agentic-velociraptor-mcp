@@ -2,10 +2,10 @@
 // (config, policy, approval, audit, dfir, velociraptor, vql) into an MCP
 // server exposing the stable core described in PROJECT_PLAN.md.
 //
-// As of v0.6.0 (rebased onto v0.4.0's collection pilot and v0.5.0's
-// read-only flow/result backfill), exactly 27 tools are registered: the
-// 14 read-only tools from v0.1.0-v0.5.0 (velo_health_check,
-// velo_search_clients,
+// As of v0.7.0 (rebased onto v0.4.0's collection pilot, v0.5.0's
+// read-only flow/result backfill, and v0.6.0's hunt management
+// scaffold), exactly 28 tools are registered: the 14 read-only tools
+// from v0.1.0-v0.5.0 (velo_health_check, velo_search_clients,
 // velo_get_client_info, velo_list_artifact_names,
 // velo_get_artifact_details, velo_list_dfir_profiles,
 // velo_get_dfir_profile, velo_validate_dfir_profile,
@@ -19,13 +19,18 @@
 // tools (velo_preview_hunt_scope, velo_start_hunt_with_approval,
 // velo_start_dfir_hunt_with_approval, velo_list_hunts,
 // velo_get_hunt_status, velo_get_hunt_results,
-// velo_cancel_hunt_with_approval).
+// velo_cancel_hunt_with_approval), plus the one v0.7.0 IOC helper tool
+// (velo_hunt_ioc_with_approval).
 //
 // The six v0.4.0 collection/evidence tools implement this project's first
 // write-capable Velociraptor operations: a controlled, auditable,
 // single-client collection pilot. The seven v0.6.0 hunt management tools
 // add approval-gated hunt start (single-artifact and DFIR-profile) and
 // cancel, plus read-only scout/preview, list, status, and results.
+// v0.7.0's velo_hunt_ioc_with_approval reuses that same approval/scope/
+// audit machinery to hunt one validated indicator (hash, IP, domain,
+// process, or path) through a fixed, allowlisted internal/vql template —
+// never a caller-chosen artifact, never raw VQL.
 //
 // Every approval-gated tool is disabled by default (see
 // writePilotEnabled) unless both policy.mode is "controlled" and
@@ -104,8 +109,9 @@ type Deps struct {
 	// velo_cancel_flow_with_approval,
 	// velo_download_flow_upload_with_approval,
 	// velo_start_hunt_with_approval,
-	// velo_start_dfir_hunt_with_approval, and
-	// velo_cancel_hunt_with_approval.
+	// velo_start_dfir_hunt_with_approval,
+	// velo_cancel_hunt_with_approval, and
+	// velo_hunt_ioc_with_approval.
 	WriteClient velociraptor.Client
 
 	// VelociraptorWriteMode mirrors VelociraptorReadMode for WriteClient:
@@ -142,9 +148,10 @@ type Server struct {
 }
 
 // New constructs a Server and registers the tools that are safe and
-// implemented for the current release. v0.6.0 adds the seven hunt
-// management tools on top of v0.4.0's controlled collection/evidence
-// tools and v0.5.0's read-only flow/result backfill.
+// implemented for the current release. v0.7.0 adds the IOC helper tool
+// on top of v0.6.0's seven hunt management tools, v0.4.0's controlled
+// collection/evidence tools, and v0.5.0's read-only flow/result
+// backfill.
 func New(name, version string, deps Deps) *Server {
 	s := mcp.NewServer(&mcp.Implementation{Name: name, Version: version}, nil)
 
@@ -154,6 +161,7 @@ func New(name, version string, deps Deps) *Server {
 	registerCollectionTools(s, deps)
 	registerFlowTools(s, deps)
 	registerHuntTools(s, deps)
+	registerIOCTools(s, deps)
 
 	return &Server{mcp: s, deps: deps}
 }

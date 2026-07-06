@@ -36,6 +36,7 @@ of naming individual artifacts or, worse, writing VQL.
 | File evidence retrieval (approval) | via `velo_download_flow_upload_with_approval`, not a profile |
 | Timeline generation | `windows_timeline_triage` |
 | Hunt across endpoints (approval) | any profile via `velo_start_dfir_hunt_with_approval` |
+| Ad hoc IOC hunt, no profile (approval) | `velo_hunt_ioc_with_approval` (hash/ip/domain/process/path) |
 
 ## Defined profile catalog (15)
 
@@ -78,6 +79,25 @@ of naming individual artifacts or, worse, writing VQL.
 `ioc_hash_hunt`, `ioc_ip_hunt`, and `ioc_domain_hunt` are definition-only
 profile catalog entries in this commit. They do not implement IOC hunt
 logic by themselves, do not add raw VQL, and do not add endpoint-changing
-behavior. Any future IOC hunt tool must keep using fixed, reviewed templates
-with validated indicator values passed as bound parameters — never string-
-concatenated into a query.
+behavior.
+
+**v0.7.0 implemented the IOC hunt tool** (`velo_hunt_ioc_with_approval`),
+but it is deliberately independent of this profile catalog and the
+`internal/dfir.Registry`: it validates a `hash`/`ip`/`domain`/`process`/
+`path` indicator (`internal/validation.ValidateIOC`) and resolves it
+through a fixed `internal/vql.TemplateName` → artifact/parameter mapping
+(`vql.Bind`) rather than loading a `profiles/*.yaml` file. The 5
+supported template names (`ioc_hash_hunt`, `ioc_ip_hunt`,
+`ioc_domain_hunt`, `ioc_process_hunt`, `ioc_path_hunt`) intentionally
+mirror this catalog's 3 existing IOC profile names for the first three
+kinds, but `ioc_process_hunt`/`ioc_path_hunt` have no corresponding
+`profiles/*.yaml` entry — none is needed, since the IOC tool never reads
+the profile registry. As with the pre-existing IOC profiles' artifact
+names, `vql.Bind`'s resolved artifact names (`System.Hash.Hunt`,
+`System.IP.Hunt`, `System.Domain.Hunt`, `System.Process.Hunt`,
+`System.Path.Hunt`) are illustrative and unverified against a real
+Velociraptor artifact catalog — confirm them against your deployment's
+actual catalog before adding them to `policy.allowed_artifacts` (the
+gate that actually permits the tool to use them). The tool keeps using
+fixed, reviewed templates with validated indicator values passed as
+bound parameters — never string-concatenated into a query.

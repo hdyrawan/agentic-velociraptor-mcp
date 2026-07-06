@@ -298,8 +298,16 @@ API configured:
       approval and correctly reflects in subsequent
       `velo_get_flow_status`.
 
-### Phase 6 — hunts (v0.6.0, unit-tested; pending live-lab validation)
+### Phase 6 — hunts (v0.6.0, unit-tested incl. v0.7.0's fingerprint fix; pending live-lab validation)
 
+- [x] Approval for one hunt (artifact/case/scope) cannot be reused to
+      start/cancel a *different* hunt (fingerprint mismatch) —
+      **unit-tested as of v0.7.0**:
+      `TestStartHuntRejectsMismatchedApproval`,
+      `TestStartDFIRHuntRejectsMismatchedApproval`,
+      `TestCancelHuntRejectsMismatchedApproval`
+      (`internal/mcpserver/tools_hunts_test.go`). This was previously a
+      real, unverified gap — see CHANGELOG.md's v0.7.0 entry.
 - [ ] `velo_preview_hunt_scope` against a label/explicit-client-list
       scope returns an accurate matched-client count without creating a
       hunt.
@@ -323,26 +331,54 @@ API configured:
       confirm refusal.
 - [ ] Start/cancel without prior approval is blocked (audited as
       `blocked`), not executed.
-- [ ] Approval for artifact A on scope X cannot be reused for artifact B
-      or scope Y (fingerprint mismatch).
 - [ ] Unregistered profile names in `velo_start_dfir_hunt_with_approval`
       are rejected with `not_found`.
 - [ ] Non-allowlisted profile names in `velo_start_dfir_hunt_with_approval`
       are rejected (blocked).
 
-### Phase 6 — DFIR profiles and IOC hunting (future)
+### Phase 7 — IOC hunting (v0.7.0, unit-tested; pending live-lab validation)
 
-- [ ] `velo_validate_dfir_profile` correctly flags a profile referencing
-      a non-allowlisted artifact.
-- [ ] `velo_collect_dfir_profile_with_approval` /
-      `velo_start_dfir_hunt_with_approval` expand to exactly the
-      profile's artifact list, no more.
-- [ ] `velo_hunt_ioc_with_approval` rejects malformed
-      hash/IP/domain input (fuzz with edge cases: IPv6, defanged
-      indicators like `1[.]2[.]3[.]4`, mixed-case hashes, trailing dot
-      domains).
+- [x] IOC kind/value validation for all 5 kinds (hash, ip, domain,
+      process, path), success and failure cases —
+      `TestHuntIOCValidatesEachKind` (`internal/mcpserver/tools_ioc_test.go`)
+      plus `TestProcess`/`TestPath`/`TestValidateIOC`
+      (`internal/validation/validation_test.go`).
+- [x] Blocked in `read_only` mode, blocked without a prior approval,
+      `target_all` blocked by default, `max_hunt_clients` enforced (caller
+      cannot raise the ceiling), approval consumed only after all
+      policy/input/scope/allowlist gates pass — unit-tested
+      (`TestHuntIOCBlockedInReadOnlyMode`, `TestHuntIOCBlockedWithoutApproval`,
+      `TestHuntIOCTargetAllBlockedByDefault`,
+      `TestHuntIOCEnforcesMaxHuntClients`).
+- [x] Approval for one indicator/scope cannot authorize a different one
+      (fingerprint mismatch), including the cross-tool case where an
+      IOC-hunt approval cannot authorize a plain
+      `velo_start_hunt_with_approval` call — `TestHuntIOCRejectsMismatchedApproval`,
+      `TestApprovalForIOCHuntCannotAuthorizeRegularHuntStart`.
+- [x] Approved fake-client path starts a hunt and consumes the approval —
+      `TestHuntIOCApprovedFakePath`.
+- [x] Real (non-mock) `WriteClient` without hunt RPCs implemented reports
+      `ErrNotImplemented` honestly as an `error`-status result, not
+      fabricated success — `TestHuntIOCScaffoldedRealModeReturnsHonestError`.
+- [ ] `velo_hunt_ioc_with_approval` with a valid approval actually creates
+      a hunt on a real Velociraptor server for each of the 5 indicator
+      kinds (requires real `write_api_config_path` and gRPC hunt RPCs,
+      which are not yet implemented on `grpcClient` — same prerequisite
+      as Phase 6's real hunt-start items).
+- [ ] Confirm whether `System.Hash.Hunt`/`System.IP.Hunt`/
+      `System.Domain.Hunt`/`System.Process.Hunt`/`System.Path.Hunt` (the
+      illustrative artifact names `vql.Bind` resolves each IOC kind to)
+      correspond to any real artifact in a live Velociraptor server's
+      catalog, or whether a different artifact/parameter mapping is
+      needed — this must be resolved before real hunt-start RPCs can be
+      wired for this tool.
+- [ ] Fuzz malformed hash/IP/domain/process/path input against a real
+      server path (edge cases: IPv6, defanged indicators like
+      `1[.]2[.]3[.]4`, mixed-case hashes, trailing-dot domains, Windows
+      vs. Unix path separators) — unit tests cover representative cases
+      but not exhaustive fuzzing.
 
-### Phase 7 — negative/adversarial testing (v0.5.0)
+### Phase 8 — negative/adversarial testing (v0.5.0)
 
 - [ ] Simulated prompt-injection payload embedded in artifact/collection
       result data (e.g. a filename or registry value containing

@@ -1,7 +1,8 @@
 # Tool reference
 
-v0.6.0 (rebased onto v0.4.0/v0.5.0), all 27 tools are implemented and
-registered as callable MCP tools: 5 visibility (`velo_health_check`,
+v0.7.0 (rebased onto v0.4.0/v0.5.0/v0.6.0), all 28 tools — the full
+stable-core target — are implemented and registered as callable MCP
+tools: 5 visibility (`velo_health_check`,
 `velo_search_clients`, `velo_get_client_info`, `velo_list_artifact_names`,
 `velo_get_artifact_details`), 3 DFIR profile (`velo_list_dfir_profiles`,
 `velo_get_dfir_profile`, `velo_validate_dfir_profile`), 3 DFIR workflow
@@ -12,18 +13,17 @@ registered as callable MCP tools: 5 visibility (`velo_health_check`,
 `velo_collect_dfir_profile_with_approval`,
 `velo_cancel_flow_with_approval`, `velo_list_flow_uploads`,
 `velo_get_flow_upload_metadata`,
-`velo_download_flow_upload_with_approval`), and 7 hunt management
+`velo_download_flow_upload_with_approval`), 7 hunt management
 (`velo_preview_hunt_scope`, `velo_start_hunt_with_approval`,
 `velo_start_dfir_hunt_with_approval`, `velo_list_hunts`,
 `velo_get_hunt_status`, `velo_get_hunt_results`,
-`velo_cancel_hunt_with_approval`). Only the IOC execution group's
-`ToolSpec` metadata (`velo_hunt_ioc_with_approval`) remains unwired but
-is documented below for completeness. Update the "Implemented" column as
-each remaining tool actually lands.
+`velo_cancel_hunt_with_approval`), and 1 IOC helper
+(`velo_hunt_ioc_with_approval`). Every tool listed below is registered
+via `mcp.AddTool`; there is no remaining unwired `ToolSpec` metadata.
 
 Legend: RO = read-only, no approval. Approval = requires a resolvable
 `approval_reference` (see [approval-flow.md](approval-flow.md)) before
-any Velociraptor call is made. **v0.4.0 and v0.6.0 implement a
+any Velociraptor call is made. **v0.4.0, v0.6.0, and v0.7.0 implement a
 controlled pilot, not unrestricted Velociraptor write access**: every
 Approval-kind tool below requires `policy.mode: controlled` and
 `approval.store_path` to be explicitly configured (off by default), and
@@ -107,8 +107,8 @@ control-flow for these four tools is implemented and tested (against
 fake `velociraptor.Client` implementations); calling any of them with a
 real (non-mock) write client currently returns
 `velociraptor.ErrNotImplemented`, reported honestly as an `error`-status
-response. Real RPC wiring is still pending for all tool groups
-(collection, flows, and hunts).
+response. Real RPC wiring is still pending for every write-capable tool
+group (collection, flows, hunts, and IOC hunting).
 
 ## Hunt tools (`tools_hunts.go`)
 
@@ -219,7 +219,26 @@ Example:
 
 | Tool | Kind | Description | Target milestone | Implemented |
 |------|------|-------------|-------------------|-------------|
-| `velo_hunt_ioc_with_approval` | Approval | Hunt for a validated hash/IP/domain using a fixed template. | unscheduled (depends on hunt management, itself unscheduled) | no |
+| `velo_hunt_ioc_with_approval` | Approval | Hunt for a validated `hash`/`ip`/`domain`/`process`/`path` indicator using a fixed template, across a bounded scope. Enforces `max_hunt_clients`, artifact allowlist (on the template's resolved artifact), scope validation, `target_all` policy. | v0.7.0 | **yes** (scaffold: approval/safety gates active and fingerprint-checked, template→artifact/parameter mapping is real; real gRPC hunt-start not implemented) |
+
+Input: `case_id`, `reason`, `requester`, `approval_id` (all required, same
+as every other approval-gated tool), `kind` (one of `hash`, `ip`,
+`domain`, `process`, `path`), `value` (the indicator, validated against
+`kind` via `internal/validation.ValidateIOC` before it is ever bound into
+a template parameter), plus the same scope fields as
+`velo_start_hunt_with_approval` (`client_ids` / `label` / `all`,
+`max_clients`). `kind`+`value` are resolved through
+`internal/vql.Bind` to a fixed artifact name and a single bound parameter
+— never a caller-chosen artifact, never string-interpolated VQL. The
+resolved artifact must still pass `policy.allowed_artifacts` like any
+other hunt target.
+
+Output embeds `status`/`message` plus `mode`, `hunt_id`, `kind`,
+`artifact` (the resolved artifact name, for auditability), `state`, and
+`scope_desc`. A fingerprint-mismatched approval (e.g. approved for one
+indicator value/scope, called for another) returns `status: "error"`
+mentioning "does not match" with `status` unchanged by a Go-level error
+(same convention as every other `verifyAndConsumeApproval`-gated tool).
 
 ## Explicitly not in the stable core
 

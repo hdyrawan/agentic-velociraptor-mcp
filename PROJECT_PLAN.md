@@ -16,18 +16,21 @@ This is the authoritative roadmap for `agentic-velociraptor-mcp`. For
 - No generic remote-admin-shell tool, ever.
 - All caller input bound as safe parameters, never string-concatenated
   into VQL.
-- Every collection, hunt start/cancel, flow cancel, and evidence
-  download requires approval.
+- Every collection, hunt start/cancel, IOC hunt, flow cancel, and
+  evidence download requires approval.
 - Every tool call produces exactly one audit event with outcome
   `success`, `blocked`, or `error`; secrets never logged.
 - stdio MCP transport first; HTTP/SSE/streamable HTTP only if/when
   explicitly requested.
 
-## Stable core target: 27 tools
+## Stable core target: 28 tools (complete as of v0.7.0)
 
 See [docs/tool-reference.md](docs/tool-reference.md) for the full table.
 Groups: visibility (5), flow/results (6), collection (3), hunts (7),
 DFIR profiles (3), DFIR workflow planning helpers (3), IOC helper (1).
+All 28 are now callable; see "What does not exist yet" in
+[PROJECT_STATE.md](PROJECT_STATE.md) for what remains scaffolded
+(real gRPC hunt/collection/IOC execution) versus real.
 
 ## DFIR cases this design must support
 
@@ -253,16 +256,50 @@ real Velociraptor hunt RPC execution must be added in a follow-up.
   `velo_get_hunt_results` (RO, bounded by max_rows/max_result_bytes,
   paginated), and `velo_cancel_hunt_with_approval` (approval-gated).
 - Callable tool inventory increases from 20 to 27.
-- All approval-gated tool handlers enforce: `approval.Store.IsApproved`/
-  `Consume`, `policy` mode checks (read-only mode blocks writes),
-  scope validation (`validation.ValidateHuntScope`), artifact/profile
-  allowlists, `max_hunt_clients` caps, and `target_all` restrictions.
+- All approval-gated tool handlers enforce: fingerprint-matched approval
+  verification (`verifyAndConsumeApproval`, added in the v0.7.0 fix
+  below — the schema/safety scaffold as originally merged used a weaker,
+  non-fingerprint-checking `checkHuntApproval` helper; see
+  [CHANGELOG.md](CHANGELOG.md)'s v0.7.0 entry), `policy` mode checks
+  (read-only mode blocks writes), scope validation
+  (`validation.ValidateHuntScope`), artifact/profile allowlists,
+  `max_hunt_clients` caps, and `target_all` restrictions.
 - All read-only hunt tools (preview, list, status, results) follow the
   existing mock/real branching with evidence-honest responses.
-- Tests in `tools_hunts_test.go` use fakes for all dependencies; no live
-  Velociraptor server is required.
+- Tests in `tools_hunts_test.go` use fakes/a real `approval.FileStore`
+  for all dependencies; no live Velociraptor server is required.
 
-### v0.6.0 — Production hardening
+### v0.7.0 — IOC hunting helper (complete)
+
+Adds the last tool from the original 28-tool stable-core target
+(`velo_hunt_ioc_with_approval`), and reviews v0.6.0's scaffolded backend
+paths for anything safe/clear to implement for real.
+
+- Added `velo_hunt_ioc_with_approval`: validates a `hash`, `ip`,
+  `domain`, `process`, or `path` indicator, resolves it through a fixed
+  `internal/vql` template to an allowlisted artifact + bound parameter,
+  and starts a hunt via the same `velociraptor.HuntWriter.StartHunt`
+  path `velo_start_hunt_with_approval` uses. New
+  `approval.OperationHuntIOC` category; approval-gated like every other
+  write tool via `verifyAndConsumeApproval`.
+- Completed `internal/vql.Bind`'s template → (artifact, parameter key)
+  mapping for all 5 IOC templates — real, deterministic Go logic
+  involving no gRPC call. The artifact names themselves remain
+  illustrative/unverified against a live Velociraptor catalog (same
+  caveat as the pre-existing `ioc_hash_hunt`/`ioc_ip_hunt`/
+  `ioc_domain_hunt` DFIR profiles); real hunt-start gRPC execution
+  remains scaffolded, unchanged from v0.6.0.
+- Added `internal/validation.Process`/`Path` IOC validators and a
+  `ValidateIOC(kind, value)` router.
+- Fixed two issues found reviewing the v0.6.0 branch before landing it:
+  a confused-deputy gap where hunt approvals weren't fingerprint-checked
+  (any valid unconsumed approval could start/cancel a different hunt
+  than approved), and three hunt-write tools registered with no MCP
+  annotations. See [CHANGELOG.md](CHANGELOG.md) for details.
+- Callable tool inventory increases from 27 to 28 (the full stable-core
+  target).
+
+### v0.8.0 — Production hardening
 
 - Docker image, non-root runtime.
 - Config validation hardening.
@@ -272,12 +309,13 @@ real Velociraptor hunt RPC execution must be added in a follow-up.
 - Integration tests; MCP Inspector validation.
 - Security review checklist (see
   [docs/lab-validation-plan.md](docs/lab-validation-plan.md)).
-- Real gRPC wiring for collection/cancel/upload RPCs (see v0.4.0's known
-  limitation above), validated against a live Velociraptor lab.
+- Real gRPC wiring for collection/cancel/upload/hunt/IOC RPCs (see
+  v0.4.0's known limitation above), validated against a live
+  Velociraptor lab.
 
 ### v1.0.0 — Stable release (not yet started)
 
-- All 27 core tools implemented.
+- All 28 core tools implemented.
 - Stable schemas.
 - Full documentation.
 - Lab validation report.
