@@ -165,7 +165,7 @@ validation (2026-07-06)" below for the environment and exact commands:
       `velo_search_clients`** — zero enrolled clients means truncation
       can't be distinguished from "no data"; a large `limit` (100000)
       at least confirmed it doesn't error.
-- [ ] `velo_list_flows` / `velo_get_flow_status` / `velo_get_flow_results`
+- [x] `velo_list_flows` / `velo_get_flow_status` / `velo_get_flow_results` registered and handler-tested with fake read clients; real Velociraptor flow RPC validation still pending
       correctly truncate at `max_rows` / `max_result_bytes` and report
       truncation. **(Not implemented in v0.1.0 — deferred; no RPC exists
       yet for these three tools.)**
@@ -249,7 +249,7 @@ Performed against the disposable lab described in
 
 ### Phase 3 — read-only DFIR workflow expansion (v0.3.0)
 
-- [x] `ListTools` shows exactly 11 callable tools: the prior 8 plus
+- [x] `ListTools` showed exactly 11 callable tools for v0.3.0: the prior 8 plus
       `velo_plan_dfir_triage`, `velo_compare_dfir_profiles`, and
       `velo_find_profiles_by_artifact`.
 - [x] `velo_plan_dfir_triage` returns profile recommendations and
@@ -264,7 +264,20 @@ Performed against the disposable lab described in
 - [x] No collection, hunt start/cancel, download, mutation, write API
       identity use, or raw VQL tool is registered.
 
-### Phase 4 — controlled collection (deferred; not v0.3.0)
+### Phase 4 — read-only flow/result backfill (v0.5.0)
+
+- [x] `ListTools` shows exactly 14 callable tools: the prior 11 plus
+  `velo_list_flows`, `velo_get_flow_status`, and
+  `velo_get_flow_results`.
+- [x] Flow/result handlers are read-only, validate `client_id`/`flow_id`,
+  and audit success/error/blocked outcomes.
+- [x] `velo_get_flow_results` is bounded by `max_rows` and
+  `max_result_bytes` in handler tests and reports truncation explicitly.
+- [ ] Real Velociraptor flow listing/status/result field mapping remains
+  pending; the current `grpcClient` backend still returns structured
+  `error` for flow methods until a reviewed backend RPC is added.
+
+### Phase 5 — controlled collection (deferred; not v0.5.0)
 
 - [ ] Attempt `velo_collect_artifact_with_approval` without a prior
       approval and confirm it is blocked, not executed.
@@ -281,7 +294,7 @@ Performed against the disposable lab described in
       approval and correctly reflects in subsequent
       `velo_get_flow_status`.
 
-### Phase 5 — hunts (deferred; not v0.3.0)
+### Phase 6 — hunts (deferred; not v0.5.0)
 
 - [ ] `velo_preview_hunt_scope` against a label/explicit-client-list
       scope returns an accurate matched-client count without creating a

@@ -1,28 +1,30 @@
 # Project state
 
-Last updated: 2026-07-06 (v0.3.0, read-only DFIR workflow expansion).
+Last updated: 2026-07-06 (v0.5.0, read-only flow/result backfill).
 
 ## Current milestone
 
-**v0.3.0 — Read-only DFIR workflow expansion.** Complete. Re-scoped by
-explicit user direction from PROJECT_PLAN.md's original v0.3.0 hunt
-management plan. This milestone adds analyst planning/comparison helpers
-around the existing Velociraptor visibility, DFIR profile, and artifact
-catalog capabilities without adding collection execution, hunt start or
-cancel, client-side mutation, downloads, write identity use, or raw VQL.
+**v0.5.0 — Read-only flow/result backfill.** Complete at the MCP handler
+and read-client interface layer. This milestone closes the original
+v0.1.0 tool-surface gap without adding collection execution, hunt start
+or cancel, flow cancel, downloads, write identity use, client/server
+mutation, or raw VQL exposure.
 
-- Added three local read-only workflow tools:
-  `velo_plan_dfir_triage`, `velo_compare_dfir_profiles`, and
-  `velo_find_profiles_by_artifact`.
-- All three new tools operate only on `internal/dfir.Registry` and
-  `internal/policy.Engine`; they do not call `Deps.ReadClient` or
-  `Deps.WriteClient`, and therefore make no Velociraptor RPC at all.
-- All new tool responses embed the v0.2.0 `internal/response.Result`
-  envelope (`success` / `empty` / `not_found` / `error`) while leaving
-  existing visibility/profile tool wire fields backward-compatible.
-- Callable tool inventory is now exactly 11, all read-only. The earlier
-  hunt-management ToolSpec entries remain metadata only and are not
-  registered with MCP.
+- Added three read-only flow/result tools: `velo_list_flows`,
+  `velo_get_flow_status`, and `velo_get_flow_results`.
+- All three validate `client_id` / `flow_id` before backend calls, embed
+  `internal/response.Result`, honestly report mock mode, and audit every
+  invocation.
+- `velo_get_flow_results` applies `velociraptor.max_rows` and
+  `velociraptor.max_result_bytes`, reports `truncated` / `next_cursor`,
+  and records row/byte counts in audit events.
+- Callable tool inventory is now exactly 14, all read-only. Upload,
+  collection, hunt, cancel, download, and IOC execution tools remain
+  unregistered metadata only.
+- Real Velociraptor flow RPC plumbing is still not implemented in
+  `grpcClient`; real-mode calls through the current backend therefore
+  produce a structured `error` rather than fake data. Handler behavior is
+  covered with fake read-client tests.
 
 ## Live lab validation (2026-07-06)
 
@@ -34,10 +36,10 @@ Validated the 8-tool read-only surface against a real Velociraptor lab
 a real stdio subprocess (`mcp.CommandTransport` against the actual built
 binary), not just unit tests against fakes.
 
-- **Callable inventory: still exactly 8** — `ListTools` against the live
+- **Callable inventory at the time: exactly 8** — `ListTools` against the live
   subprocess returned the same 8 tools as
   `internal/mcpserver/server_test.go`'s exact-inventory test. No new
-  tool was added, no flow tools were added.
+  tool had been added at that time; v0.5.0 later added the three read-only flow/result handlers.
 - **No raw VQL / generic `Query` path**: reconfirmed — `grpcClient` has
   no `Query` method; a full 399-artifact real catalog dump was scanned
   for VQL-shaped text and only human-authored `description` prose
@@ -120,12 +122,14 @@ binary), not just unit tests against fakes.
   if it's empty), and runs a real MCP server over stdio. A missing
   config file, or a *configured-but-broken* `read_api_config_path`,
   both fail closed (exit 1) without ever starting the transport.
-- `internal/mcpserver`: 11 registered tools (up from 8):
+- `internal/mcpserver`: 14 registered tools (up from 11):
   `velo_health_check`, `velo_search_clients`, `velo_get_client_info`,
   `velo_list_artifact_names`, `velo_get_artifact_details`,
   `velo_list_dfir_profiles`, `velo_get_dfir_profile`,
   `velo_validate_dfir_profile`, `velo_plan_dfir_triage`,
-  `velo_compare_dfir_profiles`, `velo_find_profiles_by_artifact`. All
+  `velo_compare_dfir_profiles`, `velo_find_profiles_by_artifact`,
+  `velo_list_flows`, `velo_get_flow_status`, and
+  `velo_get_flow_results`. All
   five visibility tools share
   `velo_health_check`'s existing mock/real branching and
   evidence-honesty pattern:
@@ -142,8 +146,8 @@ binary), not just unit tests against fakes.
     `policy.ArtifactAllowed`) happen before any mode branching, and
     *do* produce a Go-level error with a `blocked` audit outcome — these
     are static request defects, not Velociraptor connectivity data.
-  The flow/collection/hunt/IOC execution tools remain unregistered
-  `ToolSpec` metadata; the exact-tool-inventory test now expects 11, and a
+  The upload/collection/hunt/IOC execution tools remain unregistered
+  `ToolSpec` metadata; the exact-tool-inventory test now expects 14, and a
   `TestNewNeverRegistersUnsafeTools` test guards against a
   collect/hunt/download/cancel/vql-named tool ever becoming callable.
 - `internal/velociraptor`: gained four more real methods this milestone,
@@ -180,7 +184,7 @@ binary), not just unit tests against fakes.
   `NewGRPCClient`).
 - Tests: `internal/mcpserver/tools_workflow_test.go` covers v0.3.0
   success, empty, not_found, and validation-error paths for the three
-  workflow tools; `server_test.go` now verifies exactly 11 callable
+  workflow tools; `server_test.go` now verifies exactly 14 callable
   read-only tools and exercises the new tools over an MCP session. Older
   tests: `internal/velociraptor/grpcclient_test.go` gained
   `fakeClientSearcher`/`fakeClientGetter`/`fakeArtifactCatalog` and
@@ -207,13 +211,7 @@ binary), not just unit tests against fakes.
 
 ## What does not exist yet
 
-- `velo_list_flows`, `velo_get_flow_status`, `velo_get_flow_results` —
-  originally scoped to v0.1.0 in PROJECT_PLAN.md but deferred: no
-  `veloapi` RPC exists yet for flow listing/status/results, and none was
-  added in this pass. Revisit as a follow-up before calling v0.1.0 fully
-  done against the original plan, or explicitly re-scope them into
-  v0.2.0 in PROJECT_PLAN.md.
-- Any of the other 16 stable-core tools as callable MCP tools
+- Any of the other 13 stable-core tools as callable MCP tools
   (collection, hunts, uploads, IOC).
 - Any RPC beyond `Check`/`ListClients`/`GetClient`/`GetArtifacts` — no
   `Query`, no flow/hunt RPCs, all still `ErrNotImplemented` on

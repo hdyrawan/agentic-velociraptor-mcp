@@ -2,13 +2,14 @@
 // (config, policy, approval, audit, dfir, velociraptor, vql) into an MCP
 // server exposing the stable core described in PROJECT_PLAN.md.
 //
-// As of v0.3.0, exactly 11 read-only tools are registered:
+// As of v0.5.0, exactly 14 read-only tools are registered:
 // velo_health_check, velo_search_clients, velo_get_client_info,
 // velo_list_artifact_names, velo_get_artifact_details,
 // velo_list_dfir_profiles, velo_get_dfir_profile, and
 // velo_validate_dfir_profile, plus velo_plan_dfir_triage,
-// velo_compare_dfir_profiles, and velo_find_profiles_by_artifact. The
-// five visibility tools call Deps.ReadClient for a real Velociraptor gRPC
+// velo_compare_dfir_profiles, velo_find_profiles_by_artifact,
+// velo_list_flows, velo_get_flow_status, and velo_get_flow_results. The
+// visibility and flow/result tools call Deps.ReadClient for a real Velociraptor gRPC
 // response when Deps.VelociraptorReadMode is "real", and honestly report
 // mock mode with no Velociraptor call otherwise. The three workflow tools
 // read only the already-loaded DFIR profile registry and local policy. No
@@ -97,13 +98,14 @@ type Server struct {
 }
 
 // New constructs a Server and registers the tools that are safe and
-// implemented for the current release. v0.3.0 adds only local read-only
-// workflow helpers; registering write-capable collection/hunt/download
+// implemented for the current release. v0.5.0 backfills only read-only
+// flow/result visibility; registering write-capable collection/hunt/download
 // tool groups remains deferred to later milestones in PROJECT_PLAN.md.
 func New(name, version string, deps Deps) *Server {
 	s := mcp.NewServer(&mcp.Implementation{Name: name, Version: version}, nil)
 
 	registerVisibilityTools(s, deps)
+	registerFlowTools(s, deps)
 	registerProfileTools(s, deps)
 	registerWorkflowTools(s, deps)
 

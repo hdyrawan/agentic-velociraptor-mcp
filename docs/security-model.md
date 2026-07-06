@@ -207,6 +207,16 @@ Velociraptor data supports. Concretely:
   server-attested fact. A compromised or spoofed client could report
   false values for these fields; nothing in this milestone treats them
   as trustworthy for anything beyond triage/selection purposes.
+- **v0.5.0** backfills the three read-only flow/result handlers
+  (`velo_list_flows`, `velo_get_flow_status`, `velo_get_flow_results`)
+  onto the same response envelope. They validate client/flow IDs before
+  any read-client call, report `not_found` separately from operational
+  errors when the read client returns the sentinel errors, and make
+  truncation explicit (`truncated`, `next_cursor`, row/byte counts)
+  rather than presenting partial results as complete. The current real
+  gRPC backend does not yet implement flow RPCs, so real-mode flow calls
+  return a structured `error` rather than fabricated data until a
+  reviewed backend is added.
 
 ## Dependency surface: no upstream Velociraptor server module
 
@@ -325,7 +335,7 @@ metadata is added.
 
 ### Confused-deputy mitigation for future approval-gated tools
 
-None of the 11 tools registered as of v0.3.0 require approval because all
+None of the 14 tools registered as of v0.5.0 require approval because all
 are read-only. For future approval-gated tools (collection, hunt
 start/cancel, flow cancel, upload download), `internal/approval`'s
 design already anticipates this: `approval.RequestFingerprint` hashes
@@ -341,8 +351,8 @@ a standing grant of "this operation category is now approved." See
 
 The stable core deliberately exposes 27 narrow tools rather than a small
 number of broad, parameterizable ones (and no raw-VQL escape hatch at
-all). v0.3.0 still goes further: only 11 of those 27 are registered, and
-all 11 are read-only. Minimizing the callable surface at every point in time — not just
+all). v0.5.0 still goes further: only 14 of those 27 are registered, and
+all 14 are read-only. Minimizing the callable surface at every point in time — not just
 in the final v1.0.0 design — reduces both the attack surface and the
 chance an agent misuses a capability it didn't need for the task at
 hand. When a future HTTP/remote transport is added, this same principle

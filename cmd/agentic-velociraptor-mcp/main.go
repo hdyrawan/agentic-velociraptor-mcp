@@ -1,10 +1,10 @@
 // Command agentic-velociraptor-mcp is the entrypoint for the
 // agentic-velociraptor-mcp MCP server.
 //
-// As of v0.3.0 this starts a real MCP server over the stdio transport
+// As of v0.5.0 this starts a real MCP server over the stdio transport
 // (the only transport this project supports; see
-// docs/security-model.md), exposing 11 read-only tools. The five
-// visibility tools make real Velociraptor gRPC calls when
+// docs/security-model.md), exposing 14 read-only tools. The visibility
+// and flow/result tools route through the read client when
 // velociraptor.read_api_config_path is configured, or run in mock mode
 // otherwise. The profile and workflow tools are local read-only helpers
 // over the loaded profile registry and policy. See PROJECT_PLAN.md and
@@ -34,7 +34,7 @@ import (
 
 // version is the build version. Overridden at release build time via
 // -ldflags "-X main.version=...".
-var version = "0.3.0"
+var version = "0.5.0"
 
 // defaultProfilesDir is the --profiles-dir flag's default value.
 // resolveProfilesDir only applies its cwd-independent fallback when the
@@ -59,11 +59,11 @@ func run(args []string, out io.Writer) int {
 		fmt.Fprintf(out, "Usage:\n  agentic-velociraptor-mcp --config /path/to/config.yaml [flags]\n\n")
 		fmt.Fprintf(out, "Flags:\n")
 		fs.PrintDefaults()
-		fmt.Fprintf(out, "\nStatus: v0.3.0. Starts a real MCP server over stdio exposing 11 read-only\n")
-		fmt.Fprintf(out, "tools: 5 visibility tools, 3 DFIR profile catalog tools, and 3 local\n")
-		fmt.Fprintf(out, "workflow planning/comparison tools. Visibility tools make real Velociraptor\n")
-		fmt.Fprintf(out, "gRPC calls when velociraptor.read_api_config_path is set in --config, and\n")
-		fmt.Fprintf(out, "otherwise run in mock mode. v0.3.0 does not execute collections or hunts. See PROJECT_PLAN.md and\n")
+		fmt.Fprintf(out, "\nStatus: v0.5.0. Starts a real MCP server over stdio exposing 14 read-only\n")
+		fmt.Fprintf(out, "tools: 5 visibility tools, 3 flow/result tools, 3 DFIR profile catalog\n")
+		fmt.Fprintf(out, "tools, and 3 local workflow planning/comparison tools. Read-client tools\n")
+		fmt.Fprintf(out, "use velociraptor.read_api_config_path when set in --config, and\n")
+		fmt.Fprintf(out, "otherwise run in mock mode. v0.5.0 does not execute collections, hunts, downloads, cancels, or raw VQL. See PROJECT_PLAN.md and\n")
 		fmt.Fprintf(out, "PROJECT_STATE.md.\n")
 	}
 

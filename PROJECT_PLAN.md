@@ -155,6 +155,22 @@ milestone after collection/write approval foundations are implemented.
   read-only. The older 7 hunt-management ToolSpec entries remain
   metadata only and are not registered with MCP.
 
+### v0.5.0 — Read-only flow/result backfill (complete)
+
+Re-scoped from generic production hardening to close the original v0.1.0
+read-only flow/result gap without adding write-capable behavior.
+
+- Added callable `velo_list_flows`, `velo_get_flow_status`, and
+  `velo_get_flow_results`.
+- All three are read-only, audit every call, use strict client/flow ID
+  validation, preserve the v0.2.0 response envelope, and route only
+  through `Deps.ReadClient`.
+- `velo_get_flow_results` enforces row and byte bounds and reports
+  truncation honestly.
+- Callable tool inventory increases from 11 to 14, still entirely
+  read-only. Upload, collection, hunt, cancel, download, and IOC
+  execution tools remain unregistered.
+
 ### v0.4.0 — DFIR profiles and IOC hunting
 
 - Implement: `velo_list_dfir_profiles`, `velo_get_dfir_profile`,
@@ -165,7 +181,7 @@ milestone after collection/write approval foundations are implemented.
 - Validate hash/IP/domain input.
 - Use fixed templates and approved profile definitions only.
 
-### v0.5.0 — Production hardening
+### Future — Production hardening
 
 - Docker image, non-root runtime.
 - Config validation hardening.
