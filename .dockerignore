@@ -1,0 +1,8 @@
+.git
+bin/
+*.md
+!README.md
+docs/
+tests/
+examples/
+.github/
