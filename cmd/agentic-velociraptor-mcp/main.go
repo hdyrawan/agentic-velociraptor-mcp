@@ -293,6 +293,24 @@ func (f *paramMapFlag) Set(s string) error {
 	return nil
 }
 
+// stringSliceFlag accumulates repeated flag occurrences into a slice,
+// for runApprove's hunt-scope client ID list.
+type stringSliceFlag struct {
+	values []string
+}
+
+func (f *stringSliceFlag) String() string {
+	if f == nil {
+		return ""
+	}
+	return strings.Join(f.values, ",")
+}
+
+func (f *stringSliceFlag) Set(s string) error {
+	f.values = append(f.values, s)
+	return nil
+}
+
 // runApprove implements the `approve` subcommand: a human operator's
 // direct entrypoint for creating and deciding an approval.Request. It is
 // never invoked by the MCP server and has no MCP tool counterpart.
@@ -302,7 +320,7 @@ func runApprove(args []string, out io.Writer) int {
 
 	store := fs.String("store", "", "path to the approval store JSON file (must match the running MCP server's approval.store_path)")
 	reference := fs.String("reference", "", "approval reference to create/decide, e.g. a ticket number")
-	operation := fs.String("operation", "", "one of: collect_artifact, collect_dfir_profile, cancel_flow, download_flow_upload")
+	operation := fs.String("operation", "", "one of: collect_artifact, collect_dfir_profile, cancel_flow, download_flow_upload, start_hunt, start_dfir_hunt, cancel_hunt")
 	caseID := fs.String("case-id", "", "investigation/case identifier")
 	reason := fs.String("reason", "", "justification for this operation")
 	requester := fs.String("requester", "", "identity of whoever is asking for this operation")
@@ -312,12 +330,17 @@ func runApprove(args []string, out io.Writer) int {
 	ttlSeconds := fs.Int("ttl-seconds", defaultApprovalTTLSeconds, "approval time-to-live in seconds, must match approval.ttl_seconds")
 
 	clientID := fs.String("client-id", "", "target client ID (collect_artifact, collect_dfir_profile, cancel_flow, download_flow_upload)")
-	artifact := fs.String("artifact", "", "target artifact name (collect_artifact)")
-	profile := fs.String("profile", "", "target DFIR profile name (collect_dfir_profile)")
+	artifact := fs.String("artifact", "", "target artifact name (collect_artifact, start_hunt)")
+	profile := fs.String("profile", "", "target DFIR profile name (collect_dfir_profile, start_dfir_hunt)")
 	flowID := fs.String("flow-id", "", "target flow ID (cancel_flow, download_flow_upload)")
 	uploadName := fs.String("upload-name", "", "target upload name (download_flow_upload)")
+	huntID := fs.String("hunt-id", "", "target hunt ID (cancel_hunt)")
+	label := fs.String("label", "", "hunt scope label filter (start_hunt, start_dfir_hunt)")
+	targetAll := fs.Bool("all", false, "hunt scope targets all clients (start_hunt, start_dfir_hunt)")
 	params := &paramMapFlag{}
-	fs.Var(params, "param", "artifact parameter as key=value; may be repeated (collect_artifact)")
+	fs.Var(params, "param", "artifact parameter as key=value; may be repeated (collect_artifact, start_hunt)")
+	clientIDs := &stringSliceFlag{}
+	fs.Var(clientIDs, "hunt-client-id", "explicit hunt scope client ID; may be repeated (start_hunt, start_dfir_hunt)")
 
 	fs.Usage = func() {
 		fmt.Fprintf(out, "agentic-velociraptor-mcp approve: create and decide an approval.Request out-of-band\n\n")
@@ -359,8 +382,21 @@ func runApprove(args []string, out io.Writer) int {
 		req.ClientID = *clientID
 		req.FlowID = *flowID
 		req.UploadName = *uploadName
+	case approval.OperationStartHunt:
+		req.Artifact = *artifact
+		req.Parameters = params.values
+		req.ClientIDs = clientIDs.values
+		req.Label = *label
+		req.TargetAll = *targetAll
+	case approval.OperationStartDFIRHunt:
+		req.Profile = *profile
+		req.ClientIDs = clientIDs.values
+		req.Label = *label
+		req.TargetAll = *targetAll
+	case approval.OperationCancelHunt:
+		req.HuntID = *huntID
 	default:
-		fmt.Fprintf(out, "agentic-velociraptor-mcp approve: --operation must be one of collect_artifact, collect_dfir_profile, cancel_flow, download_flow_upload (got %q)\n", *operation)
+		fmt.Fprintf(out, "agentic-velociraptor-mcp approve: --operation must be one of collect_artifact, collect_dfir_profile, cancel_flow, download_flow_upload, start_hunt, start_dfir_hunt, cancel_hunt (got %q)\n", *operation)
 		return 2
 	}
 

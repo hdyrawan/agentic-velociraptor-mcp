@@ -277,7 +277,11 @@ Performed against the disposable lab described in
   pending; the current `grpcClient` backend still returns structured
   `error` for flow methods until a reviewed backend RPC is added.
 
-### Phase 5 — controlled collection (deferred; not v0.5.0)
+### Phase 5 — controlled collection (v0.4.0, unit-tested; pending live-lab validation)
+
+The six collection/flow-upload tools are unit-tested with fakes. The
+items below require a disposable lab with enrolled clients and the write
+API configured:
 
 - [ ] Attempt `velo_collect_artifact_with_approval` without a prior
       approval and confirm it is blocked, not executed.
@@ -294,18 +298,37 @@ Performed against the disposable lab described in
       approval and correctly reflects in subsequent
       `velo_get_flow_status`.
 
-### Phase 6 — hunts (deferred; not v0.5.0)
+### Phase 6 — hunts (v0.6.0, unit-tested; pending live-lab validation)
 
 - [ ] `velo_preview_hunt_scope` against a label/explicit-client-list
       scope returns an accurate matched-client count without creating a
       hunt.
+- [ ] `velo_start_hunt_with_approval` with a valid approval actually
+      creates a hunt on the Velociraptor server (requires real
+      `write_api_config_path` and gRPC hunt RPCs, which are not yet
+      implemented on `grpcClient`).
+- [ ] `velo_start_dfir_hunt_with_approval` with a valid approval creates
+      hunts for each profile artifact (same real-RPC prerequisite).
+- [ ] `velo_list_hunts` returns real hunt records from the server.
+- [ ] `velo_get_hunt_status` returns accurate state/client-count for a
+      real created hunt, and `not_found` for a nonexistent hunt ID.
+- [ ] `velo_get_hunt_results` returns real result rows for a real hunt,
+      bounded by `max_rows`/`max_result_bytes`, and pagination works
+      across result pages.
+- [ ] `velo_cancel_hunt_with_approval` with a valid approval cancels a
+      real running hunt, reflected in subsequent `velo_get_hunt_status`.
 - [ ] Attempt a scope matching more than `policy.max_hunt_clients`;
-      confirm start is refused (or requires explicit override per final
-      design) rather than silently capped.
+      confirm start is refused rather than silently capped.
 - [ ] Attempt `all`-clients scope with `policy.allow_target_all: false`;
       confirm refusal.
-- [ ] `velo_cancel_hunt_with_approval` requires approval and is reflected
-      in `velo_get_hunt_status`.
+- [ ] Start/cancel without prior approval is blocked (audited as
+      `blocked`), not executed.
+- [ ] Approval for artifact A on scope X cannot be reused for artifact B
+      or scope Y (fingerprint mismatch).
+- [ ] Unregistered profile names in `velo_start_dfir_hunt_with_approval`
+      are rejected with `not_found`.
+- [ ] Non-allowlisted profile names in `velo_start_dfir_hunt_with_approval`
+      are rejected (blocked).
 
 ### Phase 6 — DFIR profiles and IOC hunting (future)
 

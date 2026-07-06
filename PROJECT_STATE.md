@@ -1,17 +1,57 @@
 # Project state
 
-Last updated: 2026-07-06 (v0.4.0, controlled single-client collection
-pilot, rebased onto v0.5.0's read-only flow/result backfill).
+Last updated: 2026-07-06 (v0.6.0, hunt management schema/safety scaffold,
+rebased onto v0.4.0/v0.5.0).
 
 ## Current milestone
+
+**v0.6.0 — Hunt management schema/safety scaffold.** Backfill of the
+original v0.4.0/v0.5.0 hunt-management scope from the PROJECT_PLAN.md roadmap.
+All seven MCP tool handlers are implemented and registered, but **real
+gRPC hunt execution is NOT yet implemented** — write operations invoke
+`Deps.WriteClient` (currently `placeholderClient` → `ErrNotImplemented`)
+and `Deps.Approvals` (currently `nil`). Real-mode write operations
+report "not yet available." This milestone is a safety scaffold with
+fake-backed tests; real Velociraptor hunt gRPC RPC must be added in a
+follow-up milestone.
+
+- Implemented seven hunt management tool handlers:
+  `velo_preview_hunt_scope` (RO, blocks `target_all` by default),
+  `velo_start_hunt_with_approval` (approval-gated, allowlisted artifacts,
+  enforces `max_hunt_clients`),
+  `velo_start_dfir_hunt_with_approval` (approval-gated, profile
+  allowlist, validates via `dfir.ValidateProfile`),
+  `velo_list_hunts` (RO, cursor pagination),
+  `velo_get_hunt_status` (RO, not-found sentinel),
+  `velo_get_hunt_results` (RO, bounded by max_rows/max_result_bytes,
+  cursor pagination),
+  `velo_cancel_hunt_with_approval` (approval-gated).
+- Approval-gated tools enforce four independent gates before any
+  Velociraptor call: `approval.Store.IsApproved`/`Consume`,
+  `policy.Engine` mode check (read-only mode blocks writes), scope
+  validation (`validation.ValidateHuntScope`), and artifact/profile
+  allowlist enforcement plus `max_hunt_clients` cap.
+- Read-only hunt tools (preview, list, status, results) branch on
+  `Deps.VelociraptorReadMode` (mock/real) like the v0.1.0 visibility
+  tools. In real mode, read-only tools call `Deps.ReadClient` which also
+  returns `ErrNotImplemented` for hunt methods — so they follow the
+  mock/real branching pattern but still cannot execute against a real
+  server.
+- New errors: `velociraptor.ErrHuntNotFound`, `velociraptor.ErrFlowNotFound`,
+  `velociraptor.ErrTargetAllDisabled`.
+- Callable tool inventory is now exactly 27: 5 visibility + 3 DFIR profile
+  + 3 DFIR workflow + 3 flow/result + 3 flow uploads + 3 collection +
+  7 hunt management.
+
+## Previous milestone
 
 **v0.4.0 — Controlled single-client collection pilot.** Complete. This
 is this project's **first write-capable Velociraptor feature**, and it
 is deliberately a controlled pilot, not unrestricted write access: no
 hunts, no multi-client collection, no raw VQL, no destructive action.
 Implemented independently of, and merged after, v0.5.0's read-only
-flow/result backfill (see "Previous milestone" below); this branch was
-rebased onto that work rather than the two conflicting.
+flow/result backfill (see below); this branch was rebased onto that work
+rather than the two conflicting.
 
 - Added six new tools: `velo_collect_artifact_with_approval`,
   `velo_collect_dfir_profile_with_approval`,
@@ -69,13 +109,12 @@ rebased onto that work rather than the two conflicting.
   read-only) to 20: the six tools above are the only write-capable ones
   anywhere in this codebase.
 
-## Previous milestone
+### v0.5.0 — Read-only flow/result backfill (precedes v0.4.0)
 
-**v0.5.0 — Read-only flow/result backfill.** Complete at the MCP handler
-and read-client interface layer. This milestone closes the original
-v0.1.0 tool-surface gap without adding collection execution, hunt start
-or cancel, flow cancel, downloads, write identity use, client/server
-mutation, or raw VQL exposure.
+Complete at the MCP handler and read-client interface layer. This
+milestone closes the original v0.1.0 tool-surface gap without adding
+collection execution, hunt start or cancel, flow cancel, downloads,
+write identity use, client/server mutation, or raw VQL exposure.
 
 - Added three read-only flow/result tools: `velo_list_flows`,
   `velo_get_flow_status`, and `velo_get_flow_results`.
@@ -170,24 +209,23 @@ binary), not just unit tests against fakes.
   gained the `approve` subcommand and wires a real `WriteClient`/
   `VelociraptorWriteMode` from `write_api_config_path`, mirroring the
   existing read-client wiring.
+- **New in v0.6.0**: `internal/mcpserver/tools_hunts.go`, registering
+  seven hunt management tools. `internal/velociraptor/hunts.go` adds the
+  `HuntReader`/`HuntWriter` interfaces with `ErrHuntNotFound` and
+  `ErrTargetAllDisabled`. `internal/velociraptor/flows.go` adds
+  `ErrFlowNotFound`. `internal/mcpserver/tools_hunts_test.go` (1142 lines)
+  covers all 7 tools with 25+ test cases including approval gating,
+  scope validation, allowlist enforcement, pagination, and no-raw-VQL
+  guarantees.
 - **New in v0.3.0**: `internal/mcpserver/tools_workflow.go`, registering
   three read-only local workflow helpers: `velo_plan_dfir_triage`,
   `velo_compare_dfir_profiles`, and `velo_find_profiles_by_artifact`.
-  These tools return profile recommendations, profile artifact overlap,
-  and artifact-to-profile coverage using only the loaded profile registry
-  and policy allowlists. They do not call Velociraptor or use the write
-  client.
-- **New in v0.2.0**: `internal/response` (the `Result`/`Status` envelope
-  described under "Current milestone" above) and
-  `velociraptor.ErrArtifactNotFound`. Everything else below predates
-  v0.2.0; only `internal/mcpserver/tools_visibility.go`'s four output
-  types and `internal/velociraptor/grpcclient.go`'s
-  `GetArtifactDetails` changed to use them (see "Current milestone").
+- **New in v0.2.0**: `internal/response` (the `Result`/`Status` envelope)
+  and `velociraptor.ErrArtifactNotFound`.
 - Go module `github.com/hdyrawan/agentic-velociraptor-mcp` (go 1.25).
 - Dependencies: `gopkg.in/yaml.v3`, `github.com/modelcontextprotocol/go-sdk`
   v1.6.1 (MCP protocol), `google.golang.org/grpc` v1.82.0 and
-  `google.golang.org/protobuf` v1.36.11 (new this milestone, for the
-  real Velociraptor gRPC client), plus their transitive deps. No other
+  `google.golang.org/protobuf` v1.36.11, plus their transitive deps. No other
   direct dependencies.
 - `cmd/agentic-velociraptor-mcp`: CLI with `--version`, `--help`,
   `--config` (required to run), `--profiles-dir` (default `profiles`,
@@ -199,9 +237,7 @@ binary), not just unit tests against fakes.
   if it's empty), and runs a real MCP server over stdio. A missing
   config file, or a *configured-but-broken* `read_api_config_path`,
   both fail closed (exit 1) without ever starting the transport.
-- `internal/mcpserver`: 20 registered tools (up from 11 as of v0.3.0; 14
-  after v0.5.0's read-only flow/result backfill; 20 after this
-  milestone's six write-capable tools):
+- `internal/mcpserver`: 27 registered tools:
   `velo_health_check`, `velo_search_clients`, `velo_get_client_info`,
   `velo_list_artifact_names`, `velo_get_artifact_details`,
   `velo_list_dfir_profiles`, `velo_get_dfir_profile`,
@@ -212,7 +248,11 @@ binary), not just unit tests against fakes.
   `velo_collect_dfir_profile_with_approval`,
   `velo_cancel_flow_with_approval`, `velo_list_flow_uploads`,
   `velo_get_flow_upload_metadata`,
-  `velo_download_flow_upload_with_approval`. All
+  `velo_download_flow_upload_with_approval`,
+  `velo_preview_hunt_scope`, `velo_start_hunt_with_approval`,
+  `velo_start_dfir_hunt_with_approval`, `velo_list_hunts`,
+  `velo_get_hunt_status`, `velo_get_hunt_results`,
+  `velo_cancel_hunt_with_approval`. All
   five visibility tools share
   `velo_health_check`'s existing mock/real branching and
   evidence-honesty pattern:
@@ -229,12 +269,9 @@ binary), not just unit tests against fakes.
     `policy.ArtifactAllowed`) happen before any mode branching, and
     *do* produce a Go-level error with a `blocked` audit outcome — these
     are static request defects, not Velociraptor connectivity data.
-  Only hunt/IOC execution tools remain unregistered `ToolSpec` metadata;
-  the exact-tool-inventory test now expects 20
-  (`TestNewRegistersExactlyTwentyTools`), and
-  `TestNewNeverRegistersUnsafeTools` guards against a
-  hunt/raw-VQL-named tool ever becoming callable while allowlisting the
-  six known write-capable tool names introduced this milestone.
+  Only IOC execution tool (`velo_hunt_ioc_with_approval`) remains
+  unregistered `ToolSpec` metadata; the exact-tool-inventory test now
+  expects 27 (`TestNewRegistersExactlyTwentySevenTools`).
 - `internal/velociraptor`: gained four more real methods this milestone,
   on top of the existing `HealthCheck`.
   - `veloapi/`: split into `health.proto` (health messages only),
@@ -296,9 +333,6 @@ binary), not just unit tests against fakes.
 
 ## What does not exist yet
 
-- Hunt management and the IOC hunting tool — deferred indefinitely;
-  no hunt of any kind exists in this codebase, by design (see
-  PROJECT_PLAN.md's non-negotiable constraints).
 - Real gRPC wiring for `CollectArtifact`/`CancelFlow`/upload RPCs — the
   six v0.4.0 tools exist and are fully policy/approval/audit-gated, but
   `grpcClient` still delegates these to the embedded placeholder
@@ -309,22 +343,25 @@ binary), not just unit tests against fakes.
 - Real gRPC wiring for `ListFlows`/`GetFlowStatus`/`GetFlowResults` on
   the read side (v0.5.0's tools exist and are fully validated/audited,
   but `grpcClient` still delegates these to the embedded placeholder).
+- Real hunt management via gRPC: `WriteClient`'s `HuntWriter` methods
+  (`PreviewHuntScope`, `StartHunt`, `ListHunts`, `GetHuntStatus`,
+  `GetHuntResults`, `CancelHunt`) all return `ErrNotImplemented` on
+  `grpcClient`. The v0.6.0 hunt tools are callable MCP tools but their
+  real-mode path reports "not yet available" — configured write API
+  paths are not loaded, and no gRPC hunt RPCs are implemented.
+- The write API client (`write_api_config_path`) is not read by any code
+  for collection/cancel/upload or hunt operations.
+- `velo_hunt_ioc_with_approval` — not yet implemented.
 - Any RPC beyond `Check`/`ListClients`/`GetClient`/`GetArtifacts` — no
   `Query`.
 - Any audit sanitizer implementation beyond a flat top-level map
   redactor.
 - HTTP/SSE/streamable HTTP transport — intentionally out of scope.
-- Real-server validation of `velo_search_clients`/`velo_get_client_info`
-  against actual enrolled endpoint clients — the 2026-07-06 lab pass (see
-  above) had zero enrolled clients, so field-value correctness
-  (hostname/OS/last-seen/labels/MAC addresses) and
-  `SearchClientsRequest.query`'s real matching grammar remain unverified.
-  The next person with access to a lab with at least one enrolled client
-  should run through docs/lab-validation-plan.md's remaining unchecked
-  Phase 2 items. The v0.4.0 write-capable tools have never been
-  exercised against a live Velociraptor server at all (see the known
-  limitation above).
-- Docker image, rate limiting, further integration tests (v0.6.0
+- Real-server validation against enrolled endpoint clients for all tool
+  groups (visibility field-value correctness, flow/hunt results, and
+  write-capable tool execution against a live Velociraptor server) —
+  see docs/lab-validation-plan.md's unchecked items.
+- Docker image, rate limiting, further integration tests
   concerns).
 
 ## Known assumptions to revisit
@@ -375,24 +412,15 @@ binary), not just unit tests against fakes.
 
 ## Immediate next step
 
-The real gRPC calls (`Check`, `ListClients`, `GetClient`,
-`GetArtifacts`) are now live-validated against a disposable lab
-Velociraptor server (2026-07-06, see "Live lab validation" above and
-docs/lab-validation-plan.md Phases 1 and 2) — that foundation is no
-longer unvalidated. What's left before calling Phase 2 fully closed:
-enroll at least one disposable client in a lab and re-run
-`velo_search_clients`/`velo_get_client_info` against it, to confirm
-real field-value mapping and `SearchClientsRequest.query`'s matching
-grammar (both currently unverified due to the lab's empty client
-inventory).
+v0.6.0 is now rebased onto v0.4.0/v0.5.0, completing all three
+milestones. The next step is to implement real gRPC wiring for all three
+tool groups (collection/cancel/upload RPCs, flow listing/status/results,
+and hunt management RPCs), so that the 27 callable tools can execute
+against a live Velociraptor server instead of returning
+`ErrNotImplemented` in real mode.
 
-Next up per PROJECT_PLAN.md: v0.5.0, implementing the three
-flow-visibility tools left over from the original v0.1.0 scope
-(`velo_list_flows`, `velo_get_flow_status`, `velo_get_flow_results` —
-each needs its own minimal `veloapi` RPC addition following the same
-pattern as the `ListClients`/`GetClient`/`GetArtifacts` milestone: fetch
-the exact upstream message/service shape first, add only the fields
-actually used, generate with `buf`). After that, v0.6.0 covers
-production hardening plus the real gRPC wiring this milestone's
-collection/cancel/download tools are still missing (see "known
-limitation" above).
+Meanwhile, live-lab validation of all tool groups (Phases 2, 5, and 6 in
+docs/lab-validation-plan.md) requires access to a disposable lab with
+enrolled endpoints — see docs/lab-validation-plan.md for the unchecked
+items, which include per-client field-value verification of visibility
+tools, write-capable tool execution, and hunt management validation.

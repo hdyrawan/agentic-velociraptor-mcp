@@ -200,6 +200,19 @@ Velociraptor data supports. Concretely:
   as structured `status` values, but they are planning metadata only:
   they do not claim that any endpoint was examined and they do not
   execute collections or hunts.
+- **v0.6.0** extends the response envelope to the four read-only hunt
+  tools (`velo_preview_hunt_scope`, `velo_list_hunts`,
+  `velo_get_hunt_status`, `velo_get_hunt_results`), which follow the
+  same mock/real branching and evidence-honesty pattern as the v0.1.0
+  visibility tools. Hunt status reports `not_found` for unknown hunt IDs
+  via `velociraptor.ErrHuntNotFound`. Hunt results report truncation
+  when `max_rows` or `max_result_bytes` is reached. The three
+  approval-gated hunt tools (`velo_start_hunt_with_approval`,
+  `velo_start_dfir_hunt_with_approval`, `velo_cancel_hunt_with_approval`)
+  respect the approval-model invariant (no write-Velociraptor call is
+  made without a matching, consumed `approval.Decision`), and in mock
+  mode (or when no write API config is configured) report that the
+  capability is not yet available rather than silently succeeding.
 - `velo_get_client_info` and `velo_search_clients` return exactly what
   Velociraptor's `ApiClient` record reports for a given endpoint
   (hostname, OS, last-seen time, labels, ...) with no independent
@@ -335,17 +348,17 @@ attacker-controlled URL.
 
 `internal/mcpserver` only calls `mcp.AddTool` for tools that are fully
 implemented and reviewed for the current milestone — visibility,
-profile, workflow, and (as of v0.4.0) the six controlled collection
-pilot tools. Hunt-execution, hunt read/preview, and IOC execution tools
-exist only as `ToolSpec` metadata in `tools_hunts.go` and `tools_ioc.go`
-(used for `docs/tool-reference.md` generation); `velo_list_flows`,
-`velo_get_flow_status`, and `velo_get_flow_results` exist as metadata in
-`tools_flows.go` alongside the now-implemented upload/download tools.
-None of these are reachable by any MCP client — confirmed in
+profile, workflow, flow/result, collection, and (as of v0.4.0/v0.6.0)
+hunt management tools — all 27 core tools are now callable. The IOC
+execution tool (`velo_hunt_ioc_with_approval`) exists only as `ToolSpec`
+metadata in `tools_ioc.go` (used for `docs/tool-reference.md` generation)
+and is not reachable by any MCP client — confirmed in
 `internal/mcpserver/server_test.go`'s exact-tool-inventory test. A
 planned tool becomes callable only when its milestone lands with real
 validation, policy, and (where required) approval wiring, not when its
-metadata is added.
+metadata is added. The v0.6.0 hunt tools are all wired to `mcp.AddTool`
+— approval-gated tools require a matching `approval.Decision` and enforce
+all four independent gates before any Velociraptor write call.
 
 ### Confused-deputy mitigation is implemented, not just designed (v0.4.0)
 
@@ -368,25 +381,32 @@ The deeper mitigation is architectural: **no MCP tool can call
 human operator, never through the MCP stdio transport. An MCP client
 (including an LLM driving tool calls) can request that a write-capable
 operation happen, by supplying an `approval_reference`; it can never
-make that reference valid. See [approval-flow.md](approval-flow.md) for
-the full workflow, including known limitations (single-analyst pilot,
-no cross-process file locking, no real Velociraptor RPC wiring yet for
-the underlying collection/cancel/upload calls themselves).
+make that reference valid. This invariant applies across all
+approval-gated tools — v0.4.0's six collection/flow tools and v0.6.0's
+three hunt management tools — all of which call `IsApproved` then
+`Consume` on `approval.Store` before executing any Velociraptor write
+operation. See [approval-flow.md](approval-flow.md) for the full
+workflow, including known limitations (single-analyst pilot, no
+cross-process file locking, no real Velociraptor RPC wiring yet for the
+underlying collection/cancel/upload/hunt RPCs).
 
 ### Tool and scope minimization is intentional
 
 The stable core deliberately exposes 27 narrow tools rather than a small
 number of broad, parameterizable ones (and no raw-VQL escape hatch at
-all). As of v0.4.0 (rebased onto v0.5.0), 20 of those 27 are registered:
-14 read-only tools plus six approval-gated write tools, each of which is
-still scoped to a single client per call, still requires explicit
-operator configuration (`policy.mode: controlled` and
-`approval.store_path`, plus `velociraptor.download_dir` for the download
-tool) before it does anything beyond report itself disabled, and none of
-which is a hunt or raw-VQL tool. Minimizing the callable surface at
-every point in time — not just in the final v1.0.0 design — reduces both
-the attack surface and the chance an agent misuses a capability it
-didn't need for the task at hand. When a future HTTP/remote transport is
-added, this same principle should extend to authorization scopes (see
-PROJECT_PLAN.md's scope list, e.g. `velo:read`, `velo:profiles:read`,
-`velo:collect`) rather than an all-or-nothing API token.
+all). As of v0.6.0 (rebased onto v0.4.0/v0.5.0), all 27 are registered:
+20 read-only tools (visibility, profiles, workflows, flows/results, flow
+uploads), six approval-gated single-client collection tools, and seven
+approval-gated hunt management tools. Each collection tool is still
+scoped to a single client per call and requires operator configuration
+(`policy.mode: controlled` and `approval.store_path`, plus
+`velociraptor.download_dir` for the download tool) before it does
+anything beyond report itself disabled. Hunt tools enforce
+`max_hunt_clients`, profile/artifact allowlists, and scope validation.
+Minimizing the callable surface at every point in time — not just in the
+final v1.0.0 design — reduces both the attack surface and the chance an
+agent misuses a capability it didn't need for the task at hand. When a
+future HTTP/remote transport is added, this same principle should extend
+to authorization scopes (see PROJECT_PLAN.md's scope list, e.g.
+`velo:read`, `velo:profiles:read`, `velo:collect`, `velo:hunt`) rather
+than an all-or-nothing API token.

@@ -254,3 +254,40 @@ func TestRequestFingerprintIgnoresReasonAndRequester(t *testing.T) {
 		t.Fatal("fingerprint changed when only Reason/Requester differed")
 	}
 }
+
+func TestRequestFingerprintDetectsHuntScopeTampering(t *testing.T) {
+	base := testRequest("ref-1")
+	base.Operation = OperationStartHunt
+	base.Label = "windows"
+
+	wrongLabel := base
+	wrongLabel.Label = "linux"
+	if RequestFingerprint(base) == RequestFingerprint(wrongLabel) {
+		t.Fatal("fingerprints match despite different hunt scope label")
+	}
+
+	targetAll := base
+	targetAll.Label = ""
+	targetAll.TargetAll = true
+	if RequestFingerprint(base) == RequestFingerprint(targetAll) {
+		t.Fatal("fingerprints match despite scope narrowing to label vs. all clients")
+	}
+
+	explicitClients := base
+	explicitClients.Label = ""
+	explicitClients.ClientIDs = []string{"C.1", "C.2"}
+	if RequestFingerprint(base) == RequestFingerprint(explicitClients) {
+		t.Fatal("fingerprints match despite different explicit client_ids scope")
+	}
+}
+
+func TestRequestFingerprintStableAcrossClientIDOrder(t *testing.T) {
+	a := testRequest("ref-1")
+	a.ClientIDs = []string{"C.1", "C.2"}
+	b := testRequest("ref-1")
+	b.ClientIDs = []string{"C.2", "C.1"}
+
+	if RequestFingerprint(a) != RequestFingerprint(b) {
+		t.Fatal("fingerprint depends on client_ids order")
+	}
+}

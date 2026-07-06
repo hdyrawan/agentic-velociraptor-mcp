@@ -86,6 +86,15 @@ type Request struct {
 	FlowID     string            `json:"flow_id,omitempty"`
 	UploadName string            `json:"upload_name,omitempty"`
 
+	// ClientIDs / Label / TargetAll describe a hunt's multi-client scope
+	// (OperationStartHunt, OperationStartDFIRHunt). Unlike ClientID
+	// (single-client operations), a hunt approval must pin down exactly
+	// which population it authorizes: an approval for "label=windows"
+	// must not be replayable against "all clients".
+	ClientIDs []string `json:"client_ids,omitempty"`
+	Label     string   `json:"label,omitempty"`
+	TargetAll bool     `json:"target_all,omitempty"`
+
 	CreatedAt time.Time `json:"created_at"`
 }
 

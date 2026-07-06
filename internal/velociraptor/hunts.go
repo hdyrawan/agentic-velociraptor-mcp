@@ -1,6 +1,17 @@
 package velociraptor
 
-import "context"
+import (
+	"context"
+	"errors"
+)
+
+// ErrHuntNotFound is returned by GetHuntStatus and GetHuntResults when
+// the requested hunt does not exist.
+var ErrHuntNotFound = errors.New("velociraptor: hunt not found")
+
+// ErrTargetAllDisabled is returned by PreviewHuntScope when all-clients
+// targeting is requested but policy disallows it.
+var ErrTargetAllDisabled = errors.New("velociraptor: targeting all clients is disabled by policy")
 
 // HuntState mirrors Velociraptor hunt states at the level tool
 // responses need.

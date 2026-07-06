@@ -2,29 +2,30 @@
 // (config, policy, approval, audit, dfir, velociraptor, vql) into an MCP
 // server exposing the stable core described in PROJECT_PLAN.md.
 //
-// As of v0.4.0 (rebased onto v0.5.0's read-only flow/result backfill),
-// exactly 20 tools are registered: the 14 read-only tools from
-// v0.1.0-v0.5.0 (velo_health_check, velo_search_clients,
+// As of v0.6.0 (rebased onto v0.4.0's collection pilot and v0.5.0's
+// read-only flow/result backfill), exactly 27 tools are registered: the
+// 14 read-only tools from v0.1.0-v0.5.0 (velo_health_check,
+// velo_search_clients,
 // velo_get_client_info, velo_list_artifact_names,
 // velo_get_artifact_details, velo_list_dfir_profiles,
 // velo_get_dfir_profile, velo_validate_dfir_profile,
 // velo_plan_dfir_triage, velo_compare_dfir_profiles,
 // velo_find_profiles_by_artifact, velo_list_flows, velo_get_flow_status,
-// velo_get_flow_results), plus six new tools implementing this
-// project's first write-capable Velociraptor operations: a controlled,
-// auditable, single-client collection pilot.
+// velo_get_flow_results), plus six v0.4.0 collection/evidence tools
+// (velo_collect_artifact_with_approval,
+// velo_collect_dfir_profile_with_approval, velo_cancel_flow_with_approval,
+// velo_list_flow_uploads, velo_get_flow_upload_metadata,
+// velo_download_flow_upload_with_approval), plus 7 v0.6.0 hunt management
+// tools (velo_preview_hunt_scope, velo_start_hunt_with_approval,
+// velo_start_dfir_hunt_with_approval, velo_list_hunts,
+// velo_get_hunt_status, velo_get_hunt_results,
+// velo_cancel_hunt_with_approval).
 //
-//   - velo_collect_artifact_with_approval / velo_collect_dfir_profile_with_approval /
-//     velo_cancel_flow_with_approval (tools_collection.go): approval-gated
-//     writes, each requiring case_id, reason, requester, target, and an
-//     approval_reference that must resolve to an approved, unconsumed,
-//     unexpired, fingerprint-matching approval.Store record.
-//   - velo_list_flow_uploads / velo_get_flow_upload_metadata
-//     (tools_flows.go): read-only, no approval required.
-//   - velo_download_flow_upload_with_approval (tools_flows.go):
-//     approval-gated like the collection tools; writes evidence bytes to
-//     a local, operator-configured directory and returns metadata only,
-//     never raw bytes inline.
+// The six v0.4.0 collection/evidence tools implement this project's first
+// write-capable Velociraptor operations: a controlled, auditable,
+// single-client collection pilot. The seven v0.6.0 hunt management tools
+// add approval-gated hunt start (single-artifact and DFIR-profile) and
+// cancel, plus read-only scout/preview, list, status, and results.
 //
 // Every approval-gated tool is disabled by default (see
 // writePilotEnabled) unless both policy.mode is "controlled" and
@@ -32,18 +33,17 @@
 // approval.Request — only the agentic-velociraptor-mcp `approve` CLI
 // subcommand can, so no MCP client (including an LLM driving one) can
 // self-approve its own request. This is a controlled pilot, not
-// unrestricted Velociraptor write access: no hunts, no multi-client
-// collection, no raw VQL, and no destructive action exist anywhere in
-// this codebase. See docs/security-model.md and docs/approval-flow.md.
+// unrestricted Velociraptor write access: no raw VQL, no unrestricted
+// hunt creation, and no destructive action exist anywhere in this
+// codebase. See docs/security-model.md and docs/approval-flow.md.
 //
-// The five visibility tools and the three flow/result tools call
-// Deps.ReadClient for a real Velociraptor gRPC response when
-// Deps.VelociraptorReadMode is "real", and honestly report mock mode
-// with no Velociraptor call otherwise; the two read-only upload tools
-// follow the same convention. The three workflow tools read only the
-// already-loaded DFIR profile registry and local policy. Hunt
-// management and raw VQL remain entirely out of scope; see
-// PROJECT_PLAN.md.
+// The visibility tools, flow/result tools, and read-only hunt tools
+// (preview, list, status, results) call Deps.ReadClient for a real
+// Velociraptor gRPC response when Deps.VelociraptorReadMode is "real",
+// and honestly report mock mode with no Velociraptor call otherwise;
+// the two read-only upload tools follow the same convention. The three
+// workflow tools read only the already-loaded DFIR profile registry and
+// local policy. See PROJECT_PLAN.md.
 package mcpserver
 
 import (
@@ -80,8 +80,9 @@ type Deps struct {
 	Profiles  *dfir.Registry
 
 	// ReadClient uses config.VelociraptorConfig.ReadAPIConfigPath. The
-	// five visibility tools, the three flow/result tools, and the two
-	// read-only upload tools call it when VelociraptorReadMode is
+	// visibility tools, flow/result tools, read-only upload tools, and
+	// read-only hunt tools (preview, list, status, results) call it when
+	// VelociraptorReadMode is
 	// "real".
 	ReadClient velociraptor.Client
 
@@ -100,8 +101,11 @@ type Deps struct {
 	// true and a matching approval has been verified and consumed. Used
 	// by velo_collect_artifact_with_approval,
 	// velo_collect_dfir_profile_with_approval,
-	// velo_cancel_flow_with_approval, and
-	// velo_download_flow_upload_with_approval.
+	// velo_cancel_flow_with_approval,
+	// velo_download_flow_upload_with_approval,
+	// velo_start_hunt_with_approval,
+	// velo_start_dfir_hunt_with_approval, and
+	// velo_cancel_hunt_with_approval.
 	WriteClient velociraptor.Client
 
 	// VelociraptorWriteMode mirrors VelociraptorReadMode for WriteClient:
@@ -111,7 +115,7 @@ type Deps struct {
 	// will be checked and consumed) but every underlying Velociraptor
 	// call then fails honestly with velociraptor.ErrNotImplemented,
 	// since this milestone's hand-authored veloapi proto mirror does not
-	// yet wire the real collection/cancel/upload RPCs; see
+	// yet wire the real collection/cancel/upload/hunt RPCs; see
 	// docs/security-model.md's known limitations.
 	VelociraptorWriteMode string
 }
@@ -138,10 +142,9 @@ type Server struct {
 }
 
 // New constructs a Server and registers the tools that are safe and
-// implemented for the current release. v0.4.0 adds the controlled,
-// approval-gated collection/cancel/download tool groups on top of
-// v0.5.0's read-only flow/result backfill; hunt management and raw VQL
-// remain deferred/out of scope in PROJECT_PLAN.md.
+// implemented for the current release. v0.6.0 adds the seven hunt
+// management tools on top of v0.4.0's controlled collection/evidence
+// tools and v0.5.0's read-only flow/result backfill.
 func New(name, version string, deps Deps) *Server {
 	s := mcp.NewServer(&mcp.Implementation{Name: name, Version: version}, nil)
 
@@ -150,6 +153,7 @@ func New(name, version string, deps Deps) *Server {
 	registerWorkflowTools(s, deps)
 	registerCollectionTools(s, deps)
 	registerFlowTools(s, deps)
+	registerHuntTools(s, deps)
 
 	return &Server{mcp: s, deps: deps}
 }

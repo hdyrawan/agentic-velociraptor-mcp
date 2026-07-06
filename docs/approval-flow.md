@@ -1,14 +1,17 @@
 # Approval flow
 
-Status: implemented as of v0.4.0. `internal/approval` now has a real
-`Store` implementation (`FileStore`, `internal/approval/filestore.go`),
-and every approval-gated tool
-(`velo_collect_artifact_with_approval`,
+Status: implemented as of v0.4.0 (controlled single-client collection
+pilot) and extended in v0.6.0 (hunt management). `internal/approval` has
+a real `Store` implementation (`FileStore`, `internal/approval/filestore.go`),
+and every approval-gated tool (v0.4.0: `velo_collect_artifact_with_approval`,
 `velo_collect_dfir_profile_with_approval`,
 `velo_cancel_flow_with_approval`,
-`velo_download_flow_upload_with_approval`) verifies against it before
-calling Velociraptor. This document describes the operator-facing
-workflow those tools depend on.
+`velo_download_flow_upload_with_approval`; v0.6.0:
+`velo_start_hunt_with_approval`,
+`velo_start_dfir_hunt_with_approval`,
+`velo_cancel_hunt_with_approval`) verifies against it before calling
+Velociraptor. This document describes the operator-facing workflow those
+tools depend on.
 
 ## The core guarantee
 
@@ -22,8 +25,6 @@ operator runs it directly, against the same on-disk store file
 "approval" a real control: an MCP client (including an LLM driving tool
 calls) can *request* that a write-capable operation run, by supplying an
 `approval_reference`, but it can never make that reference valid itself.
-
-## Operations that require approval
 
 Configured via `policy.require_approval_for` (see
 [configuration.md](configuration.md)); the stable default set is:
@@ -133,7 +134,7 @@ key), profile, hunt ID, flow ID, and upload name. `reason` and
 not a description of what Velociraptor operation would run, so wording
 differences there must never cause a spurious mismatch.
 
-## Known limitations (v0.4.0)
+## Known limitations (v0.4.0/v0.6.0)
 
 - **Single-analyst pilot, not a multi-writer system.** `FileStore`
   re-reads and rewrites the whole file on every call under an in-process
