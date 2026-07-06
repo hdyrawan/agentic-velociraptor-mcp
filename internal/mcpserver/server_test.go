@@ -35,7 +35,7 @@ func connectTestClient(t *testing.T, srv *Server) *mcp.ClientSession {
 	return session
 }
 
-func TestNewRegistersExactlyElevenSafeTools(t *testing.T) {
+func TestNewRegistersExactlyFourteenSafeTools(t *testing.T) {
 	deps, _ := testDeps(t)
 	srv := New("agentic-velociraptor-mcp-test", "0.0.0-test", deps)
 
@@ -58,9 +58,12 @@ func TestNewRegistersExactlyElevenSafeTools(t *testing.T) {
 		"velo_get_artifact_details",
 		"velo_get_client_info",
 		"velo_get_dfir_profile",
+		"velo_get_flow_results",
+		"velo_get_flow_status",
 		"velo_health_check",
 		"velo_list_artifact_names",
 		"velo_list_dfir_profiles",
+		"velo_list_flows",
 		"velo_plan_dfir_triage",
 		"velo_search_clients",
 		"velo_validate_dfir_profile",
@@ -197,6 +200,32 @@ func TestCallWorkflowToolsOverMCPSession(t *testing.T) {
 		{name: "velo_plan_dfir_triage", args: map[string]any{"case_type": "ransomware", "target_os": "windows"}},
 		{name: "velo_compare_dfir_profiles", args: map[string]any{"names": []any{"windows_basic_triage", "windows_process_network_triage"}}},
 		{name: "velo_find_profiles_by_artifact", args: map[string]any{"artifact": "Generic.Client.Info"}},
+	}
+
+	for _, tc := range cases {
+		res, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: tc.name, Arguments: tc.args})
+		if err != nil {
+			t.Fatalf("CallTool %s: %v", tc.name, err)
+		}
+		if res.IsError {
+			t.Fatalf("CallTool %s returned IsError=true: %+v", tc.name, res)
+		}
+	}
+}
+
+func TestCallFlowToolsOverMCPSession(t *testing.T) {
+	deps, _ := testDeps(t)
+	srv := New("agentic-velociraptor-mcp-test", "0.0.0-test", deps)
+
+	session := connectTestClient(t, srv)
+
+	cases := []struct {
+		name string
+		args map[string]any
+	}{
+		{name: "velo_list_flows", args: map[string]any{"client_id": testClientID}},
+		{name: "velo_get_flow_status", args: map[string]any{"client_id": testClientID, "flow_id": testFlowID}},
+		{name: "velo_get_flow_results", args: map[string]any{"client_id": testClientID, "flow_id": testFlowID}},
 	}
 
 	for _, tc := range cases {

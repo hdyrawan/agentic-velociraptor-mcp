@@ -1,17 +1,18 @@
 # Tool reference
 
 Status: this describes the **planned** stable core of 27 tools. As of
-v0.3.0, exactly 11 are implemented and registered as callable MCP tools:
+v0.5.0, exactly 14 are implemented and registered as callable MCP tools:
 `velo_health_check`, `velo_search_clients`, `velo_get_client_info`,
 `velo_list_artifact_names`, `velo_get_artifact_details`,
-`velo_list_dfir_profiles`, `velo_get_dfir_profile`, and
-`velo_validate_dfir_profile`, plus `velo_plan_dfir_triage`,
+`velo_list_flows`, `velo_get_flow_status`, `velo_get_flow_results`,
+`velo_list_dfir_profiles`, `velo_get_dfir_profile`,
+`velo_validate_dfir_profile`, `velo_plan_dfir_triage`,
 `velo_compare_dfir_profiles`, and `velo_find_profiles_by_artifact`. See
 `internal/mcpserver/server.go`'s `New` function — only the visibility,
-profile, and workflow registration functions are called; the flow,
-collection, hunt, and IOC execution groups' `ToolSpec` metadata exists
-for this document but is not wired to `mcp.AddTool` yet, and is therefore
-not callable by any MCP client (confirmed by
+flow/result, profile, and workflow registration functions are called;
+the upload, collection, hunt, and IOC execution groups' `ToolSpec`
+metadata exists for this document but is not wired to `mcp.AddTool` yet,
+and is therefore not callable by any MCP client (confirmed by
 `internal/mcpserver/server_test.go`'s exact-tool-inventory and
 never-registers-unsafe-tools tests). Update the "Implemented" column as
 each remaining tool actually lands.
@@ -27,9 +28,9 @@ a top-level `status` field (`"success"` / `"empty"` / `"not_found"` /
 `"error"`) alongside their existing `mode`/data/`message` fields — see
 docs/security-model.md's "Evidence honesty" section for the full
 contract, including why `velo_health_check`'s own pre-existing `status`
-field (`"ok"`/`"error"`) was left as-is rather than migrated. v0.3.0's
-three workflow tools also embed the same `internal/response.Result`
-envelope.
+field (`"ok"`/`"error"`) was left as-is rather than migrated.
+v0.3.0's three workflow tools and v0.5.0's three flow/result tools also
+embed the same `internal/response.Result` envelope.
 
 ## Visibility tools (`tools_visibility.go`)
 
@@ -45,12 +46,32 @@ envelope.
 
 | Tool | Kind | Description | Target milestone | Implemented |
 |------|------|-------------|-------------------|-------------|
-| `velo_list_flows` | RO | List flows for a client. | v0.1.0 | no |
-| `velo_get_flow_status` | RO | State of one flow. | v0.1.0 | no |
-| `velo_get_flow_results` | RO | Result rows for one flow, bounded. | v0.1.0 | no |
+| `velo_list_flows` | RO | List flows for a client, bounded by `max_rows` with cursor pagination. | v0.1.0 / v0.5.0 backfill | **yes (mock or read-client; real gRPC backend not yet implemented)** |
+| `velo_get_flow_status` | RO | State of one flow. `client_id` and `flow_id` are validated before any call. | v0.1.0 / v0.5.0 backfill | **yes (mock or read-client; real gRPC backend not yet implemented)** |
+| `velo_get_flow_results` | RO | Result rows for one flow, bounded by `max_rows` and `max_result_bytes`; reports `truncated`, `returned_rows`, `byte_count`, and optional `next_cursor`. | v0.1.0 / v0.5.0 backfill | **yes (mock or read-client; real gRPC backend not yet implemented)** |
 | `velo_list_flow_uploads` | RO | List uploads attached to a flow. | unscheduled (was v0.2.0; see PROJECT_PLAN.md's v0.2.0 re-scope note) | no |
 | `velo_get_flow_upload_metadata` | RO | Metadata for one upload. | unscheduled (was v0.2.0; see PROJECT_PLAN.md's v0.2.0 re-scope note) | no |
 | `velo_download_flow_upload_with_approval` | Approval | Download upload bytes, bounded by `max_upload_bytes`. | unscheduled (was v0.2.0; see PROJECT_PLAN.md's v0.2.0 re-scope note) | no |
+
+
+### Flow/result response contract
+
+The three v0.5.0 flow/result tools are read-only. They never collect,
+cancel, download, mutate client/server state, or expose raw VQL.
+Malformed `client_id` / `flow_id` input is blocked before any backend
+call and audited as `blocked`. Mock mode returns empty data with a
+`success` status and explicit `mode: "mock"`. Real mode uses
+`Deps.ReadClient`; with the current `grpcClient` backend these methods
+still return a structured `error` until a reviewed flow-results RPC
+implementation is added, while tests exercise the handler contract
+against a fake read client.
+
+`velo_get_flow_results` always applies the lower of the requested
+`limit` and configured `velociraptor.max_rows`, then bounds serialized
+row payload size by `velociraptor.max_result_bytes`. Partial responses
+set `truncated: true` and include `next_cursor` when another page can be
+requested. Audit events include `client_id`, `flow_id`, `row_count`, and
+`byte_count`.
 
 ## Collection tools (`tools_collection.go`)
 

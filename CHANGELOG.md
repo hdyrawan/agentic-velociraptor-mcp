@@ -7,6 +7,32 @@ releases begin.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-07-06
+
+### Added — v0.5.0 read-only flow/result backfill
+
+Re-scoped to backfill the original v0.1.0 read-only flow/result surface
+without adding collection execution, hunt execution, cancellation,
+downloads, write-identity use, or raw VQL exposure.
+
+- Added three callable read-only MCP tools: `velo_list_flows`,
+  `velo_get_flow_status`, and `velo_get_flow_results`.
+- All three validate `client_id`/`flow_id` before any backend call, embed
+  the shared `internal/response.Result` status envelope, honestly report
+  mock mode, and audit every invocation.
+- `velo_get_flow_results` enforces `velociraptor.max_rows` and
+  `velociraptor.max_result_bytes`, reports `truncated`, returns
+  `next_cursor` when partial data is returned, and records row/byte counts
+  in audit events.
+- Callable tool inventory is now exactly 14, all read-only. Upload,
+  collection, hunt, cancel, download, and IOC execution ToolSpec entries
+  remain unregistered metadata only.
+- Tests added for flow success, empty, not_found, invalid input,
+  row/byte-limit enforcement, audit events, MCP-session coverage, and the
+  exact 14-tool inventory.
+- Docs updated: README, PROJECT_PLAN, PROJECT_STATE, tool reference,
+  security model, lab validation plan, and CLI help/version text.
+
 ## [0.3.0] - 2026-07-06
 
 ### Added — v0.3.0 read-only DFIR workflow expansion

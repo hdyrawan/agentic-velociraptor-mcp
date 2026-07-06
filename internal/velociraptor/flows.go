@@ -1,6 +1,14 @@
 package velociraptor
 
-import "context"
+import (
+	"context"
+	"errors"
+)
+
+// ErrFlowNotFound is returned by GetFlowStatus and GetFlowResults when
+// the requested flow does not exist or has already been garbage-collected
+// by the Velociraptor server.
+var ErrFlowNotFound = errors.New("velociraptor: flow not found")
 
 // FlowState mirrors Velociraptor's own flow state machine at the level
 // of detail tool responses need.
@@ -32,18 +40,19 @@ type FlowResultPage struct {
 	Truncated    bool
 	TotalRows    int
 	ReturnedRows int
+	NextCursor   string
 }
 
 // FlowReader backs velo_list_flows, velo_get_flow_status, and
 // velo_get_flow_results. These are read-only and use the read API
 // identity.
 type FlowReader interface {
-	ListFlows(ctx context.Context, clientID string, limit int) ([]FlowSummary, error)
+	ListFlows(ctx context.Context, clientID string, limit int, cursor string) ([]FlowSummary, error)
 	GetFlowStatus(ctx context.Context, clientID, flowID string) (FlowSummary, error)
-	GetFlowResults(ctx context.Context, clientID, flowID string, maxRows int, maxBytes int64) (FlowResultPage, error)
+	GetFlowResults(ctx context.Context, clientID, flowID string, maxRows int, maxBytes int64, cursor string) (FlowResultPage, error)
 }
 
-func (placeholderClient) ListFlows(ctx context.Context, clientID string, limit int) ([]FlowSummary, error) {
+func (placeholderClient) ListFlows(ctx context.Context, clientID string, limit int, cursor string) ([]FlowSummary, error) {
 	return nil, ErrNotImplemented
 }
 
@@ -51,7 +60,7 @@ func (placeholderClient) GetFlowStatus(ctx context.Context, clientID, flowID str
 	return FlowSummary{}, ErrNotImplemented
 }
 
-func (placeholderClient) GetFlowResults(ctx context.Context, clientID, flowID string, maxRows int, maxBytes int64) (FlowResultPage, error) {
+func (placeholderClient) GetFlowResults(ctx context.Context, clientID, flowID string, maxRows int, maxBytes int64, cursor string) (FlowResultPage, error) {
 	return FlowResultPage{}, ErrNotImplemented
 }
 
