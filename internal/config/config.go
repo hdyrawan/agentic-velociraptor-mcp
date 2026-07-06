@@ -204,6 +204,7 @@ func Default() *Config {
 				"cancel_flow",
 				"cancel_hunt",
 				"download_flow_upload",
+				"hunt_ioc",
 			},
 			AllowedArtifacts: []string{
 				"Generic.Client.Info",

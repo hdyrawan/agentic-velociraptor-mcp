@@ -213,6 +213,23 @@ Velociraptor data supports. Concretely:
   made without a matching, consumed `approval.Decision`), and in mock
   mode (or when no write API config is configured) report that the
   capability is not yet available rather than silently succeeding.
+  **Note**: as originally merged, these three tools' approval check did
+  not actually verify the fingerprint match described above — it only
+  checked that *some* approval existed for the given reference, not that
+  it matched this call's operation/artifact/scope. This was found and
+  fixed in v0.7.0 (see below); the description above reflects the
+  fixed, current behavior.
+- **v0.7.0** adds `velo_hunt_ioc_with_approval`, following the identical
+  pattern: `internal/validation.ValidateIOC` validates a `hash`/`ip`/
+  `domain`/`process`/`path` indicator before it is bound (never
+  string-interpolated) into a fixed `internal/vql` template's single
+  parameter; the resolved artifact still passes through
+  `policy.allowed_artifacts`; the approval-gated write uses
+  `verifyAndConsumeApproval`'s fingerprint check from the start (not
+  retrofitted). `approval.Request`/`RequestFingerprint` gained
+  `ClientIDs`/`Label`/`TargetAll` fields so a hunt's (or IOC hunt's)
+  multi-client scope is part of the fingerprint, not just a single
+  `ClientID` — this closes the gap the v0.6.0 hunt tools had.
 - `velo_get_client_info` and `velo_search_clients` return exactly what
   Velociraptor's `ApiClient` record reports for a given endpoint
   (hostname, OS, last-seen time, labels, ...) with no independent
@@ -285,10 +302,14 @@ structured data `velo_search_clients`, `velo_get_client_info`,
 every caller-supplied value (search query, client ID, artifact name)
 bound as a plain protobuf field — never a VQL string, bound parameter,
 or any other query-language construct. This sidesteps the raw-VQL
-question entirely for this milestone rather than relying on
-`internal/vql`'s template/parameter-binding mechanism, which remains
-reserved for the one case (`velo_hunt_ioc_with_approval`, unscheduled)
-that has no purpose-built RPC equivalent.
+question entirely for these RPCs rather than relying on
+`internal/vql`'s template/parameter-binding mechanism, which is reserved
+for the one case that has no purpose-built RPC equivalent:
+`velo_hunt_ioc_with_approval` (v0.7.0), which resolves a validated
+indicator through `vql.Bind` to a fixed artifact + one bound parameter,
+then reaches Velociraptor via the same `StartHunt` RPC path (still
+scaffolded — see PROJECT_STATE.md's "What does not exist yet") every
+other hunt tool uses, never a raw query string.
 
 ## Out of scope for this MCP server (by design)
 
@@ -348,32 +369,48 @@ attacker-controlled URL.
 
 `internal/mcpserver` only calls `mcp.AddTool` for tools that are fully
 implemented and reviewed for the current milestone — visibility,
-profile, workflow, flow/result, collection, and (as of v0.4.0/v0.6.0)
-hunt management tools — all 27 core tools are now callable. The IOC
-execution tool (`velo_hunt_ioc_with_approval`) exists only as `ToolSpec`
-metadata in `tools_ioc.go` (used for `docs/tool-reference.md` generation)
-and is not reachable by any MCP client — confirmed in
-`internal/mcpserver/server_test.go`'s exact-tool-inventory test. A
-planned tool becomes callable only when its milestone lands with real
-validation, policy, and (where required) approval wiring, not when its
-metadata is added. The v0.6.0 hunt tools are all wired to `mcp.AddTool`
-— approval-gated tools require a matching `approval.Decision` and enforce
-all four independent gates before any Velociraptor write call.
+profile, workflow, flow/result, collection, hunt management (v0.6.0),
+and the IOC helper (v0.7.0) — all 28 core tools are now callable, with
+no remaining unwired `ToolSpec` metadata. A planned tool becomes
+callable only when its milestone lands with real validation, policy, and
+(where required) approval wiring, not when its metadata is added. Every
+approval-gated tool requires a matching, fingerprint-verified
+`approval.Decision` (see below) and enforces all its independent gates
+before any Velociraptor write call.
 
-### Confused-deputy mitigation is implemented, not just designed (v0.4.0)
+### Confused-deputy mitigation is implemented, not just designed (v0.4.0, hardened v0.7.0)
 
 `internal/approval.RequestFingerprint` hashes the security-relevant
 targeting fields of a `Request` (operation, case ID, client ID,
-artifact, parameters, profile, hunt ID, flow ID, upload name).
+artifact, parameters, profile, hunt ID, flow ID, upload name, and — as
+of v0.7.0 — the hunt-scope fields client IDs/label/target-all).
 `mcpserver.verifyAndConsumeApproval` (`internal/mcpserver/server.go`)
 recomputes this fingerprint for the operation a tool call is about to
 perform and confirms it matches the fingerprint of the resolved,
 approved `Request` before calling Velociraptor — a mismatch (different
-artifact, different client, different parameters) is rejected, not
-silently substituted. An approval is a grant for one exact, hashed
-payload, consumed exactly once (`Store.Consume`, called *before* the
-Velociraptor call so a failed attempt still burns the approval) — never
-a standing grant of "this operation category is now approved."
+artifact, different client, different parameters, different hunt scope)
+is rejected, not silently substituted. An approval is a grant for one
+exact, hashed payload, consumed exactly once (`Store.Consume`, called
+*before* the Velociraptor call so a failed attempt still burns the
+approval) — never a standing grant of "this operation category is now
+approved."
+
+**v0.7.0 fix**: v0.6.0's three hunt-write tools
+(`velo_start_hunt_with_approval`, `velo_start_dfir_hunt_with_approval`,
+`velo_cancel_hunt_with_approval`) originally used a separate,
+weaker `checkHuntApproval` helper that called only `IsApproved`/
+`Consume` on the raw reference — never comparing fingerprints — so any
+valid, unconsumed approval could authorize a *different* hunt than a
+human approved (wrong artifact, wrong scope, even `target_all` when only
+a label was approved). This was found in code review before merging and
+fixed by routing all three (plus the new `velo_hunt_ioc_with_approval`)
+through `verifyAndConsumeApproval` like every other write tool. See
+`TestStartHuntRejectsMismatchedApproval`, `TestCancelHuntRejectsMismatchedApproval`,
+`TestStartDFIRHuntRejectsMismatchedApproval`, and
+`TestHuntIOCRejectsMismatchedApproval` (plus
+`TestApprovalForIOCHuntCannotAuthorizeRegularHuntStart`, a cross-tool
+regression proving an IOC approval can't authorize a plain hunt start)
+in `internal/mcpserver`.
 
 The deeper mitigation is architectural: **no MCP tool can call
 `Store.Create` or `Store.Decide`.** Those are only reachable from the
@@ -382,31 +419,33 @@ human operator, never through the MCP stdio transport. An MCP client
 (including an LLM driving tool calls) can request that a write-capable
 operation happen, by supplying an `approval_reference`; it can never
 make that reference valid. This invariant applies across all
-approval-gated tools — v0.4.0's six collection/flow tools and v0.6.0's
-three hunt management tools — all of which call `IsApproved` then
-`Consume` on `approval.Store` before executing any Velociraptor write
-operation. See [approval-flow.md](approval-flow.md) for the full
+approval-gated tools — v0.4.0's six collection/flow tools, v0.6.0's
+three hunt management tools, and v0.7.0's `velo_hunt_ioc_with_approval`
+— all of which go through `verifyAndConsumeApproval`'s fingerprint check
+before executing any Velociraptor write operation. See
+[approval-flow.md](approval-flow.md) for the full
 workflow, including known limitations (single-analyst pilot, no
 cross-process file locking, no real Velociraptor RPC wiring yet for the
-underlying collection/cancel/upload/hunt RPCs).
+underlying collection/cancel/upload/hunt/IOC RPCs).
 
 ### Tool and scope minimization is intentional
 
-The stable core deliberately exposes 27 narrow tools rather than a small
+The stable core deliberately exposes 28 narrow tools rather than a small
 number of broad, parameterizable ones (and no raw-VQL escape hatch at
-all). As of v0.6.0 (rebased onto v0.4.0/v0.5.0), all 27 are registered:
-20 read-only tools (visibility, profiles, workflows, flows/results, flow
-uploads), six approval-gated single-client collection tools, and seven
-approval-gated hunt management tools. Each collection tool is still
-scoped to a single client per call and requires operator configuration
+all). As of v0.7.0 (rebased onto v0.4.0/v0.5.0/v0.6.0), all 28 are
+registered: 20 read-only tools (visibility, profiles, workflows,
+flows/results, flow uploads), six approval-gated single-client
+collection tools, seven approval-gated hunt management tools, and one
+approval-gated IOC hunting helper. Each collection tool is still scoped
+to a single client per call and requires operator configuration
 (`policy.mode: controlled` and `approval.store_path`, plus
 `velociraptor.download_dir` for the download tool) before it does
-anything beyond report itself disabled. Hunt tools enforce
-`max_hunt_clients`, profile/artifact allowlists, and scope validation.
-Minimizing the callable surface at every point in time — not just in the
-final v1.0.0 design — reduces both the attack surface and the chance an
-agent misuses a capability it didn't need for the task at hand. When a
-future HTTP/remote transport is added, this same principle should extend
-to authorization scopes (see PROJECT_PLAN.md's scope list, e.g.
-`velo:read`, `velo:profiles:read`, `velo:collect`, `velo:hunt`) rather
-than an all-or-nothing API token.
+anything beyond report itself disabled. Hunt and IOC tools enforce
+`max_hunt_clients`, profile/artifact/template allowlists, and scope
+validation. Minimizing the callable surface at every point in time — not
+just in the final v1.0.0 design — reduces both the attack surface and
+the chance an agent misuses a capability it didn't need for the task at
+hand. When a future HTTP/remote transport is added, this same principle
+should extend to authorization scopes (see PROJECT_PLAN.md's scope list,
+e.g. `velo:read`, `velo:profiles:read`, `velo:collect`, `velo:hunt`)
+rather than an all-or-nothing API token.

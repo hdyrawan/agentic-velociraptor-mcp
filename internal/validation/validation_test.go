@@ -87,6 +87,82 @@ func TestDomain(t *testing.T) {
 	}
 }
 
+func TestProcess(t *testing.T) {
+	valid := []string{"svchost.exe", "bash", "python3.11", "My Process.exe"}
+	invalid := []string{"", "/usr/bin/bash", `C:\Windows\System32\cmd.exe`, "proc;DROP", "proc`whoami`", "proc\"quote"}
+
+	for _, p := range valid {
+		if err := Process(p); err != nil {
+			t.Errorf("Process(%q) = %v, want nil", p, err)
+		}
+	}
+	for _, p := range invalid {
+		if err := Process(p); err == nil {
+			t.Errorf("Process(%q) = nil, want error", p)
+		}
+	}
+}
+
+func TestPath(t *testing.T) {
+	valid := []string{
+		"/usr/bin/bash",
+		"/var/log/auth.log",
+		`C:\Windows\System32\cmd.exe`,
+		`C:\Users\bob\Downloads\evil.exe`,
+		`\\fileserver\share\payload.bin`,
+	}
+	invalid := []string{
+		"",
+		"relative/path",
+		"../etc/passwd",
+		"/usr/bin/../etc/passwd",
+		`C:\Windows\..\evil`,
+		"/usr/bin/bash; rm -rf /",
+		"/usr/bin/`whoami`",
+		makeRepeated("a", pathMaxLength+10),
+	}
+
+	for _, p := range valid {
+		if err := Path(p); err != nil {
+			t.Errorf("Path(%q) = %v, want nil", p, err)
+		}
+	}
+	for _, p := range invalid {
+		if err := Path(p); err == nil {
+			t.Errorf("Path(%q) = nil, want error", p)
+		}
+	}
+}
+
+func TestValidateIOC(t *testing.T) {
+	cases := []struct {
+		kind    IOCKind
+		value   string
+		wantErr bool
+	}{
+		{IOCKindHash, "d41d8cd98f00b204e9800998ecf8427e", false},
+		{IOCKindHash, "not-a-hash", true},
+		{IOCKindIP, "192.0.2.1", false},
+		{IOCKindIP, "not-an-ip", true},
+		{IOCKindDomain, "example.com", false},
+		{IOCKindDomain, "not a domain", true},
+		{IOCKindProcess, "svchost.exe", false},
+		{IOCKindProcess, "/usr/bin/bash", true},
+		{IOCKindPath, "/usr/bin/bash", false},
+		{IOCKindPath, "../etc/passwd", true},
+		{IOCKind("bogus"), "anything", true},
+	}
+	for _, c := range cases {
+		err := ValidateIOC(c.kind, c.value)
+		if c.wantErr && err == nil {
+			t.Errorf("ValidateIOC(%q, %q) = nil, want error", c.kind, c.value)
+		}
+		if !c.wantErr && err != nil {
+			t.Errorf("ValidateIOC(%q, %q) = %v, want nil", c.kind, c.value, err)
+		}
+	}
+}
+
 func TestSearchQuery(t *testing.T) {
 	valid := []string{"", "WIN-HOST", "10.0.0.5", "label:triage", makeRepeated("a", 256)}
 	for _, q := range valid {

@@ -61,6 +61,14 @@ type Event struct {
 	Artifact string `json:"artifact,omitempty"`
 	Profile  string `json:"profile,omitempty"`
 
+	// IOCKind / IOCValue identify the indicator kind (hash, ip, domain,
+	// process, path) and value velo_hunt_ioc_with_approval was asked to
+	// hunt for. Neither is a secret (they are investigative indicator
+	// data, the same category as ClientID/Artifact above), so both are
+	// logged in plain text like every other targeting field.
+	IOCKind  string `json:"ioc_kind,omitempty"`
+	IOCValue string `json:"ioc_value,omitempty"`
+
 	// CaseID / Reason (of the request, not the outcome) support
 	// traceability of write-capable operations back to an
 	// investigation. RequestReason is operator-supplied justification;

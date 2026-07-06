@@ -49,7 +49,7 @@ import (
 
 // version is the build version. Overridden at release build time via
 // -ldflags "-X main.version=...".
-var version = "0.4.0"
+var version = "0.7.0"
 
 // defaultProfilesDir is the --profiles-dir flag's default value.
 // resolveProfilesDir only applies its cwd-independent fallback when the

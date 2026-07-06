@@ -1,17 +1,21 @@
 # Approval flow
 
 Status: implemented as of v0.4.0 (controlled single-client collection
-pilot) and extended in v0.6.0 (hunt management). `internal/approval` has
-a real `Store` implementation (`FileStore`, `internal/approval/filestore.go`),
-and every approval-gated tool (v0.4.0: `velo_collect_artifact_with_approval`,
+pilot), extended in v0.6.0 (hunt management), and extended again in
+v0.7.0 (IOC hunting). `internal/approval` has a real `Store`
+implementation (`FileStore`, `internal/approval/filestore.go`), and
+every approval-gated tool (v0.4.0: `velo_collect_artifact_with_approval`,
 `velo_collect_dfir_profile_with_approval`,
 `velo_cancel_flow_with_approval`,
 `velo_download_flow_upload_with_approval`; v0.6.0:
 `velo_start_hunt_with_approval`,
 `velo_start_dfir_hunt_with_approval`,
-`velo_cancel_hunt_with_approval`) verifies against it before calling
-Velociraptor. This document describes the operator-facing workflow those
-tools depend on.
+`velo_cancel_hunt_with_approval`; v0.7.0: `velo_hunt_ioc_with_approval`)
+verifies against it before calling Velociraptor, via the same
+fingerprint-checked `verifyAndConsumeApproval` path described below —
+**not** a separate, weaker check per tool (see "v0.7.0 fix" note under
+"Known limitations"). This document describes the operator-facing
+workflow those tools depend on.
 
 ## The core guarantee
 
@@ -31,11 +35,12 @@ Configured via `policy.require_approval_for` (see
 
 - `collect_artifact`
 - `collect_dfir_profile`
-- `start_hunt` (not yet implemented — no hunt tool exists)
-- `start_dfir_hunt` (not yet implemented)
+- `start_hunt`
+- `start_dfir_hunt`
 - `cancel_flow`
-- `cancel_hunt` (not yet implemented)
+- `cancel_hunt`
 - `download_flow_upload`
+- `hunt_ioc`
 
 Every tool suffixed `_with_approval` maps to one of these categories.
 
@@ -98,6 +103,27 @@ denial instead — a denied reference resolves but is never usable.
 in-memory caching), specifically so this out-of-process write becomes
 visible to a long-running MCP server without a restart.
 
+For hunt/IOC-hunt operations (`start_hunt`, `start_dfir_hunt`,
+`cancel_hunt`, `hunt_ioc`), use `--artifact`/`--profile` as applicable,
+`--hunt-id` for `cancel_hunt`, and the scope flags `--hunt-client-id`
+(repeatable, for an explicit client list), `--label`, and `--all` —
+these bind into `approval.Request.ClientIDs`/`Label`/`TargetAll`, which
+are part of the fingerprint (see "Fingerprinting" below), so the
+approved scope must match the call's scope exactly:
+
+```sh
+agentic-velociraptor-mcp approve \
+  --store /var/lib/agentic-velociraptor-mcp/approvals.json \
+  --reference CASE-1234-02 \
+  --operation start_hunt \
+  --case-id CASE-1234 \
+  --reason "sweep for lateral movement" \
+  --requester analyst@example.com \
+  --artifact Windows.System.Pslist \
+  --label windows \
+  --approved-by ir-lead@example.com
+```
+
 ## Step 3: execute (agent side, again)
 
 The agent calls the same tool again with identical `client_id`/
@@ -129,12 +155,13 @@ produces exactly one audit event (`success`/`blocked`/`error`); see
 
 `approval.RequestFingerprint` hashes exactly the targeting fields of a
 `Request`: operation, case ID, client ID, artifact, parameters (sorted by
-key), profile, hunt ID, flow ID, and upload name. `reason` and
-`requester` are deliberately excluded — they are investigative context,
-not a description of what Velociraptor operation would run, so wording
-differences there must never cause a spurious mismatch.
+key), profile, hunt ID, flow ID, upload name, and (as of v0.7.0) the
+hunt-scope fields client IDs (sorted), label, and target-all. `reason`
+and `requester` are deliberately excluded — they are investigative
+context, not a description of what Velociraptor operation would run, so
+wording differences there must never cause a spurious mismatch.
 
-## Known limitations (v0.4.0/v0.6.0)
+## Known limitations (v0.4.0/v0.6.0/v0.7.0)
 
 - **Single-analyst pilot, not a multi-writer system.** `FileStore`
   re-reads and rewrites the whole file on every call under an in-process
@@ -146,10 +173,22 @@ differences there must never cause a spurious mismatch.
   currently fails at the last step (`velociraptor.ErrNotImplemented`)
   against a real (non-mock) write client, since the hand-authored
   `veloapi` proto mirror doesn't wire real `CollectArtifact`/
-  `CancelFlow`/upload RPCs yet. See PROJECT_PLAN.md's v0.6.0 entry.
+  `CancelFlow`/upload/hunt RPCs yet. See PROJECT_PLAN.md's v0.8.0 entry.
 - **No revocation.** A pending, undecided request cannot currently be
   withdrawn by the requester; it simply expires via `ttl_seconds` if
   never decided.
+- **v0.7.0 fix**: as originally merged in v0.6.0, the three hunt-write
+  tools did not actually perform the fingerprint check described above —
+  a separate `checkHuntApproval` helper only confirmed the reference was
+  approved and unconsumed, not that it matched the call's operation/
+  artifact/scope. Any valid unconsumed approval could start/cancel a
+  different hunt than approved. This was found in code review before
+  merging and fixed by routing those tools (and the new
+  `velo_hunt_ioc_with_approval`) through `verifyAndConsumeApproval`, the
+  same path this document has always described. If you have an
+  operational runbook or automation built against v0.6.0's actual
+  (unfingerprinted) behavior, it must be updated: an approval now must
+  match the exact artifact/profile/scope it will be used for.
 
 ## Non-goals
 

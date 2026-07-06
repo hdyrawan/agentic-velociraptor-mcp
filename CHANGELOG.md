@@ -7,6 +7,75 @@ releases begin.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-07-06
+
+### Added — v0.7.0 IOC hunting helper
+
+Adds the last planned tool from the original stable-core target: a
+single fixed-template IOC hunting helper, built entirely on v0.6.0's
+hunt approval/scope/audit machinery.
+
+- Added `velo_hunt_ioc_with_approval`: validates a `hash`, `ip`,
+  `domain`, `process`, or `path` indicator (`internal/validation.ValidateIOC`;
+  `Process`/`Path` are new validators added this release), resolves it
+  through a fixed `internal/vql` template to an allowlisted artifact +
+  bound parameter (never raw VQL, never string interpolation), then
+  starts a hunt via the same `velociraptor.HuntWriter.StartHunt` path
+  `velo_start_hunt_with_approval` uses.
+- Completed `internal/vql.Bind`: a deterministic, pure-Go
+  template-name → (artifact, parameter key) mapping for all 5 IOC
+  templates (`ioc_hash_hunt`, `ioc_ip_hunt`, `ioc_domain_hunt`, plus new
+  `ioc_process_hunt`/`ioc_path_hunt`). This mapping is real and tested;
+  the artifact names themselves remain illustrative/unverified against a
+  live Velociraptor catalog, same caveat as the pre-existing IOC DFIR
+  profiles. Real hunt-start gRPC execution stays scaffolded
+  (`velociraptor.HuntWriter.StartHunt` still returns `ErrNotImplemented`
+  on `grpcClient`).
+- New `approval.OperationHuntIOC` operation category; every approval-gated
+  IOC hunt goes through the same `verifyAndConsumeApproval`
+  fingerprint-matching path as every other approval-gated tool (no
+  bespoke, weaker approval check). `approval.Request`/`RequestFingerprint`
+  gained `ClientIDs`/`Label`/`TargetAll` fields so a hunt's multi-client
+  scope (not just a single `ClientID`) is part of what an approval pins
+  down — this also closes a gap the v0.6.0 hunt tools had (see Fixed
+  below).
+- `agentic-velociraptor-mcp approve` CLI gained `--hunt-client-id`
+  (repeatable), `--label`, `--all`, and `--hunt-id` flags so an operator
+  can actually construct an approval for `start_hunt`/`start_dfir_hunt`/
+  `cancel_hunt`/`hunt_ioc`'s multi-client scope, not just single-client
+  operations.
+- Callable tool inventory is now exactly 28 (27 from v0.6.0 plus the one
+  new IOC tool).
+- New `audit.Event.IOCKind`/`IOCValue` fields (additive, non-breaking)
+  record which indicator an IOC hunt targeted.
+
+### Fixed — v0.6.0 hunt approval fingerprint bypass and build break
+
+Two issues found in code review of the v0.6.0 branch before this release,
+fixed as part of landing it:
+
+- v0.6.0's hunt-start/cancel handlers used a bespoke `checkHuntApproval`
+  helper that only checked "is this approval ID approved and unconsumed,"
+  never that the approved request's operation/case/artifact/scope
+  actually matched the call being made. Any valid, unconsumed approval
+  could be replayed to start or cancel a *different* hunt than a human
+  approved. Replaced with the same `verifyAndConsumeApproval` fingerprint
+  check every other approval-gated tool uses, and extended
+  `approval.Request` with hunt-scope fields (see above) so scope is
+  covered too. This also fixed approvals being consumed before the
+  read-only/write-client gates were checked.
+- `velo_start_hunt_with_approval`/`velo_start_dfir_hunt_with_approval`/
+  `velo_cancel_hunt_with_approval` were registered with no MCP tool
+  annotations at all (`Annotations: nil`), and the regression test that
+  should have caught this
+  (`TestNewRegisteredToolsAreNonDestructiveAndClosedWorld`) had been
+  weakened in the same PR to skip nil-annotation tools. Both fixed: all
+  three now use `writeAnnotations(...)` like every other write tool, and
+  the test no longer has an exception.
+- `tools_hunts.go` redeclared six helpers already defined in
+  `tools_flows.go`, so the v0.6.0 branch as committed did not compile.
+  Removed the duplicates.
+
 ## [0.5.0] - 2026-07-06
 
 ### Added — v0.5.0 read-only flow/result backfill

@@ -35,9 +35,10 @@ func connectTestClient(t *testing.T, srv *Server) *mcp.ClientSession {
 	return session
 }
 
-// writeCapableTools names the v0.4.0 and v0.6.0 tools that mutate
-// Velociraptor endpoint/flow/hunt state (gated by writePilotEnabled and
-// an approval reference). Every other registered tool must be read-only.
+// writeCapableTools names the v0.4.0, v0.6.0, and v0.7.0 tools that
+// mutate Velociraptor endpoint/flow/hunt state (gated by
+// writePilotEnabled and an approval reference). Every other registered
+// tool must be read-only.
 var writeCapableTools = map[string]bool{
 	"velo_collect_artifact_with_approval":     true,
 	"velo_collect_dfir_profile_with_approval": true,
@@ -46,9 +47,10 @@ var writeCapableTools = map[string]bool{
 	"velo_start_hunt_with_approval":           true,
 	"velo_start_dfir_hunt_with_approval":      true,
 	"velo_cancel_hunt_with_approval":          true,
+	"velo_hunt_ioc_with_approval":             true,
 }
 
-func TestNewRegistersExactlyTwentySevenTools(t *testing.T) {
+func TestNewRegistersExactlyTwentyEightTools(t *testing.T) {
 	deps, _ := testDeps(t)
 	srv := New("agentic-velociraptor-mcp-test", "0.0.0-test", deps)
 
@@ -82,6 +84,7 @@ func TestNewRegistersExactlyTwentySevenTools(t *testing.T) {
 		"velo_get_hunt_results",
 		"velo_get_hunt_status",
 		"velo_health_check",
+		"velo_hunt_ioc_with_approval",
 		"velo_list_artifact_names",
 		"velo_list_dfir_profiles",
 		"velo_list_flow_uploads",
@@ -108,9 +111,9 @@ func TestNewRegistersExactlyTwentySevenTools(t *testing.T) {
 
 // TestNewNeverRegistersUnsafeTools guards against regressions where a
 // raw-VQL or unapproved-collection tool accidentally becomes callable.
-// v0.4.0/v0.6.0 write-capable tools are intentionally registered and
-// tracked in writeCapableTools; anything else matching these substrings
-// would be a regression.
+// v0.4.0/v0.6.0/v0.7.0 write-capable tools are intentionally registered
+// and tracked in writeCapableTools; anything else matching these
+// substrings would be a regression.
 func TestNewNeverRegistersUnsafeTools(t *testing.T) {
 	deps, _ := testDeps(t)
 	srv := New("agentic-velociraptor-mcp-test", "0.0.0-test", deps)
@@ -132,7 +135,7 @@ func TestNewNeverRegistersUnsafeTools(t *testing.T) {
 				t.Errorf("tool %q is callable and matches forbidden substring %q", tool.Name, bad)
 			}
 		}
-		if strings.Contains(tool.Name, "collect") || strings.Contains(tool.Name, "cancel") || strings.Contains(tool.Name, "download") || strings.Contains(tool.Name, "start_hunt") || strings.Contains(tool.Name, "start_dfir") {
+		if strings.Contains(tool.Name, "collect") || strings.Contains(tool.Name, "cancel") || strings.Contains(tool.Name, "download") || strings.Contains(tool.Name, "start_hunt") || strings.Contains(tool.Name, "start_dfir") || strings.Contains(tool.Name, "hunt_ioc") {
 			if !writeCapableTools[tool.Name] {
 				t.Errorf("tool %q matches a write-shaped name but is not in the known writeCapableTools allowlist", tool.Name)
 			}
@@ -140,6 +143,12 @@ func TestNewNeverRegistersUnsafeTools(t *testing.T) {
 	}
 }
 
+// TestNewRegisteredToolsAreNonDestructiveAndClosedWorld guards against
+// any registered tool shipping without annotations at all: v0.6.0
+// briefly weakened this to skip tools with nil Annotations to
+// accommodate three hunt-write tools that were missing them; that gap
+// is now closed (every write tool uses writeAnnotations), so this test
+// requires every tool to carry annotations, with no exceptions.
 func TestNewRegisteredToolsAreNonDestructiveAndClosedWorld(t *testing.T) {
 	deps, _ := testDeps(t)
 	srv := New("agentic-velociraptor-mcp-test", "0.0.0-test", deps)
@@ -153,7 +162,8 @@ func TestNewRegisteredToolsAreNonDestructiveAndClosedWorld(t *testing.T) {
 
 	for _, tool := range res.Tools {
 		if tool.Annotations == nil {
-			continue // write tools may have nil annotations
+			t.Errorf("tool %q: missing annotations", tool.Name)
+			continue
 		}
 		wantReadOnly := !writeCapableTools[tool.Name]
 		if tool.Annotations.ReadOnlyHint != wantReadOnly {

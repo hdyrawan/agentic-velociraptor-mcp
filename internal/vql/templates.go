@@ -43,6 +43,15 @@ const (
 	// profile: hunts for DNS/browser/network evidence of a domain, with
 	// the domain passed as a bound parameter.
 	TemplateIOCDomainHunt TemplateName = "ioc_domain_hunt"
+
+	// TemplateIOCProcessHunt hunts for a running process/image name
+	// across endpoints, with the process name passed as a bound
+	// parameter.
+	TemplateIOCProcessHunt TemplateName = "ioc_process_hunt"
+
+	// TemplateIOCPathHunt hunts for evidence of a specific filesystem
+	// path across endpoints, with the path passed as a bound parameter.
+	TemplateIOCPathHunt TemplateName = "ioc_path_hunt"
 )
 
 // KnownTemplates lists every template the stable core is aware of. The
@@ -52,4 +61,6 @@ var KnownTemplates = []TemplateName{
 	TemplateIOCHashHunt,
 	TemplateIOCIPHunt,
 	TemplateIOCDomainHunt,
+	TemplateIOCProcessHunt,
+	TemplateIOCPathHunt,
 }
