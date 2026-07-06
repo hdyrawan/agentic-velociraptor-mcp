@@ -878,7 +878,7 @@ func TestCancelHuntBlockedWithoutApproval(t *testing.T) {
 		Reason:     "test cancel",
 		Requester:  "tester",
 		ApprovalID: "approval-nonexistent",
-		HuntID:     "H.1",
+		HuntID:     "H.1111aaaa2222bbbb",
 	})
 	if err != nil {
 		t.Fatalf("unexpected Go error: %v", err)
@@ -908,17 +908,17 @@ func TestCancelHuntRejectsMismatchedApproval(t *testing.T) {
 		CaseID:    "CASE-010B",
 		Reason:    "test cancel mismatch",
 		Requester: "tester",
-		HuntID:    "H.1",
+		HuntID:    "H.1111aaaa2222bbbb",
 	})
 
 	handler := newCancelHuntHandler(deps)
-	// Approval was for H.1; caller actually targets a different hunt.
+	// Approval was for H.1111aaaa2222bbbb111aaaa2222bbbb; caller actually targets a different hunt.
 	_, out, err := handler(context.Background(), nil, CancelHuntInput{
 		CaseID:     "CASE-010B",
 		Reason:     "test cancel mismatch",
 		Requester:  "tester",
 		ApprovalID: ref,
-		HuntID:     "H.2",
+		HuntID:     "H.2222cccc3333dddd",
 	})
 	if err != nil {
 		t.Fatalf("unexpected Go error: %v", err)
@@ -943,7 +943,7 @@ func TestCancelHuntApprovedFakePath(t *testing.T) {
 	deps.WriteClient = &fakeHuntClient{
 		Client: velociraptor.NewClient(),
 		cancelHunt: func(_ context.Context, huntID string) error {
-			if huntID != "H.1" {
+			if huntID != "H.1111aaaa2222bbbb" {
 				return fmt.Errorf("unexpected hunt ID %q", huntID)
 			}
 			return nil
@@ -957,7 +957,7 @@ func TestCancelHuntApprovedFakePath(t *testing.T) {
 		CaseID:    "CASE-011",
 		Reason:    "approved cancel test",
 		Requester: "tester",
-		HuntID:    "H.1",
+		HuntID:    "H.1111aaaa2222bbbb",
 	})
 
 	handler := newCancelHuntHandler(deps)
@@ -966,7 +966,7 @@ func TestCancelHuntApprovedFakePath(t *testing.T) {
 		Reason:     "approved cancel test",
 		Requester:  "tester",
 		ApprovalID: ref,
-		HuntID:     "H.1",
+		HuntID:     "H.1111aaaa2222bbbb",
 	})
 	if err != nil {
 		t.Fatalf("handler: %v", err)

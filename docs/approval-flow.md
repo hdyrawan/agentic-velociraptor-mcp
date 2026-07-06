@@ -103,13 +103,13 @@ denial instead — a denied reference resolves but is never usable.
 in-memory caching), specifically so this out-of-process write becomes
 visible to a long-running MCP server without a restart.
 
-For hunt/IOC-hunt operations (`start_hunt`, `start_dfir_hunt`,
-`cancel_hunt`, `hunt_ioc`), use `--artifact`/`--profile` as applicable,
-`--hunt-id` for `cancel_hunt`, and the scope flags `--hunt-client-id`
-(repeatable, for an explicit client list), `--label`, and `--all` —
-these bind into `approval.Request.ClientIDs`/`Label`/`TargetAll`, which
-are part of the fingerprint (see "Fingerprinting" below), so the
-approved scope must match the call's scope exactly:
+For hunt operations (`start_hunt`, `start_dfir_hunt`, `cancel_hunt`),
+use `--artifact`/`--profile` as applicable, `--hunt-id` for
+`cancel_hunt`, and the scope flags `--hunt-client-id` (repeatable, for
+an explicit client list), `--label`, and `--all` — these bind into
+`approval.Request.ClientIDs`/`Label`/`TargetAll`, which are part of the
+fingerprint (see "Fingerprinting" below), so the approved scope must
+match the call's scope exactly:
 
 ```sh
 agentic-velociraptor-mcp approve \
@@ -120,6 +120,30 @@ agentic-velociraptor-mcp approve \
   --reason "sweep for lateral movement" \
   --requester analyst@example.com \
   --artifact Windows.System.Pslist \
+  --label windows \
+  --approved-by ir-lead@example.com
+```
+
+For `hunt_ioc` (v0.8.0+), do **not** pass `--artifact` or `--param`:
+supply `--ioc-kind` (`hash`, `ip`, `domain`, `process`, or `path`) and
+`--ioc-value` plus the scope flags. The CLI resolves the indicator
+through the exact same validation and fixed-template binding path
+(`mcpserver.BuildHuntIOCApprovalRequest` → `validation.ValidateIOC` →
+`vql.Bind`) that `velo_hunt_ioc_with_approval` fingerprints at
+execution time, so the stored artifact and bound parameter are
+byte-for-byte what the handler will verify — an operator can never
+approve an artifact/parameter combination the tool wouldn't produce:
+
+```sh
+agentic-velociraptor-mcp approve \
+  --store /var/lib/agentic-velociraptor-mcp/approvals.json \
+  --reference CASE-1234-03 \
+  --operation hunt_ioc \
+  --case-id CASE-1234 \
+  --reason "hunt known-bad hash from threat intel" \
+  --requester analyst@example.com \
+  --ioc-kind hash \
+  --ioc-value d41d8cd98f00b204e9800998ecf8427e \
   --label windows \
   --approved-by ir-lead@example.com
 ```
@@ -160,6 +184,16 @@ hunt-scope fields client IDs (sorted), label, and target-all. `reason`
 and `requester` are deliberately excluded — they are investigative
 context, not a description of what Velociraptor operation would run, so
 wording differences there must never cause a spurious mismatch.
+
+As of v0.8.0 the encoding is injective: every field is hashed as
+`name:length:bytes;` (length-prefixed) rather than newline-delimited, so
+a field value containing what looks like another field's serialized
+form — e.g. a parameter value embedding `\nparam:k2=v2` — can never
+collide with a genuinely different request. Regression tests in
+`internal/approval/hash_test.go` pin this property. Validation is
+tightened to match: `case_id`, `requester`, and collection parameter
+keys/values reject embedded newlines outright (multi-line `reason`
+remains legal; it is not fingerprinted).
 
 ## Known limitations (v0.4.0/v0.6.0/v0.7.0)
 

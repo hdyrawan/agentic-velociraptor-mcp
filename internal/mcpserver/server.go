@@ -54,6 +54,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -178,18 +179,39 @@ func (s *Server) Run(ctx context.Context) error {
 // recordAudit sets Timestamp and writes evt to deps.Audit. Audit write
 // failures are not surfaced to the MCP caller (a broken audit sink must
 // not make the underlying operation appear to fail differently than it
-// did), but are also not silently possible to lose track of forever;
-// see the TODO below.
-//
-// TODO(v0.6.0): decide on a fallback (e.g. stderr line) if deps.Audit.Write
-// itself errors, so a misconfigured audit path is discoverable at
-// startup/operation time rather than only via missing log entries.
+// did), but they are no longer silent either: a failed write falls back
+// to a structured stderr line so a misconfigured audit path is
+// discoverable at operation time rather than only via missing log
+// entries. Approval-gated write handlers additionally fail closed on a
+// broken sink before executing anything; see gateAuditForWrite.
 func recordAudit(deps Deps, evt audit.Event) {
 	if deps.Audit == nil {
 		return
 	}
 	evt.Timestamp = time.Now().UTC()
-	_ = deps.Audit.Write(evt)
+	if err := deps.Audit.Write(evt); err != nil {
+		fmt.Fprintf(os.Stderr, "agentic-velociraptor-mcp: audit write failed (tool=%s outcome=%s): %v\n", evt.Tool, evt.Outcome, err)
+	}
+}
+
+// gateAuditForWrite durably records the pre-execution audit.OutcomeAttempt
+// event for an approval-gated write operation. Handlers call it after
+// every policy/approval/backend gate has passed and immediately before
+// consumeApproval: if the event cannot be persisted, the operation is
+// refused (fail closed) with the single-use approval left unconsumed,
+// so an endpoint-facing write can never execute without an audit record
+// of the attempt. The returned Result is populated only on failure.
+func gateAuditForWrite(deps Deps, evt audit.Event) (response.Result, bool) {
+	if deps.Audit == nil {
+		return response.Result{}, true
+	}
+	evt.Timestamp = time.Now().UTC()
+	evt.Outcome = audit.OutcomeAttempt
+	if err := deps.Audit.Write(evt); err != nil {
+		fmt.Fprintf(os.Stderr, "agentic-velociraptor-mcp: audit write failed (tool=%s outcome=%s): %v\n", evt.Tool, evt.Outcome, err)
+		return response.Error("audit log is unavailable; refusing to execute this approval-gated operation (the approval was not consumed)"), false
+	}
+	return response.Result{}, true
 }
 
 // boolPtr is a small helper for the *bool fields of mcp.ToolAnnotations.

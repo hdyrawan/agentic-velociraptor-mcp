@@ -150,6 +150,9 @@ func newCollectArtifactHandler(deps Deps) mcp.ToolHandlerFor[CollectArtifactInpu
 			recordAudit(deps, audit.Event{Tool: tool, Outcome: audit.OutcomeError, ClientID: in.ClientID, Artifact: in.Artifact, CaseID: in.CaseID, Reason: result.Message})
 			return nil, CollectArtifactOutput{Result: result, ClientID: in.ClientID, Artifact: in.Artifact}, nil
 		}
+		if result, ok := gateAuditForWrite(deps, audit.Event{Tool: tool, ClientID: in.ClientID, Artifact: in.Artifact, CaseID: in.CaseID, RequestReason: in.Reason, ApprovalID: in.ApprovalReference}); !ok {
+			return nil, CollectArtifactOutput{Result: result, ClientID: in.ClientID, Artifact: in.Artifact}, nil
+		}
 		result, outcome, ok = consumeApproval(ctx, deps, in.ApprovalReference)
 		if !ok {
 			recordAudit(deps, audit.Event{Tool: tool, Outcome: outcome, ClientID: in.ClientID, Artifact: in.Artifact, CaseID: in.CaseID, RequestReason: in.Reason, ApprovalID: in.ApprovalReference, Reason: result.Message})
@@ -285,6 +288,9 @@ func newCollectDFIRProfileHandler(deps Deps) mcp.ToolHandlerFor[CollectDFIRProfi
 			recordAudit(deps, audit.Event{Tool: tool, Outcome: audit.OutcomeError, ClientID: in.ClientID, Profile: in.Profile, CaseID: in.CaseID, Reason: result.Message})
 			return nil, CollectDFIRProfileOutput{Result: result, ClientID: in.ClientID, Profile: in.Profile, Flows: []CollectedFlow{}}, nil
 		}
+		if result, ok := gateAuditForWrite(deps, audit.Event{Tool: tool, ClientID: in.ClientID, Profile: in.Profile, CaseID: in.CaseID, RequestReason: in.Reason, ApprovalID: in.ApprovalReference}); !ok {
+			return nil, CollectDFIRProfileOutput{Result: result, ClientID: in.ClientID, Profile: in.Profile, Flows: []CollectedFlow{}}, nil
+		}
 		result, outcome, ok = consumeApproval(ctx, deps, in.ApprovalReference)
 		if !ok {
 			recordAudit(deps, audit.Event{Tool: tool, Outcome: outcome, ClientID: in.ClientID, Profile: in.Profile, CaseID: in.CaseID, RequestReason: in.Reason, ApprovalID: in.ApprovalReference, Reason: result.Message})
@@ -376,6 +382,9 @@ func newCancelFlowHandler(deps Deps) mcp.ToolHandlerFor[CancelFlowInput, CancelF
 		}
 		if result := backendOperationReady(deps.WriteClient, velociraptor.BackendOpCancelFlow); result.Status != "" {
 			recordAudit(deps, audit.Event{Tool: tool, Outcome: audit.OutcomeError, ClientID: in.ClientID, FlowID: in.FlowID, CaseID: in.CaseID, Reason: result.Message})
+			return nil, CancelFlowOutput{Result: result, ClientID: in.ClientID, FlowID: in.FlowID}, nil
+		}
+		if result, ok := gateAuditForWrite(deps, audit.Event{Tool: tool, ClientID: in.ClientID, FlowID: in.FlowID, CaseID: in.CaseID, RequestReason: in.Reason, ApprovalID: in.ApprovalReference}); !ok {
 			return nil, CancelFlowOutput{Result: result, ClientID: in.ClientID, FlowID: in.FlowID}, nil
 		}
 		result, outcome, ok = consumeApproval(ctx, deps, in.ApprovalReference)

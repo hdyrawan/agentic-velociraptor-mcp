@@ -9,6 +9,50 @@ releases begin.
 
 ## [0.8.0] - 2026-07-06
 
+### Security — code review (Fable 5) fixes
+
+- **Approval fingerprint hardened against delimiter injection (S1).**
+  `approval.RequestFingerprint` now uses an injective, length-prefixed
+  field encoding instead of newline-delimited text, so a field or
+  parameter value embedding another field's serialized form can no
+  longer collide with a genuinely different request (previously a
+  parameter map `{k: "v\nparam:k2=v2"}` fingerprinted identically to
+  `{k: "v", k2: "v2"}`, letting an approval execute with different bound
+  parameters than approved). Regression tests in
+  `internal/approval/hash_test.go`. Pending approvals created by earlier
+  builds will no longer fingerprint-match and must be re-created.
+- **Hunt/IOC write-path validation brought up to collection-path parity
+  (S2).** New `validation.HuntID` (`H.` + 4-128 URL-safe chars, enforced
+  by `velo_cancel_hunt_with_approval`) and `validation.HuntLabel`
+  (allowlisted charset, enforced by `validation.ValidateHuntScope` for
+  every label-scoped hunt/preview). `validateHuntWriteInput` now
+  validates `case_id`, `reason`, `requester` (previously unchecked), and
+  `approval_id` with the same `internal/validation` rules the collection
+  tools use. `case_id`, `requester`, and collection parameter keys/values
+  reject embedded newlines (multi-line `reason` remains legal).
+- **Hunt/IOC policy checks fail closed (S3).** The artifact/profile
+  allowlist checks in `velo_start_hunt_with_approval`,
+  `velo_start_dfir_hunt_with_approval`, and `velo_hunt_ioc_with_approval`
+  now deny when `deps.Policy` is nil (previously they skipped the
+  allowlist entirely in that state; unreachable in practice but fragile).
+- **Approval-gated writes fail closed on a broken audit sink (S4).**
+  Every approval-gated write handler durably records an
+  `audit.OutcomeAttempt` event after all policy/approval/backend gates
+  pass and *before* consuming its approval; if that event cannot be
+  persisted the operation is refused with the approval intact, so no
+  endpoint-facing write can execute unaudited. Non-gating audit writes
+  now fall back to a structured stderr line instead of being silently
+  discarded.
+- **`approve` CLI supports `hunt_ioc` (Q1).** `velo_hunt_ioc_with_approval`
+  was previously unusable end-to-end: the CLI rejected
+  `--operation hunt_ioc`, so no approval for it could ever exist. The CLI
+  now accepts `--ioc-kind`/`--ioc-value` and builds the request through
+  the same exported path the handler fingerprints
+  (`mcpserver.BuildHuntIOCApprovalRequest`: `ValidateIOC` → fixed
+  template → `vql.Bind`), guaranteeing CLI-created approvals verify
+  byte-for-byte. Regression tests cover the CLI create path and the
+  CLI→handler round trip.
+
 ### Changed — backend wiring review and approval consume ordering
 
 - Preserved the v0.7.0 28-tool MCP inventory exactly; no tools were added or removed.

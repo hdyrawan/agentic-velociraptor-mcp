@@ -619,6 +619,9 @@ func newDownloadFlowUploadHandler(deps Deps) mcp.ToolHandlerFor[DownloadFlowUplo
 			recordAudit(deps, audit.Event{Tool: tool, Outcome: audit.OutcomeError, ClientID: in.ClientID, FlowID: in.FlowID, CaseID: in.CaseID, Reason: result.Message})
 			return nil, DownloadFlowUploadOutput{Result: result, ClientID: in.ClientID, FlowID: in.FlowID}, nil
 		}
+		if result, ok := gateAuditForWrite(deps, audit.Event{Tool: tool, ClientID: in.ClientID, FlowID: in.FlowID, CaseID: in.CaseID, RequestReason: in.Reason, ApprovalID: in.ApprovalReference}); !ok {
+			return nil, DownloadFlowUploadOutput{Result: result, ClientID: in.ClientID, FlowID: in.FlowID}, nil
+		}
 		result, outcome, ok = consumeApproval(ctx, deps, in.ApprovalReference)
 		if !ok {
 			recordAudit(deps, audit.Event{Tool: tool, Outcome: outcome, ClientID: in.ClientID, FlowID: in.FlowID, CaseID: in.CaseID, RequestReason: in.Reason, ApprovalID: in.ApprovalReference, Reason: result.Message})
