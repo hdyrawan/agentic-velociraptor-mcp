@@ -3,35 +3,20 @@ package mcpserver
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hdyrawan/agentic-velociraptor-mcp/internal/approval"
 	"github.com/hdyrawan/agentic-velociraptor-mcp/internal/audit"
 	"github.com/hdyrawan/agentic-velociraptor-mcp/internal/config"
+	"github.com/hdyrawan/agentic-velociraptor-mcp/internal/dfir"
 	"github.com/hdyrawan/agentic-velociraptor-mcp/internal/policy"
 	"github.com/hdyrawan/agentic-velociraptor-mcp/internal/response"
 	"github.com/hdyrawan/agentic-velociraptor-mcp/internal/velociraptor"
 )
-
-// fakeApprovalStore implements approval.Store with test-controlled
-// IsApproved and Consume behavior.
-type fakeApprovalStore struct {
-	approval.Store // embed so only needed methods need overriding
-	approved       bool
-	consumeErr     error
-	consumeCalled  bool
-}
-
-func (f *fakeApprovalStore) IsApproved(_ context.Context, _ string) (bool, error) {
-	return f.approved, nil
-}
-
-func (f *fakeApprovalStore) Consume(_ context.Context, _ string) error {
-	f.consumeCalled = true
-	return f.consumeErr
-}
 
 // fakeHuntClient implements the hunt-related methods of velociraptor.Client
 // for test use, embedding placeholderClient for everything else.
@@ -70,22 +55,35 @@ func (f *fakeHuntClient) CancelHunt(ctx context.Context, huntID string) error {
 }
 
 // testHuntDeps builds a Deps with a policy that allows artifacts and
-// profiles needed by hunt tests, plus a fake audit sink.
-func testHuntDeps(t *testing.T, approvers *fakeApprovalStore) (Deps, *fakeAuditSink) {
+// profiles needed by hunt tests (write pilot enabled by default via
+// PolicyModeControlled, mirroring testWritePilotDeps), a real
+// approval.FileStore so fingerprint matching is exercised exactly as
+// production code enforces it, and a fake audit sink. Tests that need
+// read-only mode override deps.Policy afterward. The returned
+// approval.Store lets tests create matching approvals via approveRequest.
+func testHuntDeps(t *testing.T) (Deps, *fakeAuditSink, approval.Store) {
 	cfg := config.Default()
+	cfg.Policy.Mode = config.PolicyModeControlled
 	cfg.Policy.AllowedArtifacts = []string{"Windows.System.Pslist", "Generic.Client.Info"}
 	cfg.Policy.AllowedProfiles = []string{"windows_basic_triage"}
 	cfg.Policy.MaxHuntClients = 50
 	cfg.Velociraptor.MaxRows = 100
 	cfg.Velociraptor.MaxResultBytes = 1048576
+	cfg.Approval.StorePath = filepath.Join(t.TempDir(), "approvals.json")
+	cfg.Approval.TTLSeconds = 900
+
+	store, err := approval.NewFileStore(cfg.Approval.StorePath, time.Duration(cfg.Approval.TTLSeconds)*time.Second)
+	if err != nil {
+		t.Fatalf("approval.NewFileStore: %v", err)
+	}
 
 	sink := &fakeAuditSink{}
 	return Deps{
-		Config:   cfg,
-		Policy:   policy.NewEngine(cfg.Policy),
-		Audit:    sink,
-		Approvals: approvers,
-	}, sink
+		Config:    cfg,
+		Policy:    policy.NewEngine(cfg.Policy),
+		Audit:     sink,
+		Approvals: store,
+	}, sink, store
 }
 
 // ---------------------------------------------------------------------------
@@ -93,7 +91,7 @@ func testHuntDeps(t *testing.T, approvers *fakeApprovalStore) (Deps, *fakeAuditS
 // ---------------------------------------------------------------------------
 
 func TestPreviewHuntScopeSuccessMock(t *testing.T) {
-	deps, sink := testHuntDeps(t, nil)
+	deps, sink, _ := testHuntDeps(t)
 	handler := newPreviewHuntScopeHandler(deps)
 
 	_, out, err := handler(context.Background(), nil, PreviewHuntScopeInput{
@@ -118,7 +116,7 @@ func TestPreviewHuntScopeSuccessMock(t *testing.T) {
 }
 
 func TestPreviewHuntScopeSuccessReal(t *testing.T) {
-	deps, sink := testHuntDeps(t, nil)
+	deps, sink, _ := testHuntDeps(t)
 	deps.VelociraptorReadMode = VelociraptorModeReal
 	deps.ReadClient = &fakeHuntClient{
 		Client: velociraptor.NewClient(),
@@ -158,7 +156,7 @@ func TestPreviewHuntScopeSuccessReal(t *testing.T) {
 func TestPreviewHuntScopeBlocksTargetAllByDefault(t *testing.T) {
 	cfg := config.Default()
 	cfg.Policy.AllowTargetAll = false
-	deps, sink := testHuntDeps(t, nil)
+	deps, sink, _ := testHuntDeps(t)
 	deps.Policy = policy.NewEngine(cfg.Policy)
 
 	handler := newPreviewHuntScopeHandler(deps)
@@ -178,7 +176,7 @@ func TestPreviewHuntScopeBlocksTargetAllByDefault(t *testing.T) {
 }
 
 func TestPreviewHuntScopeInvalidScope(t *testing.T) {
-	deps, sink := testHuntDeps(t, nil)
+	deps, sink, _ := testHuntDeps(t)
 	handler := newPreviewHuntScopeHandler(deps)
 
 	// both label and client_ids
@@ -200,11 +198,10 @@ func TestPreviewHuntScopeInvalidScope(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestStartHuntBlockedWithoutApproval(t *testing.T) {
-	approver := &fakeApprovalStore{approved: false}
-	deps, sink := testHuntDeps(t, approver)
+	deps, sink, _ := testHuntDeps(t)
 	handler := newStartHuntHandler(deps)
 
-	_, _, err := handler(context.Background(), nil, StartHuntInput{
+	_, out, err := handler(context.Background(), nil, StartHuntInput{
 		CaseID:     "CASE-001",
 		Reason:     "test hunt",
 		Requester:  "tester",
@@ -212,11 +209,49 @@ func TestStartHuntBlockedWithoutApproval(t *testing.T) {
 		Artifact:   "Windows.System.Pslist",
 		Label:      "linux",
 	})
-	if err == nil {
-		t.Fatal("expected error without approval, got nil")
+	if err != nil {
+		t.Fatalf("unexpected Go error: %v", err)
 	}
-	if !strings.Contains(err.Error(), "has not been granted") {
-		t.Errorf("error = %q, want 'has not been granted'", err.Error())
+	if out.Status != response.StatusNotFound || !strings.Contains(out.Message, "was not found") {
+		t.Errorf("out = %+v, want not_found mentioning 'was not found'", out)
+	}
+	evt, ok := sink.last()
+	if !ok || evt.Outcome != audit.OutcomeBlocked {
+		t.Errorf("audit event outcome = %q, want blocked", evt.Outcome)
+	}
+}
+
+func TestStartHuntRejectsMismatchedApproval(t *testing.T) {
+	deps, sink, store := testHuntDeps(t)
+	deps.WriteClient = velociraptor.NewClient()
+	deps.VelociraptorWriteMode = VelociraptorModeReal
+
+	// Approved for a label-scoped hunt against Windows.System.Pslist...
+	ref := approveRequest(t, store, approval.Request{
+		ID:        "ref-start-mismatch",
+		Operation: approval.OperationStartHunt,
+		CaseID:    "CASE-001B",
+		Reason:    "test mismatch",
+		Requester: "tester",
+		Artifact:  "Windows.System.Pslist",
+		Label:     "linux",
+	})
+
+	handler := newStartHuntHandler(deps)
+	// ...but the call actually requests a different artifact/label pair.
+	_, out, err := handler(context.Background(), nil, StartHuntInput{
+		CaseID:     "CASE-001B",
+		Reason:     "test mismatch",
+		Requester:  "tester",
+		ApprovalID: ref,
+		Artifact:   "Generic.Client.Info",
+		Label:      "windows",
+	})
+	if err != nil {
+		t.Fatalf("unexpected Go error: %v", err)
+	}
+	if out.Status != response.StatusError || !strings.Contains(out.Message, "does not match") {
+		t.Errorf("out = %+v, want error mentioning 'does not match'", out)
 	}
 	evt, ok := sink.last()
 	if !ok || evt.Outcome != audit.OutcomeBlocked {
@@ -225,16 +260,25 @@ func TestStartHuntBlockedWithoutApproval(t *testing.T) {
 }
 
 func TestStartHuntEnforcesMaxHuntClients(t *testing.T) {
-	approver := &fakeApprovalStore{approved: true}
-	deps, sink := testHuntDeps(t, approver)
+	deps, sink, store := testHuntDeps(t)
 	deps.Policy = policy.NewEngine(config.PolicyConfig{
-		Mode:              config.PolicyModeControlled,
-		MaxHuntClients:    5,
-		AllowedArtifacts:  []string{"Windows.System.Pslist"},
-		AllowedProfiles:   []string{"windows_basic_triage"},
+		Mode:             config.PolicyModeControlled,
+		MaxHuntClients:   5,
+		AllowedArtifacts: []string{"Windows.System.Pslist"},
+		AllowedProfiles:  []string{"windows_basic_triage"},
 	})
 	deps.WriteClient = velociraptor.NewClient()
 	deps.VelociraptorWriteMode = VelociraptorModeReal
+
+	ref := approveRequest(t, store, approval.Request{
+		ID:        "ref-max-clients",
+		Operation: approval.OperationStartHunt,
+		CaseID:    "CASE-002",
+		Reason:    "test max clients",
+		Requester: "tester",
+		Artifact:  "Windows.System.Pslist",
+		Label:     "linux",
+	})
 
 	handler := newStartHuntHandler(deps)
 
@@ -242,7 +286,7 @@ func TestStartHuntEnforcesMaxHuntClients(t *testing.T) {
 		CaseID:     "CASE-002",
 		Reason:     "test max clients",
 		Requester:  "tester",
-		ApprovalID: "approval-ok",
+		ApprovalID: ref,
 		Artifact:   "Windows.System.Pslist",
 		Label:      "linux",
 		MaxClients: 3,
@@ -262,8 +306,7 @@ func TestStartHuntEnforcesMaxHuntClients(t *testing.T) {
 }
 
 func TestStartHuntEnforcesArtifactAllowlist(t *testing.T) {
-	approver := &fakeApprovalStore{approved: true}
-	deps, _ := testHuntDeps(t, approver)
+	deps, _, _ := testHuntDeps(t)
 	handler := newStartHuntHandler(deps)
 
 	_, _, err := handler(context.Background(), nil, StartHuntInput{
@@ -283,12 +326,11 @@ func TestStartHuntEnforcesArtifactAllowlist(t *testing.T) {
 }
 
 func TestStartHuntBlockedByReadOnlyMode(t *testing.T) {
-	approver := &fakeApprovalStore{approved: true}
-	deps, sink := testHuntDeps(t, approver)
+	deps, sink, _ := testHuntDeps(t)
 	deps.Policy = policy.NewEngine(config.PolicyConfig{
-		Mode:              config.PolicyModeReadOnly,
-		AllowedArtifacts:  []string{"Windows.System.Pslist"},
-		AllowedProfiles:   []string{"windows_basic_triage"},
+		Mode:             config.PolicyModeReadOnly,
+		AllowedArtifacts: []string{"Windows.System.Pslist"},
+		AllowedProfiles:  []string{"windows_basic_triage"},
 	})
 
 	handler := newStartHuntHandler(deps)
@@ -303,8 +345,8 @@ func TestStartHuntBlockedByReadOnlyMode(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error in read-only mode, got nil")
 	}
-	if !strings.Contains(err.Error(), "read-only") {
-		t.Errorf("error = %q, want 'read-only'", err.Error())
+	if !strings.Contains(err.Error(), `must be "controlled"`) {
+		t.Errorf("error = %q, want policy.mode must be \"controlled\"", err.Error())
 	}
 	evt, ok := sink.last()
 	if !ok || evt.Outcome != audit.OutcomeBlocked {
@@ -313,8 +355,7 @@ func TestStartHuntBlockedByReadOnlyMode(t *testing.T) {
 }
 
 func TestStartHuntRejectsMissingCaseID(t *testing.T) {
-	approver := &fakeApprovalStore{approved: true}
-	deps, _ := testHuntDeps(t, approver)
+	deps, _, _ := testHuntDeps(t)
 	handler := newStartHuntHandler(deps)
 
 	_, _, err := handler(context.Background(), nil, StartHuntInput{
@@ -337,8 +378,7 @@ func TestStartHuntRejectsMissingCaseID(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestStartDFIRHuntEnforcesProfileAllowlist(t *testing.T) {
-	approver := &fakeApprovalStore{approved: true}
-	deps, _ := testHuntDeps(t, approver)
+	deps, _, _ := testHuntDeps(t)
 	handler := newStartDFIRHuntHandler(deps)
 
 	_, _, err := handler(context.Background(), nil, StartDFIRHuntInput{
@@ -358,8 +398,7 @@ func TestStartDFIRHuntEnforcesProfileAllowlist(t *testing.T) {
 }
 
 func TestStartDFIRHuntInvalidProfileName(t *testing.T) {
-	approver := &fakeApprovalStore{approved: true}
-	deps, _ := testHuntDeps(t, approver)
+	deps, _, _ := testHuntDeps(t)
 	handler := newStartDFIRHuntHandler(deps)
 
 	_, _, err := handler(context.Background(), nil, StartDFIRHuntInput{
@@ -375,12 +414,125 @@ func TestStartDFIRHuntInvalidProfileName(t *testing.T) {
 	}
 }
 
+func TestStartDFIRHuntRejectsMismatchedApproval(t *testing.T) {
+	deps, sink, store := testHuntDeps(t)
+	reg, err := dfir.LoadDir("../../profiles")
+	if err != nil {
+		t.Fatalf("dfir.LoadDir: %v", err)
+	}
+	deps.Profiles = reg
+	deps.Policy = policy.NewEngine(config.PolicyConfig{
+		Mode:             config.PolicyModeControlled,
+		MaxHuntClients:   50,
+		AllowedArtifacts: []string{"Generic.Client.Info", "Windows.System.Pslist", "Windows.Network.Netstat"},
+		AllowedProfiles:  []string{"windows_basic_triage"},
+	})
+	deps.WriteClient = velociraptor.NewClient()
+	deps.VelociraptorWriteMode = VelociraptorModeReal
+
+	// Approved for windows_basic_triage with a label scope...
+	ref := approveRequest(t, store, approval.Request{
+		ID:        "ref-dfir-mismatch",
+		Operation: approval.OperationStartDFIRHunt,
+		CaseID:    "CASE-007",
+		Reason:    "test dfir mismatch",
+		Requester: "tester",
+		Profile:   "windows_basic_triage",
+		Label:     "windows",
+	})
+
+	handler := newStartDFIRHuntHandler(deps)
+	// ...but the call actually requests a different label scope.
+	_, out, err := handler(context.Background(), nil, StartDFIRHuntInput{
+		CaseID:     "CASE-007",
+		Reason:     "test dfir mismatch",
+		Requester:  "tester",
+		ApprovalID: ref,
+		Profile:    "windows_basic_triage",
+		Label:      "linux",
+	})
+	if err != nil {
+		t.Fatalf("unexpected Go error: %v", err)
+	}
+	if out.Status != response.StatusError || !strings.Contains(out.Message, "does not match") {
+		t.Errorf("out = %+v, want error mentioning 'does not match'", out)
+	}
+	evt, ok := sink.last()
+	if !ok || evt.Outcome != audit.OutcomeBlocked {
+		t.Errorf("audit event outcome = %q, want blocked", evt.Outcome)
+	}
+}
+
+func TestStartDFIRHuntApprovedFakePath(t *testing.T) {
+	deps, sink, store := testHuntDeps(t)
+	reg, err := dfir.LoadDir("../../profiles")
+	if err != nil {
+		t.Fatalf("dfir.LoadDir: %v", err)
+	}
+	deps.Profiles = reg
+	deps.Policy = policy.NewEngine(config.PolicyConfig{
+		Mode:             config.PolicyModeControlled,
+		MaxHuntClients:   50,
+		AllowedArtifacts: []string{"Generic.Client.Info", "Windows.System.Pslist", "Windows.Network.Netstat"},
+		AllowedProfiles:  []string{"windows_basic_triage"},
+	})
+	deps.WriteClient = &fakeHuntClient{
+		Client: velociraptor.NewClient(),
+		startHunt: func(_ context.Context, req velociraptor.HuntRequest) (velociraptor.HuntSummary, error) {
+			return velociraptor.HuntSummary{
+				HuntID: "H.dfir", Artifact: req.Artifact, State: velociraptor.HuntStateRunning,
+			}, nil
+		},
+	}
+	deps.VelociraptorWriteMode = VelociraptorModeReal
+
+	ref := approveRequest(t, store, approval.Request{
+		ID:        "ref-dfir-ok",
+		Operation: approval.OperationStartDFIRHunt,
+		CaseID:    "CASE-008",
+		Reason:    "approved dfir hunt test",
+		Requester: "tester",
+		Profile:   "windows_basic_triage",
+		Label:     "windows",
+	})
+
+	handler := newStartDFIRHuntHandler(deps)
+	_, out, err := handler(context.Background(), nil, StartDFIRHuntInput{
+		CaseID:     "CASE-008",
+		Reason:     "approved dfir hunt test",
+		Requester:  "tester",
+		ApprovalID: ref,
+		Profile:    "windows_basic_triage",
+		Label:      "windows",
+	})
+	if err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	if out.Status != response.StatusSuccess {
+		t.Errorf("Status = %q, want %q", out.Status, response.StatusSuccess)
+	}
+	if out.HuntID != "H.dfir" {
+		t.Errorf("HuntID = %q, want H.dfir", out.HuntID)
+	}
+	status, err := store.Get(context.Background(), ref)
+	if err != nil {
+		t.Fatalf("store.Get: %v", err)
+	}
+	if !status.Consumed {
+		t.Error("Consume was not called on the approval store")
+	}
+	evt, ok := sink.last()
+	if !ok || evt.Outcome != audit.OutcomeSuccess {
+		t.Errorf("audit event outcome = %q, want success", evt.Outcome)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // velo_list_hunts
 // ---------------------------------------------------------------------------
 
 func TestListHuntsSuccessMock(t *testing.T) {
-	deps, sink := testHuntDeps(t, nil)
+	deps, sink, _ := testHuntDeps(t)
 	handler := newListHuntsHandler(deps)
 
 	_, out, err := handler(context.Background(), nil, ListHuntsInput{Limit: 10})
@@ -403,7 +555,7 @@ func TestListHuntsSuccessMock(t *testing.T) {
 }
 
 func TestListHuntsSuccessReal(t *testing.T) {
-	deps, sink := testHuntDeps(t, nil)
+	deps, sink, _ := testHuntDeps(t)
 	deps.VelociraptorReadMode = VelociraptorModeReal
 	deps.ReadClient = &fakeHuntClient{
 		Client: velociraptor.NewClient(),
@@ -439,7 +591,7 @@ func TestListHuntsSuccessReal(t *testing.T) {
 }
 
 func TestListHuntsEmpty(t *testing.T) {
-	deps, sink := testHuntDeps(t, nil)
+	deps, sink, _ := testHuntDeps(t)
 	deps.VelociraptorReadMode = VelociraptorModeReal
 	deps.ReadClient = &fakeHuntClient{
 		Client: velociraptor.NewClient(),
@@ -470,7 +622,7 @@ func TestListHuntsEmpty(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestGetHuntStatusSuccessReal(t *testing.T) {
-	deps, sink := testHuntDeps(t, nil)
+	deps, sink, _ := testHuntDeps(t)
 	deps.VelociraptorReadMode = VelociraptorModeReal
 	deps.ReadClient = &fakeHuntClient{
 		Client: velociraptor.NewClient(),
@@ -506,7 +658,7 @@ func TestGetHuntStatusSuccessReal(t *testing.T) {
 }
 
 func TestGetHuntStatusNotFound(t *testing.T) {
-	deps, sink := testHuntDeps(t, nil)
+	deps, sink, _ := testHuntDeps(t)
 	deps.VelociraptorReadMode = VelociraptorModeReal
 	deps.ReadClient = &fakeHuntClient{
 		Client: velociraptor.NewClient(),
@@ -530,7 +682,7 @@ func TestGetHuntStatusNotFound(t *testing.T) {
 }
 
 func TestGetHuntStatusMock(t *testing.T) {
-	deps, sink := testHuntDeps(t, nil)
+	deps, sink, _ := testHuntDeps(t)
 	handler := newGetHuntStatusHandler(deps)
 
 	_, out, err := handler(context.Background(), nil, GetHuntStatusInput{HuntID: "H.1"})
@@ -551,7 +703,7 @@ func TestGetHuntStatusMock(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestGetHuntResultsSuccessReal(t *testing.T) {
-	deps, sink := testHuntDeps(t, nil)
+	deps, sink, _ := testHuntDeps(t)
 	deps.VelociraptorReadMode = VelociraptorModeReal
 	deps.ReadClient = &fakeHuntClient{
 		Client: velociraptor.NewClient(),
@@ -591,7 +743,7 @@ func TestGetHuntResultsSuccessReal(t *testing.T) {
 }
 
 func TestGetHuntResultsEmpty(t *testing.T) {
-	deps, sink := testHuntDeps(t, nil)
+	deps, sink, _ := testHuntDeps(t)
 	deps.VelociraptorReadMode = VelociraptorModeReal
 	deps.ReadClient = &fakeHuntClient{
 		Client: velociraptor.NewClient(),
@@ -620,7 +772,7 @@ func TestGetHuntResultsEmpty(t *testing.T) {
 }
 
 func TestGetHuntResultsNotFound(t *testing.T) {
-	deps, sink := testHuntDeps(t, nil)
+	deps, sink, _ := testHuntDeps(t)
 	deps.VelociraptorReadMode = VelociraptorModeReal
 	deps.ReadClient = &fakeHuntClient{
 		Client: velociraptor.NewClient(),
@@ -644,7 +796,7 @@ func TestGetHuntResultsNotFound(t *testing.T) {
 }
 
 func TestGetHuntResultsBoundLimit(t *testing.T) {
-	deps, _ := testHuntDeps(t, nil)
+	deps, _, _ := testHuntDeps(t)
 	deps.VelociraptorReadMode = VelociraptorModeReal
 	deps.ReadClient = &fakeHuntClient{
 		Client: velociraptor.NewClient(),
@@ -673,7 +825,7 @@ func TestGetHuntResultsBoundLimit(t *testing.T) {
 }
 
 func TestGetHuntResultsPaginationCursor(t *testing.T) {
-	deps, _ := testHuntDeps(t, nil)
+	deps, _, _ := testHuntDeps(t)
 	deps.VelociraptorReadMode = VelociraptorModeReal
 	deps.ReadClient = &fakeHuntClient{
 		Client: velociraptor.NewClient(),
@@ -710,22 +862,61 @@ func TestGetHuntResultsPaginationCursor(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestCancelHuntBlockedWithoutApproval(t *testing.T) {
-	approver := &fakeApprovalStore{approved: false}
-	deps, sink := testHuntDeps(t, approver)
+	deps, sink, _ := testHuntDeps(t)
 	handler := newCancelHuntHandler(deps)
 
-	_, _, err := handler(context.Background(), nil, CancelHuntInput{
+	_, out, err := handler(context.Background(), nil, CancelHuntInput{
 		CaseID:     "CASE-010",
 		Reason:     "test cancel",
 		Requester:  "tester",
 		ApprovalID: "approval-nonexistent",
 		HuntID:     "H.1",
 	})
-	if err == nil {
-		t.Fatal("expected error without approval, got nil")
+	if err != nil {
+		t.Fatalf("unexpected Go error: %v", err)
 	}
-	if !strings.Contains(err.Error(), "has not been granted") {
-		t.Errorf("error = %q, want 'has not been granted'", err.Error())
+	if out.Status != response.StatusNotFound || !strings.Contains(out.Message, "was not found") {
+		t.Errorf("out = %+v, want not_found mentioning 'was not found'", out)
+	}
+	evt, ok := sink.last()
+	if !ok || evt.Outcome != audit.OutcomeBlocked {
+		t.Errorf("audit event outcome = %q, want blocked", evt.Outcome)
+	}
+}
+
+func TestCancelHuntRejectsMismatchedApproval(t *testing.T) {
+	deps, sink, store := testHuntDeps(t)
+	deps.WriteClient = &fakeHuntClient{
+		Client: velociraptor.NewClient(),
+		cancelHunt: func(_ context.Context, _ string) error {
+			return nil
+		},
+	}
+	deps.VelociraptorWriteMode = VelociraptorModeReal
+
+	ref := approveRequest(t, store, approval.Request{
+		ID:        "ref-cancel-mismatch",
+		Operation: approval.OperationCancelHunt,
+		CaseID:    "CASE-010B",
+		Reason:    "test cancel mismatch",
+		Requester: "tester",
+		HuntID:    "H.1",
+	})
+
+	handler := newCancelHuntHandler(deps)
+	// Approval was for H.1; caller actually targets a different hunt.
+	_, out, err := handler(context.Background(), nil, CancelHuntInput{
+		CaseID:     "CASE-010B",
+		Reason:     "test cancel mismatch",
+		Requester:  "tester",
+		ApprovalID: ref,
+		HuntID:     "H.2",
+	})
+	if err != nil {
+		t.Fatalf("unexpected Go error: %v", err)
+	}
+	if out.Status != response.StatusError || !strings.Contains(out.Message, "does not match") {
+		t.Errorf("out = %+v, want error mentioning 'does not match'", out)
 	}
 	evt, ok := sink.last()
 	if !ok || evt.Outcome != audit.OutcomeBlocked {
@@ -734,13 +925,12 @@ func TestCancelHuntBlockedWithoutApproval(t *testing.T) {
 }
 
 func TestCancelHuntApprovedFakePath(t *testing.T) {
-	approver := &fakeApprovalStore{approved: true}
-	deps, sink := testHuntDeps(t, approver)
+	deps, sink, store := testHuntDeps(t)
 	deps.Policy = policy.NewEngine(config.PolicyConfig{
-		Mode:              config.PolicyModeControlled,
-		MaxHuntClients:    50,
-		AllowedArtifacts:  []string{"Windows.System.Pslist"},
-		AllowedProfiles:   []string{"windows_basic_triage"},
+		Mode:             config.PolicyModeControlled,
+		MaxHuntClients:   50,
+		AllowedArtifacts: []string{"Windows.System.Pslist"},
+		AllowedProfiles:  []string{"windows_basic_triage"},
 	})
 	deps.WriteClient = &fakeHuntClient{
 		Client: velociraptor.NewClient(),
@@ -753,12 +943,21 @@ func TestCancelHuntApprovedFakePath(t *testing.T) {
 	}
 	deps.VelociraptorWriteMode = VelociraptorModeReal
 
+	ref := approveRequest(t, store, approval.Request{
+		ID:        "ref-cancel-ok",
+		Operation: approval.OperationCancelHunt,
+		CaseID:    "CASE-011",
+		Reason:    "approved cancel test",
+		Requester: "tester",
+		HuntID:    "H.1",
+	})
+
 	handler := newCancelHuntHandler(deps)
 	_, out, err := handler(context.Background(), nil, CancelHuntInput{
 		CaseID:     "CASE-011",
 		Reason:     "approved cancel test",
 		Requester:  "tester",
-		ApprovalID: "approval-ok",
+		ApprovalID: ref,
 		HuntID:     "H.1",
 	})
 	if err != nil {
@@ -767,7 +966,11 @@ func TestCancelHuntApprovedFakePath(t *testing.T) {
 	if out.Status != response.StatusSuccess {
 		t.Errorf("Status = %q, want %q", out.Status, response.StatusSuccess)
 	}
-	if !approver.consumeCalled {
+	status, err := store.Get(context.Background(), ref)
+	if err != nil {
+		t.Fatalf("store.Get: %v", err)
+	}
+	if !status.Consumed {
 		t.Error("Consume was not called on the approval store")
 	}
 	evt, ok := sink.last()
@@ -777,13 +980,12 @@ func TestCancelHuntApprovedFakePath(t *testing.T) {
 }
 
 func TestStartHuntApprovedFakePath(t *testing.T) {
-	approver := &fakeApprovalStore{approved: true}
-	deps, sink := testHuntDeps(t, approver)
+	deps, sink, store := testHuntDeps(t)
 	deps.Policy = policy.NewEngine(config.PolicyConfig{
-		Mode:              config.PolicyModeControlled,
-		MaxHuntClients:    50,
-		AllowedArtifacts:  []string{"Windows.System.Pslist", "Generic.Client.Info"},
-		AllowedProfiles:   []string{"windows_basic_triage"},
+		Mode:             config.PolicyModeControlled,
+		MaxHuntClients:   50,
+		AllowedArtifacts: []string{"Windows.System.Pslist", "Generic.Client.Info"},
+		AllowedProfiles:  []string{"windows_basic_triage"},
 	})
 	deps.WriteClient = &fakeHuntClient{
 		Client: velociraptor.NewClient(),
@@ -795,12 +997,22 @@ func TestStartHuntApprovedFakePath(t *testing.T) {
 	}
 	deps.VelociraptorWriteMode = VelociraptorModeReal
 
+	ref := approveRequest(t, store, approval.Request{
+		ID:        "ref-start-ok",
+		Operation: approval.OperationStartHunt,
+		CaseID:    "CASE-012",
+		Reason:    "approved start test",
+		Requester: "tester",
+		Artifact:  "Generic.Client.Info",
+		Label:     "linux",
+	})
+
 	handler := newStartHuntHandler(deps)
 	_, out, err := handler(context.Background(), nil, StartHuntInput{
 		CaseID:     "CASE-012",
 		Reason:     "approved start test",
 		Requester:  "tester",
-		ApprovalID: "approval-ok",
+		ApprovalID: ref,
 		Artifact:   "Generic.Client.Info",
 		Label:      "linux",
 	})
@@ -813,7 +1025,11 @@ func TestStartHuntApprovedFakePath(t *testing.T) {
 	if out.HuntID != "H.new" {
 		t.Errorf("HuntID = %q, want H.new", out.HuntID)
 	}
-	if !approver.consumeCalled {
+	status, err := store.Get(context.Background(), ref)
+	if err != nil {
+		t.Fatalf("store.Get: %v", err)
+	}
+	if !status.Consumed {
 		t.Error("Consume was not called on the approval store")
 	}
 	evt, ok := sink.last()
@@ -827,7 +1043,7 @@ func TestStartHuntApprovedFakePath(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestHuntToolsDoNotExposeRawVQL(t *testing.T) {
-	deps, _ := testHuntDeps(t, nil)
+	deps, _, _ := testHuntDeps(t)
 	srv := New("test", "0.0.0", deps)
 
 	session := connectTestClient(t, srv)
@@ -855,7 +1071,7 @@ func TestHuntToolsDoNotExposeRawVQL(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestExistingV03ToolsRemainRegistered(t *testing.T) {
-	deps, _ := testHuntDeps(t, nil)
+	deps, _, _ := testHuntDeps(t)
 	srv := New("test", "0.0.0", deps)
 
 	session := connectTestClient(t, srv)

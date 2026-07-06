@@ -2,10 +2,14 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/hdyrawan/agentic-velociraptor-mcp/internal/approval"
 )
 
 func TestRunVersion(t *testing.T) {
@@ -273,5 +277,81 @@ func TestRunApproveSupportsDeny(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "denied") {
 		t.Fatalf("output %q does not confirm denial", buf.String())
+	}
+}
+
+func TestRunApproveCreatesStartHuntRequestWithScope(t *testing.T) {
+	storePath := filepath.Join(t.TempDir(), "approvals.json")
+
+	var buf bytes.Buffer
+	code := run([]string{
+		"approve",
+		"--store", storePath,
+		"--reference", "CASE-9000-01",
+		"--operation", "start_hunt",
+		"--case-id", "CASE-9000",
+		"--reason", "sweep for lateral movement",
+		"--requester", "analyst@example.com",
+		"--artifact", "Windows.System.Pslist",
+		"--hunt-client-id", "C.1111111111111111",
+		"--hunt-client-id", "C.2222222222222222",
+		"--label", "windows",
+		"--approved-by", "ir-lead@example.com",
+	}, &buf)
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0: %s", code, buf.String())
+	}
+
+	store, err := approval.NewFileStore(storePath, time.Hour)
+	if err != nil {
+		t.Fatalf("approval.NewFileStore: %v", err)
+	}
+	status, err := store.Get(context.Background(), "CASE-9000-01")
+	if err != nil {
+		t.Fatalf("store.Get: %v", err)
+	}
+	if status.Request.Operation != approval.OperationStartHunt {
+		t.Errorf("Operation = %q, want %q", status.Request.Operation, approval.OperationStartHunt)
+	}
+	if status.Request.Artifact != "Windows.System.Pslist" {
+		t.Errorf("Artifact = %q, want Windows.System.Pslist", status.Request.Artifact)
+	}
+	if status.Request.Label != "windows" {
+		t.Errorf("Label = %q, want windows", status.Request.Label)
+	}
+	if len(status.Request.ClientIDs) != 2 {
+		t.Fatalf("ClientIDs = %v, want 2 entries", status.Request.ClientIDs)
+	}
+}
+
+func TestRunApproveCreatesCancelHuntRequest(t *testing.T) {
+	storePath := filepath.Join(t.TempDir(), "approvals.json")
+
+	var buf bytes.Buffer
+	code := run([]string{
+		"approve",
+		"--store", storePath,
+		"--reference", "CASE-9000-02",
+		"--operation", "cancel_hunt",
+		"--case-id", "CASE-9000",
+		"--reason", "stop runaway hunt",
+		"--requester", "analyst@example.com",
+		"--hunt-id", "H.1234abcd5678ef90",
+		"--approved-by", "ir-lead@example.com",
+	}, &buf)
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0: %s", code, buf.String())
+	}
+
+	store, err := approval.NewFileStore(storePath, time.Hour)
+	if err != nil {
+		t.Fatalf("approval.NewFileStore: %v", err)
+	}
+	status, err := store.Get(context.Background(), "CASE-9000-02")
+	if err != nil {
+		t.Fatalf("store.Get: %v", err)
+	}
+	if status.Request.HuntID != "H.1234abcd5678ef90" {
+		t.Errorf("HuntID = %q, want H.1234abcd5678ef90", status.Request.HuntID)
 	}
 }

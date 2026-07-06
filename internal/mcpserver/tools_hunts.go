@@ -2,11 +2,8 @@ package mcpserver
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"strconv"
-	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -185,6 +182,10 @@ type StartHuntOutput struct {
 
 func newStartHuntHandler(deps Deps) mcp.ToolHandlerFor[StartHuntInput, StartHuntOutput] {
 	return func(ctx context.Context, req *mcp.CallToolRequest, in StartHuntInput) (*mcp.CallToolResult, StartHuntOutput, error) {
+		if enabled, reason := writePilotEnabled(deps); !enabled {
+			recordAudit(deps, audit.Event{Tool: "velo_start_hunt_with_approval", Outcome: audit.OutcomeBlocked, Artifact: in.Artifact, CaseID: in.CaseID, Reason: reason})
+			return nil, StartHuntOutput{}, errors.New(reason)
+		}
 		if err := validateHuntWriteInput(deps, in.CaseID, in.Reason, in.ApprovalID); err != nil {
 			return nil, StartHuntOutput{}, err
 		}
@@ -211,19 +212,24 @@ func newStartHuntHandler(deps Deps) mcp.ToolHandlerFor[StartHuntInput, StartHunt
 			maxClients = in.MaxClients
 		}
 
-		if err := checkHuntApproval(deps, in.ApprovalID, string(approval.OperationStartHunt), in.CaseID, in.Reason); err != nil {
-			recordAudit(deps, audit.Event{Tool: "velo_start_hunt_with_approval", Outcome: audit.OutcomeBlocked, ApprovalID: in.ApprovalID, Reason: err.Error()})
-			return nil, StartHuntOutput{}, err
+		candidate := approval.Request{
+			Operation:  approval.OperationStartHunt,
+			CaseID:     in.CaseID,
+			Artifact:   in.Artifact,
+			Parameters: in.Parameters,
+			ClientIDs:  in.ClientIDs,
+			Label:      in.Label,
+			TargetAll:  in.All,
 		}
-
-		if deps.Policy != nil && deps.Policy.ReadOnly() {
-			recordAudit(deps, audit.Event{Tool: "velo_start_hunt_with_approval", Outcome: audit.OutcomeBlocked, Reason: "policy mode is read-only"})
-			return nil, StartHuntOutput{}, fmt.Errorf("policy is in read-only mode; no hunt start is allowed")
+		result, outcome, ok := verifyAndConsumeApproval(ctx, deps, in.ApprovalID, candidate)
+		if !ok {
+			recordAudit(deps, audit.Event{Tool: "velo_start_hunt_with_approval", Outcome: outcome, Artifact: in.Artifact, CaseID: in.CaseID, RequestReason: in.Reason, ApprovalID: in.ApprovalID, Reason: result.Message})
+			return nil, StartHuntOutput{Result: result, Artifact: in.Artifact}, nil
 		}
 
 		if deps.WriteClient == nil {
-			recordAudit(deps, audit.Event{Tool: "velo_start_hunt_with_approval", Outcome: audit.OutcomeBlocked, Reason: "no write client configured"})
-			return nil, StartHuntOutput{}, fmt.Errorf("no write client configured; hunt start is not available")
+			recordAudit(deps, audit.Event{Tool: "velo_start_hunt_with_approval", Outcome: audit.OutcomeError, Artifact: in.Artifact, CaseID: in.CaseID, ApprovalID: in.ApprovalID, Reason: "no write client configured"})
+			return nil, StartHuntOutput{Result: response.Error("real mode is configured but no Velociraptor write client is available"), Artifact: in.Artifact}, nil
 		}
 
 		hunt, err := deps.WriteClient.StartHunt(ctx, velociraptor.HuntRequest{
@@ -281,6 +287,10 @@ type StartDFIRHuntOutput struct {
 
 func newStartDFIRHuntHandler(deps Deps) mcp.ToolHandlerFor[StartDFIRHuntInput, StartDFIRHuntOutput] {
 	return func(ctx context.Context, req *mcp.CallToolRequest, in StartDFIRHuntInput) (*mcp.CallToolResult, StartDFIRHuntOutput, error) {
+		if enabled, reason := writePilotEnabled(deps); !enabled {
+			recordAudit(deps, audit.Event{Tool: "velo_start_dfir_hunt_with_approval", Outcome: audit.OutcomeBlocked, Profile: in.Profile, CaseID: in.CaseID, Reason: reason})
+			return nil, StartDFIRHuntOutput{}, errors.New(reason)
+		}
 		if err := validateHuntWriteInput(deps, in.CaseID, in.Reason, in.ApprovalID); err != nil {
 			return nil, StartDFIRHuntOutput{}, err
 		}
@@ -322,19 +332,23 @@ func newStartDFIRHuntHandler(deps Deps) mcp.ToolHandlerFor[StartDFIRHuntInput, S
 			maxClients = in.MaxClients
 		}
 
-		if err := checkHuntApproval(deps, in.ApprovalID, string(approval.OperationStartDFIRHunt), in.CaseID, in.Reason); err != nil {
-			recordAudit(deps, audit.Event{Tool: "velo_start_dfir_hunt_with_approval", Outcome: audit.OutcomeBlocked, ApprovalID: in.ApprovalID, Reason: err.Error()})
-			return nil, StartDFIRHuntOutput{}, err
+		candidate := approval.Request{
+			Operation: approval.OperationStartDFIRHunt,
+			CaseID:    in.CaseID,
+			Profile:   in.Profile,
+			ClientIDs: in.ClientIDs,
+			Label:     in.Label,
+			TargetAll: in.All,
 		}
-
-		if deps.Policy != nil && deps.Policy.ReadOnly() {
-			recordAudit(deps, audit.Event{Tool: "velo_start_dfir_hunt_with_approval", Outcome: audit.OutcomeBlocked, Reason: "policy mode is read-only"})
-			return nil, StartDFIRHuntOutput{}, fmt.Errorf("policy is in read-only mode; no hunt start is allowed")
+		result, outcome, ok := verifyAndConsumeApproval(ctx, deps, in.ApprovalID, candidate)
+		if !ok {
+			recordAudit(deps, audit.Event{Tool: "velo_start_dfir_hunt_with_approval", Outcome: outcome, Profile: in.Profile, CaseID: in.CaseID, RequestReason: in.Reason, ApprovalID: in.ApprovalID, Reason: result.Message})
+			return nil, StartDFIRHuntOutput{Result: result, Profile: in.Profile}, nil
 		}
 
 		if deps.WriteClient == nil {
-			recordAudit(deps, audit.Event{Tool: "velo_start_dfir_hunt_with_approval", Outcome: audit.OutcomeBlocked, Reason: "no write client configured"})
-			return nil, StartDFIRHuntOutput{}, fmt.Errorf("no write client configured; hunt start is not available")
+			recordAudit(deps, audit.Event{Tool: "velo_start_dfir_hunt_with_approval", Outcome: audit.OutcomeError, Profile: in.Profile, CaseID: in.CaseID, ApprovalID: in.ApprovalID, Reason: "no write client configured"})
+			return nil, StartDFIRHuntOutput{Result: response.Error("real mode is configured but no Velociraptor write client is available"), Profile: in.Profile}, nil
 		}
 
 		// Collect all artifacts from the profile
@@ -582,6 +596,10 @@ type CancelHuntOutput struct {
 
 func newCancelHuntHandler(deps Deps) mcp.ToolHandlerFor[CancelHuntInput, CancelHuntOutput] {
 	return func(ctx context.Context, req *mcp.CallToolRequest, in CancelHuntInput) (*mcp.CallToolResult, CancelHuntOutput, error) {
+		if enabled, reason := writePilotEnabled(deps); !enabled {
+			recordAudit(deps, audit.Event{Tool: "velo_cancel_hunt_with_approval", Outcome: audit.OutcomeBlocked, HuntID: in.HuntID, CaseID: in.CaseID, Reason: reason})
+			return nil, CancelHuntOutput{}, errors.New(reason)
+		}
 		if err := validateHuntWriteInput(deps, in.CaseID, in.Reason, in.ApprovalID); err != nil {
 			return nil, CancelHuntOutput{}, err
 		}
@@ -590,19 +608,20 @@ func newCancelHuntHandler(deps Deps) mcp.ToolHandlerFor[CancelHuntInput, CancelH
 			return nil, CancelHuntOutput{}, fmt.Errorf("hunt_id is required")
 		}
 
-		if err := checkHuntApproval(deps, in.ApprovalID, string(approval.OperationCancelHunt), in.CaseID, in.Reason); err != nil {
-			recordAudit(deps, audit.Event{Tool: "velo_cancel_hunt_with_approval", Outcome: audit.OutcomeBlocked, HuntID: in.HuntID, ApprovalID: in.ApprovalID, Reason: err.Error()})
-			return nil, CancelHuntOutput{}, err
+		candidate := approval.Request{
+			Operation: approval.OperationCancelHunt,
+			CaseID:    in.CaseID,
+			HuntID:    in.HuntID,
 		}
-
-		if deps.Policy != nil && deps.Policy.ReadOnly() {
-			recordAudit(deps, audit.Event{Tool: "velo_cancel_hunt_with_approval", Outcome: audit.OutcomeBlocked, HuntID: in.HuntID, Reason: "policy mode is read-only"})
-			return nil, CancelHuntOutput{}, fmt.Errorf("policy is in read-only mode; no hunt cancellation is allowed")
+		result, outcome, ok := verifyAndConsumeApproval(ctx, deps, in.ApprovalID, candidate)
+		if !ok {
+			recordAudit(deps, audit.Event{Tool: "velo_cancel_hunt_with_approval", Outcome: outcome, HuntID: in.HuntID, CaseID: in.CaseID, RequestReason: in.Reason, ApprovalID: in.ApprovalID, Reason: result.Message})
+			return nil, CancelHuntOutput{Result: result, HuntID: in.HuntID}, nil
 		}
 
 		if deps.WriteClient == nil {
-			recordAudit(deps, audit.Event{Tool: "velo_cancel_hunt_with_approval", Outcome: audit.OutcomeBlocked, HuntID: in.HuntID, Reason: "no write client configured"})
-			return nil, CancelHuntOutput{}, fmt.Errorf("no write client configured; hunt cancellation is not available")
+			recordAudit(deps, audit.Event{Tool: "velo_cancel_hunt_with_approval", Outcome: audit.OutcomeError, HuntID: in.HuntID, CaseID: in.CaseID, ApprovalID: in.ApprovalID, Reason: "no write client configured"})
+			return nil, CancelHuntOutput{Result: response.Error("real mode is configured but no Velociraptor write client is available"), HuntID: in.HuntID}, nil
 		}
 
 		if err := deps.WriteClient.CancelHunt(ctx, in.HuntID); err != nil {
@@ -688,20 +707,6 @@ func validateHuntWriteInput(deps Deps, caseID, reason, approvalID string) error 
 	return nil
 }
 
-func checkHuntApproval(deps Deps, approvalID, operation, caseID, reason string) error {
-	approved, err := deps.Approvals.IsApproved(context.Background(), approvalID)
-	if err != nil {
-		return fmt.Errorf("approval check failed: %w", err)
-	}
-	if !approved {
-		return fmt.Errorf("approval %q has not been granted or does not exist", approvalID)
-	}
-	if err := deps.Approvals.Consume(context.Background(), approvalID); err != nil {
-		return fmt.Errorf("approval consume failed: %w", err)
-	}
-	return nil
-}
-
 func configuredMaxHuntClients(deps Deps) int {
 	if deps.Policy != nil {
 		m := deps.Policy.MaxHuntClients()
@@ -723,86 +728,4 @@ func describeScope(clientIDs []string, label string, all bool) string {
 	default:
 		return "unknown"
 	}
-}
-
-// nextOffsetCursor returns the next cursor offset for pagination.
-// nextOffsetCursor is used for sequence-number based cursor pagination.
-func nextOffsetCursor(cursor string, returned int, truncated bool) string {
-	if !truncated || returned == 0 {
-		return ""
-	}
-	offset := 0
-	if strings.HasPrefix(cursor, "offset:") {
-		parsed, err := strconv.Atoi(strings.TrimPrefix(cursor, "offset:"))
-		if err == nil && parsed > 0 {
-			offset = parsed
-		}
-	}
-	return fmt.Sprintf("offset:%d", offset+returned)
-}
-
-// boundRowsByLimitAndBytes bounds rows by limit and total byte size.
-// boundRowsByLimitAndBytes is used to enforce tool-level resource limits.
-func boundRowsByLimitAndBytes(rows []map[string]any, limit int, maxBytes int64) ([]map[string]any, int64, bool) {
-	if limit <= 0 {
-		limit = 100
-	}
-	if maxBytes <= 0 {
-		maxBytes = 1048576
-	}
-	out := make([]map[string]any, 0, minInt(len(rows), limit))
-	var total int64
-	truncated := len(rows) > limit
-	for _, row := range rows {
-		if len(out) >= limit {
-			truncated = true
-			break
-		}
-		b, err := json.Marshal(row)
-		if err != nil {
-			b = []byte(fmt.Sprint(row))
-		}
-		rowBytes := int64(len(b))
-		if total+rowBytes > maxBytes {
-			truncated = true
-			break
-		}
-		out = append(out, row)
-		total += rowBytes
-	}
-	return out, total, truncated
-}
-
-// boundToolLimit clamps a caller-requested limit to (0, ceiling].
-func boundToolLimit(requested, ceiling int) int {
-	if ceiling <= 0 {
-		ceiling = 100
-	}
-	if requested <= 0 || requested > ceiling {
-		return ceiling
-	}
-	return requested
-}
-
-// configuredMaxRows returns the configured max_rows or a default.
-func configuredMaxRows(deps Deps) int {
-	if deps.Config != nil && deps.Config.Velociraptor.MaxRows > 0 {
-		return deps.Config.Velociraptor.MaxRows
-	}
-	return 100
-}
-
-// configuredMaxResultBytes returns the configured max_result_bytes or a default.
-func configuredMaxResultBytes(deps Deps) int64 {
-	if deps.Config != nil && deps.Config.Velociraptor.MaxResultBytes > 0 {
-		return deps.Config.Velociraptor.MaxResultBytes
-	}
-	return 1048576
-}
-
-func minInt(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }

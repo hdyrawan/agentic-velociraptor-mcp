@@ -39,13 +39,13 @@ func connectTestClient(t *testing.T, srv *Server) *mcp.ClientSession {
 // Velociraptor endpoint/flow/hunt state (gated by writePilotEnabled and
 // an approval reference). Every other registered tool must be read-only.
 var writeCapableTools = map[string]bool{
-	"velo_collect_artifact_with_approval":      true,
-	"velo_collect_dfir_profile_with_approval":  true,
-	"velo_cancel_flow_with_approval":           true,
-	"velo_download_flow_upload_with_approval":  true,
-	"velo_start_hunt_with_approval":            true,
-	"velo_start_dfir_hunt_with_approval":       true,
-	"velo_cancel_hunt_with_approval":           true,
+	"velo_collect_artifact_with_approval":     true,
+	"velo_collect_dfir_profile_with_approval": true,
+	"velo_cancel_flow_with_approval":          true,
+	"velo_download_flow_upload_with_approval": true,
+	"velo_start_hunt_with_approval":           true,
+	"velo_start_dfir_hunt_with_approval":      true,
+	"velo_cancel_hunt_with_approval":          true,
 }
 
 func TestNewRegistersExactlyTwentySevenTools(t *testing.T) {
