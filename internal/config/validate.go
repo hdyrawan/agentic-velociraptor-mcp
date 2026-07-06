@@ -69,5 +69,15 @@ func Validate(cfg *Config) error {
 		errs = append(errs, errors.New("audit.path is required when audit.enabled is true"))
 	}
 
+	// approval.store_path is optional: when empty, every approval-gated
+	// tool (collection, DFIR profile collection, flow cancellation,
+	// upload download) reports itself disabled rather than attempting
+	// anything; see mcpserver.writePilotEnabled. When set, ttl_seconds
+	// must be positive so approvals cannot be configured as
+	// permanently-non-expiring or permanently-instantly-expired.
+	if cfg.Approval.StorePath != "" && cfg.Approval.TTLSeconds <= 0 {
+		errs = append(errs, errors.New("approval.ttl_seconds must be > 0 when approval.store_path is set"))
+	}
+
 	return errors.Join(errs...)
 }

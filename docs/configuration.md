@@ -30,6 +30,7 @@ velociraptor:
   max_rows: 500
   max_result_bytes: 1048576
   max_upload_bytes: 52428800
+  download_dir: /var/lib/agentic-velociraptor-mcp/downloads
 
 policy:
   mode: read_only            # or "controlled"
@@ -65,6 +66,10 @@ audit:
     - approval_token
     - password
     - secret
+
+approval:
+  store_path: /var/lib/agentic-velociraptor-mcp/approvals.json
+  ttl_seconds: 900
 ```
 
 ## Field reference
@@ -82,11 +87,12 @@ audit:
 |-------------------------|--------|-------|
 | `org_id`                | string | Velociraptor org to scope operations to. |
 | `read_api_config_path`  | string | Path to a Velociraptor `api.config.yaml` (mTLS bundle) for a least-privilege, read-oriented identity. **Secret**: never logged. **Optional**: empty means every visibility tool (`velo_health_check`, `velo_search_clients`, `velo_get_client_info`, `velo_list_artifact_names`, `velo_get_artifact_details`) runs in mock mode (no Velociraptor call). If set, it is loaded eagerly at startup and must be valid — see "The read API config file" below — or the server refuses to start. |
-| `write_api_config_path` | string | Separate `api.config.yaml` for an identity used only after approval for write-capable operations. **Secret**: never logged. Optional if the deployment is permanently read-only. **Not read by any code path as of v0.1.0.** |
+| `write_api_config_path` | string | Separate `api.config.yaml` for an identity used only after approval for write-capable operations. **Secret**: never logged. Optional if the deployment is permanently read-only; if set, loaded eagerly at startup (must be valid) and used by the six v0.4.0 collection/cancel/download tools once `writePilotEnabled` conditions are met. Even so, this milestone's `veloapi` proto mirror has no real `CollectArtifact`/`CancelFlow`/upload RPC wiring yet — a real write client currently reports `ErrNotImplemented` for those calls. |
 | `timeout_seconds`       | int    | Per-call timeout against the Velociraptor gRPC API, applied independently to each RPC (`Check`, `ListClients`, `GetClient`, `GetArtifacts`). Must be > 0. |
 | `max_rows`              | int    | Max result rows returned by any single tool call. As of v0.1.0 this bounds `velo_search_clients` (caps both the requested `limit` and the server-reported result count) and `velo_list_artifact_names`. Must be > 0; a non-positive value falls back to an internal default of 100 rather than being treated as unbounded. |
 | `max_result_bytes`      | int64  | Max serialized result size returned by any single tool call. Must be > 0. |
-| `max_upload_bytes`      | int64  | Max bytes returned by `velo_download_flow_upload_with_approval`. Must be > 0. |
+| `max_upload_bytes`      | int64  | Max bytes fetched by `velo_download_flow_upload_with_approval`'s underlying `DownloadFlowUpload` call. Must be > 0. |
+| `download_dir`          | string | Local directory `velo_download_flow_upload_with_approval` writes downloaded evidence bytes to (never returned inline in the MCP response). **Optional; empty disables that one tool** even if `policy.mode`/`approval.store_path` are otherwise configured for the write pilot. Created (`0700`) on first use if it doesn't exist; files are written `0600`. |
 
 ### `policy`
 
@@ -108,6 +114,13 @@ audit:
 | `enabled`       | bool     | Should be `true` in every real deployment. |
 | `path`          | string   | JSONL audit log path. Required when `enabled` is true. Written with `0600` permissions. |
 | `redact_fields` | []string | Additive to the hard-coded default redaction list in `internal/audit/sanitize.go`; never a replacement for it. |
+
+### `approval`
+
+| Field         | Type   | Notes |
+|---------------|--------|-------|
+| `store_path`  | string | Path to the JSON file backing `internal/approval.FileStore`. **Optional; empty disables every approval-gated tool** — one of two settings (alongside `policy.mode: controlled`) that must both be set before the write pilot activates at all (see `mcpserver.writePilotEnabled`). Written to only by `Store.Consume` (from tool handlers) and by the separate `agentic-velociraptor-mcp approve` CLI subcommand run by a human operator — never by an MCP tool's `Create`/`Decide` path, since no MCP tool calls those. Must point at the exact same file the `approve` CLI's `--store` flag targets. |
+| `ttl_seconds` | int    | How long an approved-but-unused request remains usable, measured from `Request.CreatedAt`. Must be > 0 when `store_path` is set. Must match (or be looser than) the `approve` CLI's `--ttl-seconds` for a request to be usable for as long as an operator expects. |
 
 ## The read API config file (`read_api_config_path`)
 

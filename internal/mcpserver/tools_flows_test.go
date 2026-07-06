@@ -2,8 +2,12 @@ package mcpserver
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/hdyrawan/agentic-velociraptor-mcp/internal/approval"
 	"github.com/hdyrawan/agentic-velociraptor-mcp/internal/audit"
 	"github.com/hdyrawan/agentic-velociraptor-mcp/internal/response"
 	"github.com/hdyrawan/agentic-velociraptor-mcp/internal/velociraptor"
@@ -262,5 +266,205 @@ func TestFlowHandlersDoNotCallWriteMethods(t *testing.T) {
 
 	if fake.collectCalls != 0 || fake.cancelCalls != 0 {
 		t.Fatalf("write methods called: collect=%d cancel=%d", fake.collectCalls, fake.cancelCalls)
+	}
+}
+
+// --- v0.4.0: velo_list_flow_uploads ---
+
+func TestListFlowUploadsMockMode(t *testing.T) {
+	deps, _ := testDeps(t)
+	handler := newListFlowUploadsHandler(deps)
+
+	_, out, err := handler(context.Background(), nil, ListFlowUploadsInput{ClientID: testCollectClientID, FlowID: testFlowID})
+	if err != nil {
+		t.Fatalf("unexpected Go error: %v", err)
+	}
+	if out.Mode != VelociraptorModeMock || out.Status != response.StatusSuccess {
+		t.Errorf("out = %+v, want mock mode success", out)
+	}
+}
+
+func TestListFlowUploadsInvalidInput(t *testing.T) {
+	deps, _ := testDeps(t)
+	handler := newListFlowUploadsHandler(deps)
+
+	if _, _, err := handler(context.Background(), nil, ListFlowUploadsInput{ClientID: "bad", FlowID: testFlowID}); err == nil {
+		t.Error("expected error for invalid client id")
+	}
+	if _, _, err := handler(context.Background(), nil, ListFlowUploadsInput{ClientID: testCollectClientID, FlowID: "bad"}); err == nil {
+		t.Error("expected error for invalid flow id")
+	}
+}
+
+func TestListFlowUploadsRealModeSuccess(t *testing.T) {
+	deps, _ := testDeps(t)
+	deps.VelociraptorReadMode = VelociraptorModeReal
+	deps.ReadClient = &fakeVelociraptorClient{
+		listFlowUploads: func(ctx context.Context, clientID, flowID string) ([]velociraptor.UploadSummary, error) {
+			return []velociraptor.UploadSummary{{Component: "file", Name: "memory.dmp", SizeBytes: 1024, Hash: "abc"}}, nil
+		},
+	}
+	handler := newListFlowUploadsHandler(deps)
+
+	_, out, err := handler(context.Background(), nil, ListFlowUploadsInput{ClientID: testCollectClientID, FlowID: testFlowID})
+	if err != nil {
+		t.Fatalf("unexpected Go error: %v", err)
+	}
+	if out.Status != response.StatusSuccess || len(out.Uploads) != 1 || out.Uploads[0].Name != "memory.dmp" {
+		t.Errorf("out = %+v, want one upload named memory.dmp", out)
+	}
+}
+
+// --- v0.4.0: velo_get_flow_upload_metadata ---
+
+func TestGetFlowUploadMetadataNotFound(t *testing.T) {
+	deps, _ := testDeps(t)
+	deps.VelociraptorReadMode = VelociraptorModeReal
+	deps.ReadClient = &fakeVelociraptorClient{
+		getUploadMetadata: func(ctx context.Context, clientID, flowID, uploadName string) (velociraptor.UploadSummary, error) {
+			return velociraptor.UploadSummary{}, velociraptor.ErrUploadNotFound
+		},
+	}
+	handler := newGetFlowUploadMetadataHandler(deps)
+
+	_, out, err := handler(context.Background(), nil, GetFlowUploadMetadataInput{ClientID: testCollectClientID, FlowID: testFlowID, UploadName: "missing.bin"})
+	if err != nil {
+		t.Fatalf("unexpected Go error: %v", err)
+	}
+	if out.Status != response.StatusNotFound {
+		t.Errorf("Status = %q, want not_found", out.Status)
+	}
+}
+
+func TestGetFlowUploadMetadataSuccess(t *testing.T) {
+	deps, _ := testDeps(t)
+	deps.VelociraptorReadMode = VelociraptorModeReal
+	deps.ReadClient = &fakeVelociraptorClient{
+		getUploadMetadata: func(ctx context.Context, clientID, flowID, uploadName string) (velociraptor.UploadSummary, error) {
+			return velociraptor.UploadSummary{Component: "file", Name: uploadName, SizeBytes: 42, Hash: "deadbeef"}, nil
+		},
+	}
+	handler := newGetFlowUploadMetadataHandler(deps)
+
+	_, out, err := handler(context.Background(), nil, GetFlowUploadMetadataInput{ClientID: testCollectClientID, FlowID: testFlowID, UploadName: "memory.dmp"})
+	if err != nil {
+		t.Fatalf("unexpected Go error: %v", err)
+	}
+	if out.Status != response.StatusSuccess || out.Upload == nil || out.Upload.SizeBytes != 42 {
+		t.Errorf("out = %+v, want success with SizeBytes=42", out)
+	}
+}
+
+// --- v0.4.0: velo_download_flow_upload_with_approval ---
+
+func testDownloadPilotDeps(t *testing.T) (Deps, *fakeAuditSink) {
+	t.Helper()
+	deps, sink := testWritePilotDeps(t)
+	deps.Config.Velociraptor.DownloadDir = t.TempDir()
+	deps.Config.Velociraptor.MaxUploadBytes = 1048576
+	return deps, sink
+}
+
+func TestDownloadFlowUploadDisabledWithoutDownloadDir(t *testing.T) {
+	deps, _ := testWritePilotDeps(t) // DownloadDir left empty.
+	handler := newDownloadFlowUploadHandler(deps)
+
+	_, out, err := handler(context.Background(), nil, DownloadFlowUploadInput{
+		ClientID: testCollectClientID, FlowID: testFlowID, UploadName: "memory.dmp",
+		CaseID: "CASE-1", Reason: "evidence", Requester: "analyst", ApprovalReference: "ref-1",
+	})
+	if err == nil {
+		t.Fatalf("expected error when download_dir is unset, got out=%+v", out)
+	}
+	if !strings.Contains(err.Error(), "download_dir") {
+		t.Errorf("error = %v, want mention of download_dir", err)
+	}
+}
+
+func TestDownloadFlowUploadApprovedFakeExecutionSucceeds(t *testing.T) {
+	deps, sink := testDownloadPilotDeps(t)
+	const uploadName = "memory.dmp"
+	payload := []byte("fake evidence bytes")
+	deps.WriteClient = &fakeVelociraptorClient{
+		downloadFlowUpload: func(ctx context.Context, clientID, flowID, name string, maxBytes int64) ([]byte, error) {
+			if clientID != testCollectClientID || flowID != testFlowID || name != uploadName {
+				t.Fatalf("unexpected DownloadFlowUpload call: %s %s %s", clientID, flowID, name)
+			}
+			return payload, nil
+		},
+	}
+	handler := newDownloadFlowUploadHandler(deps)
+
+	req := approval.Request{
+		ID: "ref-1", Operation: approval.OperationDownloadFlowUpload,
+		CaseID: "CASE-1", Reason: "evidence", Requester: "analyst",
+		ClientID: testCollectClientID, FlowID: testFlowID, UploadName: uploadName,
+	}
+	approveRequest(t, deps.Approvals, req)
+
+	_, out, err := handler(context.Background(), nil, DownloadFlowUploadInput{
+		ClientID: testCollectClientID, FlowID: testFlowID, UploadName: uploadName,
+		CaseID: "CASE-1", Reason: "evidence", Requester: "analyst", ApprovalReference: "ref-1",
+	})
+	if err != nil {
+		t.Fatalf("unexpected Go error: %v", err)
+	}
+	if out.Status != response.StatusSuccess {
+		t.Fatalf("Status = %q, want success: %+v", out.Status, out)
+	}
+	if out.SizeBytes != int64(len(payload)) {
+		t.Errorf("SizeBytes = %d, want %d", out.SizeBytes, len(payload))
+	}
+	if out.LocalPath == "" {
+		t.Fatal("LocalPath is empty")
+	}
+
+	// The response must never carry raw bytes; only metadata.
+	written, err := os.ReadFile(out.LocalPath)
+	if err != nil {
+		t.Fatalf("read local path: %v", err)
+	}
+	if string(written) != string(payload) {
+		t.Errorf("written file content = %q, want %q", written, payload)
+	}
+	if !strings.HasPrefix(out.LocalPath, deps.Config.Velociraptor.DownloadDir) {
+		t.Errorf("LocalPath %q not under configured download_dir %q", out.LocalPath, deps.Config.Velociraptor.DownloadDir)
+	}
+	// The filename must not embed the caller-supplied upload_name.
+	if strings.Contains(filepath.Base(out.LocalPath), uploadName) {
+		t.Errorf("local filename %q unexpectedly embeds upload_name", filepath.Base(out.LocalPath))
+	}
+
+	evt, ok := sink.last()
+	if !ok || evt.Outcome != "success" || evt.ByteCount != int64(len(payload)) {
+		t.Errorf("audit event = %+v, ok=%v, want success with ByteCount=%d", evt, ok, len(payload))
+	}
+}
+
+func TestDownloadFlowUploadNotFound(t *testing.T) {
+	deps, _ := testDownloadPilotDeps(t)
+	deps.WriteClient = &fakeVelociraptorClient{
+		downloadFlowUpload: func(ctx context.Context, clientID, flowID, name string, maxBytes int64) ([]byte, error) {
+			return nil, velociraptor.ErrUploadNotFound
+		},
+	}
+	handler := newDownloadFlowUploadHandler(deps)
+
+	req := approval.Request{
+		ID: "ref-1", Operation: approval.OperationDownloadFlowUpload,
+		CaseID: "CASE-1", Reason: "evidence", Requester: "analyst",
+		ClientID: testCollectClientID, FlowID: testFlowID, UploadName: "missing.bin",
+	}
+	approveRequest(t, deps.Approvals, req)
+
+	_, out, err := handler(context.Background(), nil, DownloadFlowUploadInput{
+		ClientID: testCollectClientID, FlowID: testFlowID, UploadName: "missing.bin",
+		CaseID: "CASE-1", Reason: "evidence", Requester: "analyst", ApprovalReference: "ref-1",
+	})
+	if err != nil {
+		t.Fatalf("unexpected Go error: %v", err)
+	}
+	if out.Status != response.StatusNotFound {
+		t.Errorf("Status = %q, want not_found", out.Status)
 	}
 }

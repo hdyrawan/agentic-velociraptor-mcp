@@ -155,4 +155,123 @@ audit:
 	if deps.VelociraptorReadMode != "mock" {
 		t.Errorf("VelociraptorReadMode = %q, want %q", deps.VelociraptorReadMode, "mock")
 	}
+	if deps.VelociraptorWriteMode != "mock" {
+		t.Errorf("VelociraptorWriteMode = %q, want %q", deps.VelociraptorWriteMode, "mock")
+	}
+	if deps.Approvals != nil {
+		t.Error("Approvals != nil, want nil when approval.store_path is empty")
+	}
+}
+
+func TestBuildDepsConstructsApprovalStoreWhenConfigured(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	storePath := filepath.Join(dir, "approvals.json")
+	cfgYAML := `
+server:
+  name: test
+  transport: stdio
+velociraptor:
+  org_id: root
+  timeout_seconds: 5
+  max_rows: 500
+  max_result_bytes: 1048576
+  max_upload_bytes: 52428800
+policy:
+  mode: controlled
+  allow_raw_vql: false
+  max_hunt_clients: 100
+audit:
+  enabled: false
+approval:
+  store_path: ` + storePath + `
+  ttl_seconds: 900
+`
+	if err := os.WriteFile(cfgPath, []byte(cfgYAML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	deps, _, err := buildDeps(cfgPath, "../../profiles")
+	if err != nil {
+		t.Fatalf("buildDeps: %v", err)
+	}
+	if deps.Approvals == nil {
+		t.Fatal("Approvals = nil, want non-nil when approval.store_path is configured")
+	}
+}
+
+func TestRunApproveRequiresStore(t *testing.T) {
+	var buf bytes.Buffer
+	code := run([]string{"approve", "--reference", "ref-1", "--operation", "collect_artifact"}, &buf)
+	if code != 2 {
+		t.Fatalf("exit code = %d, want 2", code)
+	}
+	if !strings.Contains(buf.String(), "--store is required") {
+		t.Fatalf("output %q does not mention --store is required", buf.String())
+	}
+}
+
+func TestRunApproveRejectsUnknownOperation(t *testing.T) {
+	var buf bytes.Buffer
+	code := run([]string{"approve", "--store", filepath.Join(t.TempDir(), "approvals.json"), "--reference", "ref-1", "--operation", "bogus"}, &buf)
+	if code != 2 {
+		t.Fatalf("exit code = %d, want 2", code)
+	}
+	if !strings.Contains(buf.String(), "--operation must be one of") {
+		t.Fatalf("output %q does not mention valid operations", buf.String())
+	}
+}
+
+func TestRunApproveCreatesAndApprovesRequest(t *testing.T) {
+	storePath := filepath.Join(t.TempDir(), "approvals.json")
+
+	var buf bytes.Buffer
+	code := run([]string{
+		"approve",
+		"--store", storePath,
+		"--reference", "CASE-1234-01",
+		"--operation", "collect_artifact",
+		"--case-id", "CASE-1234",
+		"--reason", "triage",
+		"--requester", "analyst@example.com",
+		"--client-id", "C.1234abcd5678ef90",
+		"--artifact", "Generic.Client.Info",
+		"--approved-by", "ir-lead@example.com",
+	}, &buf)
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0: %s", code, buf.String())
+	}
+	if !strings.Contains(buf.String(), "CASE-1234-01") || !strings.Contains(buf.String(), "approved") {
+		t.Fatalf("output %q does not confirm approval", buf.String())
+	}
+
+	if _, err := os.Stat(storePath); err != nil {
+		t.Fatalf("approval store file not created: %v", err)
+	}
+}
+
+func TestRunApproveSupportsDeny(t *testing.T) {
+	storePath := filepath.Join(t.TempDir(), "approvals.json")
+
+	var buf bytes.Buffer
+	code := run([]string{
+		"approve",
+		"--store", storePath,
+		"--reference", "CASE-1234-02",
+		"--operation", "cancel_flow",
+		"--case-id", "CASE-1234",
+		"--reason", "stop runaway collection",
+		"--requester", "analyst@example.com",
+		"--client-id", "C.1234abcd5678ef90",
+		"--flow-id", "F.BN2HJC4N4T6KG",
+		"--approved-by", "ir-lead@example.com",
+		"--deny",
+		"--note", "not justified",
+	}, &buf)
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0: %s", code, buf.String())
+	}
+	if !strings.Contains(buf.String(), "denied") {
+		t.Fatalf("output %q does not confirm denial", buf.String())
+	}
 }

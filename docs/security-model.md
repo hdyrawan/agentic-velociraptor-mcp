@@ -217,6 +217,18 @@ Velociraptor data supports. Concretely:
   gRPC backend does not yet implement flow RPCs, so real-mode flow calls
   return a structured `error` rather than fabricated data until a
   reviewed backend is added.
+- **v0.4.0** extends the same envelope to the six new write-capable
+  tools, adding a distinction the earlier read-only tools didn't need:
+  an unresolved `approval_reference` is `status: "not_found"` (a normal,
+  honest "that reference doesn't exist yet" answer, not a crash), while
+  a resolved-but-not-usable reference (undecided, denied, expired,
+  already consumed, or fingerprint-mismatched) is `status: "error"` with
+  a specific message — both are audited `blocked`, distinguishing "we
+  don't know about this" from "we know about this and it's not
+  authorized." A real write-RPC failure (once real RPC wiring exists) is
+  also `status: "error"`, audited `error` instead of `blocked` — see
+  `internal/mcpserver/server.go`'s `verifyAndConsumeApproval` and
+  `docs/approval-flow.md`.
 
 ## Dependency surface: no upstream Velociraptor server module
 
@@ -262,8 +274,8 @@ bound as a plain protobuf field — never a VQL string, bound parameter,
 or any other query-language construct. This sidesteps the raw-VQL
 question entirely for this milestone rather than relying on
 `internal/vql`'s template/parameter-binding mechanism, which remains
-reserved for the one case (`velo_hunt_ioc_with_approval`, v0.4.0) that
-has no purpose-built RPC equivalent.
+reserved for the one case (`velo_hunt_ioc_with_approval`, unscheduled)
+that has no purpose-built RPC equivalent.
 
 ## Out of scope for this MCP server (by design)
 
@@ -323,39 +335,58 @@ attacker-controlled URL.
 
 `internal/mcpserver` only calls `mcp.AddTool` for tools that are fully
 implemented and reviewed for the current milestone — visibility,
-profile, and local workflow helpers as of v0.3.0. Flow, collection,
-hunt-execution, download, cancel, and IOC execution tools exist only as
-`ToolSpec` metadata in `tools_flows.go`, `tools_collection.go`,
-`tools_hunts.go`, and `tools_ioc.go` (used for
-`docs/tool-reference.md` generation) and are not reachable by any MCP client — confirmed in
+profile, workflow, and (as of v0.4.0) the six controlled collection
+pilot tools. Hunt-execution, hunt read/preview, and IOC execution tools
+exist only as `ToolSpec` metadata in `tools_hunts.go` and `tools_ioc.go`
+(used for `docs/tool-reference.md` generation); `velo_list_flows`,
+`velo_get_flow_status`, and `velo_get_flow_results` exist as metadata in
+`tools_flows.go` alongside the now-implemented upload/download tools.
+None of these are reachable by any MCP client — confirmed in
 `internal/mcpserver/server_test.go`'s exact-tool-inventory test. A
 planned tool becomes callable only when its milestone lands with real
 validation, policy, and (where required) approval wiring, not when its
 metadata is added.
 
-### Confused-deputy mitigation for future approval-gated tools
+### Confused-deputy mitigation is implemented, not just designed (v0.4.0)
 
-None of the 14 tools registered as of v0.5.0 require approval because all
-are read-only. For future approval-gated tools (collection, hunt
-start/cancel, flow cancel, upload download), `internal/approval`'s
-design already anticipates this: `approval.RequestFingerprint` hashes
-the security-relevant fields of a `Request` (operation, case ID,
-client/artifact/profile/hunt/flow), and a tool handler must recompute
-this fingerprint for the operation it is about to perform and confirm it
-matches the fingerprint of the *approved* request before calling
-Velociraptor. An approval is a grant for one exact, hashed payload — not
-a standing grant of "this operation category is now approved." See
-[approval-flow.md](approval-flow.md).
+`internal/approval.RequestFingerprint` hashes the security-relevant
+targeting fields of a `Request` (operation, case ID, client ID,
+artifact, parameters, profile, hunt ID, flow ID, upload name).
+`mcpserver.verifyAndConsumeApproval` (`internal/mcpserver/server.go`)
+recomputes this fingerprint for the operation a tool call is about to
+perform and confirms it matches the fingerprint of the resolved,
+approved `Request` before calling Velociraptor — a mismatch (different
+artifact, different client, different parameters) is rejected, not
+silently substituted. An approval is a grant for one exact, hashed
+payload, consumed exactly once (`Store.Consume`, called *before* the
+Velociraptor call so a failed attempt still burns the approval) — never
+a standing grant of "this operation category is now approved."
+
+The deeper mitigation is architectural: **no MCP tool can call
+`Store.Create` or `Store.Decide`.** Those are only reachable from the
+`agentic-velociraptor-mcp approve` CLI subcommand, run directly by a
+human operator, never through the MCP stdio transport. An MCP client
+(including an LLM driving tool calls) can request that a write-capable
+operation happen, by supplying an `approval_reference`; it can never
+make that reference valid. See [approval-flow.md](approval-flow.md) for
+the full workflow, including known limitations (single-analyst pilot,
+no cross-process file locking, no real Velociraptor RPC wiring yet for
+the underlying collection/cancel/upload calls themselves).
 
 ### Tool and scope minimization is intentional
 
 The stable core deliberately exposes 27 narrow tools rather than a small
 number of broad, parameterizable ones (and no raw-VQL escape hatch at
-all). v0.5.0 still goes further: only 14 of those 27 are registered, and
-all 14 are read-only. Minimizing the callable surface at every point in time — not just
-in the final v1.0.0 design — reduces both the attack surface and the
-chance an agent misuses a capability it didn't need for the task at
-hand. When a future HTTP/remote transport is added, this same principle
-should extend to authorization scopes (see PROJECT_PLAN.md's scope list,
-e.g. `velo:read`, `velo:profiles:read`) rather than an all-or-nothing
-API token.
+all). As of v0.4.0 (rebased onto v0.5.0), 20 of those 27 are registered:
+14 read-only tools plus six approval-gated write tools, each of which is
+still scoped to a single client per call, still requires explicit
+operator configuration (`policy.mode: controlled` and
+`approval.store_path`, plus `velociraptor.download_dir` for the download
+tool) before it does anything beyond report itself disabled, and none of
+which is a hunt or raw-VQL tool. Minimizing the callable surface at
+every point in time — not just in the final v1.0.0 design — reduces both
+the attack surface and the chance an agent misuses a capability it
+didn't need for the task at hand. When a future HTTP/remote transport is
+added, this same principle should extend to authorization scopes (see
+PROJECT_PLAN.md's scope list, e.g. `velo:read`, `velo:profiles:read`,
+`velo:collect`) rather than an all-or-nothing API token.

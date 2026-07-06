@@ -20,6 +20,7 @@ type Config struct {
 	Velociraptor VelociraptorConfig `yaml:"velociraptor"`
 	Policy       PolicyConfig       `yaml:"policy"`
 	Audit        AuditConfig        `yaml:"audit"`
+	Approval     ApprovalConfig     `yaml:"approval"`
 }
 
 // ServerConfig describes MCP server identity and transport.
@@ -60,6 +61,16 @@ type VelociraptorConfig struct {
 	MaxRows        int   `yaml:"max_rows"`
 	MaxResultBytes int64 `yaml:"max_result_bytes"`
 	MaxUploadBytes int64 `yaml:"max_upload_bytes"`
+
+	// DownloadDir is a local directory velo_download_flow_upload_with_approval
+	// writes downloaded evidence bytes to. Left empty by default, which
+	// disables that tool outright (see mcpserver.writePilotEnabled):
+	// evidence disclosure must be explicitly opted into by an operator
+	// pointing this at a real, access-controlled directory, never
+	// enabled implicitly by policy.mode alone. The tool never returns
+	// raw evidence bytes inline in an MCP response; only this local
+	// path, size, and a checksum.
+	DownloadDir string `yaml:"download_dir"`
 }
 
 // PolicyMode selects the overall operating posture of the MCP-layer
@@ -125,6 +136,27 @@ type AuditConfig struct {
 	RedactFields []string `yaml:"redact_fields"`
 }
 
+// ApprovalConfig points at the on-disk approval.Store used by every
+// write-capable, approval-gated tool (collection, DFIR profile
+// collection, flow cancellation, upload download).
+//
+// StorePath is left empty by default. An empty StorePath is one of the
+// two conditions (alongside Policy.Mode) that must both be explicitly
+// set before any approval-gated tool will do anything but report itself
+// disabled; see mcpserver.writePilotEnabled. The store file itself is
+// created and updated only by the agentic-velociraptor-mcp `approve` CLI
+// subcommand and by internal/approval.FileStore's Consume calls from
+// tool handlers — never written to directly by an MCP tool's Create/
+// Decide path, since no MCP tool calls those.
+type ApprovalConfig struct {
+	StorePath string `yaml:"store_path"`
+
+	// TTLSeconds bounds how long an approved-but-unused approval remains
+	// usable, measured from the Request's creation time. Must be > 0
+	// whenever StorePath is set.
+	TTLSeconds int `yaml:"ttl_seconds"`
+}
+
 // Load reads and parses a YAML config file at path. It does not apply
 // defaults or validate semantic constraints; call Validate on the result.
 func Load(path string) (*Config, error) {
@@ -156,6 +188,7 @@ func Default() *Config {
 			MaxRows:        500,
 			MaxResultBytes: 1048576,
 			MaxUploadBytes: 52428800,
+			DownloadDir:    "",
 		},
 		Policy: PolicyConfig{
 			Mode:                  PolicyModeReadOnly,
@@ -195,6 +228,10 @@ func Default() *Config {
 				"password",
 				"secret",
 			},
+		},
+		Approval: ApprovalConfig{
+			StorePath:  "",
+			TTLSeconds: 900,
 		},
 	}
 }
