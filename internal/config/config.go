@@ -130,6 +130,15 @@ type AuditConfig struct {
 	Enabled bool   `yaml:"enabled"`
 	Path    string `yaml:"path"`
 
+	// MaxSizeBytes rotates the audit file when it exceeds this size.
+	// Zero disables rotation (acceptable for local dev, not for
+	// production: see internal/audit/jsonl.go's RotationConfig doc).
+	MaxSizeBytes int64 `yaml:"max_size_bytes"`
+
+	// MaxFiles caps the number of rotated files (<path>.1, .2, ...)
+	// retained. Zero defaults to 5 inside audit.RotationConfig.
+	MaxFiles int `yaml:"max_files"`
+
 	// RedactFields lists structured field names that must never appear
 	// in plaintext in an audit record. internal/audit/sanitize.go is the
 	// single choke point responsible for enforcing this list.
@@ -218,8 +227,10 @@ func Default() *Config {
 			},
 		},
 		Audit: AuditConfig{
-			Enabled: true,
-			Path:    "/var/log/agentic-velociraptor-mcp/audit.jsonl",
+			Enabled:      true,
+			Path:         "/var/log/agentic-velociraptor-mcp/audit.jsonl",
+			MaxSizeBytes: 100 * 1024 * 1024, // 100 MiB per file
+			MaxFiles:     10,                // retain ~1 GiB of audit history
 			RedactFields: []string{
 				"client_private_key",
 				"client_cert",

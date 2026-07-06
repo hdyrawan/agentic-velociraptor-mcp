@@ -2,18 +2,25 @@
 //
 // Minimal, hand-authored mirror of the subset of Velociraptor's
 // `service API` (package `proto`, see api/proto/api.proto upstream)
-// that this project calls: Check, ListClients, GetClient, and
-// GetArtifacts. Because gRPC dispatches by fully-qualified method name
+// that this project calls: Check, ListClients, GetClient, GetArtifacts,
+// plus (as of v0.9.0) the typed flow/collection, upload, and hunt RPCs
+// listed below. Because gRPC dispatches by fully-qualified method name
 // (e.g. "/proto.API/ListClients"), this minimal service definition
 // reaches the same server-side handlers as the upstream client would,
-// without this project needing the other ~50 RPCs Velociraptor's API
-// service exposes (hunts, collections, VFS, users, notebooks, the
-// generic VQL Query RPC, ...), none of which this project's read-only
-// visibility tools need or are permitted to use.
+// without this project needing the other RPCs Velociraptor's API
+// service exposes (VFS browsing beyond VFSGetBuffer, users, notebooks,
+// the generic free-form VQL Query RPC, ...), none of which this
+// project's tools need or are permitted to use.
 //
-// Every RPC below is read-only against Velociraptor server-side state
-// (it never launches a flow, hunt, or artifact collection). See
-// docs/security-model.md and PROJECT_PLAN.md's v0.1.0 scope.
+// None of the RPCs below accept or return caller-supplied VQL text: flow
+// results and hunt results are read via the fixed GetTable/GetHuntResults
+// RPCs (whatever server-side query backs them is Velociraptor's own,
+// internal, non-parameterized-by-us implementation detail — this
+// project only ever sends client_id/flow_id/artifact/hunt_id/type
+// values, never a query string), and collections/hunts are launched via
+// ArtifactCollectorArgs/Hunt, which reference artifacts by name and bind
+// parameters as VQLEnv key/value pairs, never raw VQL. See
+// docs/security-model.md.
 //
 // Regenerate with (from the repository root):
 //   buf generate internal/velociraptor/veloapi
@@ -23,8 +30,13 @@ package proto;
 
 option go_package = "github.com/hdyrawan/agentic-velociraptor-mcp/internal/velociraptor/veloapi";
 
+import "google/protobuf/empty.proto";
 import "health.proto";
 import "visibility.proto";
+import "flows.proto";
+import "hunts.proto";
+import "table.proto";
+import "vfs.proto";
 
 service API {
   // Health check protocol as in
@@ -43,4 +55,55 @@ service API {
   // or exact name. Backs velo_list_artifact_names and
   // velo_get_artifact_details.
   rpc GetArtifacts(GetArtifactsRequest) returns (ArtifactDescriptors);
+
+  // --- Flows (v0.9.0) ---
+
+  // List collection flows for a client. Backs velo_list_flows.
+  rpc GetClientFlows(GetTableRequest) returns (GetTableResponse);
+
+  // Fetch one flow's status. Backs velo_get_flow_status.
+  rpc GetFlowDetails(ApiFlowRequest) returns (FlowDetails);
+
+  // Fetch result rows for one flow/artifact, or (with type="uploads")
+  // one flow's upload metadata table. Backs velo_get_flow_results,
+  // velo_list_flow_uploads, and velo_get_flow_upload_metadata.
+  rpc GetTable(GetTableRequest) returns (GetTableResponse);
+
+  // Launch a collection of one or more artifacts against one client.
+  // Backs velo_collect_artifact_with_approval and
+  // velo_collect_dfir_profile_with_approval.
+  rpc CollectArtifact(ArtifactCollectorArgs) returns (ArtifactCollectorResponse);
+
+  // Cancel a running flow. Backs velo_cancel_flow_with_approval.
+  rpc CancelFlow(ApiFlowRequest) returns (StartFlowResponse);
+
+  // Fetch a chunk of already-collected file content by client_id plus
+  // file-store components (never a VFS browse, never an HTTP download
+  // link). Backs velo_download_flow_upload_with_approval.
+  rpc VFSGetBuffer(VFSFileBuffer) returns (VFSFileBuffer);
+
+  // --- Hunts (v0.9.0) ---
+
+  // Launch a hunt. Backs velo_start_hunt_with_approval,
+  // velo_start_dfir_hunt_with_approval, and
+  // velo_hunt_ioc_with_approval.
+  rpc CreateHunt(Hunt) returns (StartFlowResponse);
+
+  // Mutate a hunt's state (this project only ever sets state=STOPPED).
+  // Backs velo_cancel_hunt_with_approval.
+  rpc ModifyHunt(HuntMutation) returns (google.protobuf.Empty);
+
+  // List hunts. Backs velo_list_hunts.
+  rpc ListHunts(ListHuntsRequest) returns (ListHuntsResponse);
+
+  // Fetch one hunt's status. Backs velo_get_hunt_status.
+  rpc GetHunt(GetHuntRequest) returns (Hunt);
+
+  // Fetch result rows for one hunt/artifact. Backs
+  // velo_get_hunt_results.
+  rpc GetHuntResults(GetHuntResultsRequest) returns (GetTableResponse);
+
+  // Estimate how many clients a proposed hunt condition would match,
+  // without creating anything. Backs velo_preview_hunt_scope.
+  rpc EstimateHunt(HuntEstimateRequest) returns (HuntStats);
 }

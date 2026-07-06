@@ -10,6 +10,7 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/protobuf/types/known/emptypb"
 
 	"github.com/hdyrawan/agentic-velociraptor-mcp/internal/velociraptor/veloapi"
 )
@@ -56,6 +57,40 @@ type artifactCatalog interface {
 	GetArtifacts(ctx context.Context, in *veloapi.GetArtifactsRequest, opts ...grpc.CallOption) (*veloapi.ArtifactDescriptors, error)
 }
 
+// flowService is the narrow seam ListFlows, GetFlowStatus,
+// GetFlowResults, CollectArtifact, and CancelFlow go through.
+// veloapi.APIClient satisfies it.
+type flowService interface {
+	GetClientFlows(ctx context.Context, in *veloapi.GetTableRequest, opts ...grpc.CallOption) (*veloapi.GetTableResponse, error)
+	GetFlowDetails(ctx context.Context, in *veloapi.ApiFlowRequest, opts ...grpc.CallOption) (*veloapi.FlowDetails, error)
+	CollectArtifact(ctx context.Context, in *veloapi.ArtifactCollectorArgs, opts ...grpc.CallOption) (*veloapi.ArtifactCollectorResponse, error)
+	CancelFlow(ctx context.Context, in *veloapi.ApiFlowRequest, opts ...grpc.CallOption) (*veloapi.StartFlowResponse, error)
+}
+
+// tableService is the narrow seam GetFlowResults, ListFlowUploads, and
+// GetFlowUploadMetadata go through. veloapi.APIClient satisfies it.
+type tableService interface {
+	GetTable(ctx context.Context, in *veloapi.GetTableRequest, opts ...grpc.CallOption) (*veloapi.GetTableResponse, error)
+}
+
+// vfsService is the narrow seam DownloadFlowUpload goes through.
+// veloapi.APIClient satisfies it.
+type vfsService interface {
+	VFSGetBuffer(ctx context.Context, in *veloapi.VFSFileBuffer, opts ...grpc.CallOption) (*veloapi.VFSFileBuffer, error)
+}
+
+// huntService is the narrow seam ListHunts, GetHuntStatus,
+// GetHuntResults, PreviewHuntScope, StartHunt, and CancelHunt go
+// through. veloapi.APIClient satisfies it.
+type huntService interface {
+	CreateHunt(ctx context.Context, in *veloapi.Hunt, opts ...grpc.CallOption) (*veloapi.StartFlowResponse, error)
+	ModifyHunt(ctx context.Context, in *veloapi.HuntMutation, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	ListHunts(ctx context.Context, in *veloapi.ListHuntsRequest, opts ...grpc.CallOption) (*veloapi.ListHuntsResponse, error)
+	GetHunt(ctx context.Context, in *veloapi.GetHuntRequest, opts ...grpc.CallOption) (*veloapi.Hunt, error)
+	GetHuntResults(ctx context.Context, in *veloapi.GetHuntResultsRequest, opts ...grpc.CallOption) (*veloapi.GetTableResponse, error)
+	EstimateHunt(ctx context.Context, in *veloapi.HuntEstimateRequest, opts ...grpc.CallOption) (*veloapi.HuntStats, error)
+}
+
 // grpcClient is a real, mTLS-authenticated Velociraptor gRPC client.
 //
 // As of v0.1.0-alpha.2 it implements only a real HealthCheck; every
@@ -73,6 +108,10 @@ type grpcClient struct {
 	clients      clientSearcher
 	clientDetail clientGetter
 	artifacts    artifactCatalog
+	flows        flowService
+	tables       tableService
+	vfs          vfsService
+	hunts        huntService
 
 	timeout time.Duration
 	orgID   string
@@ -123,7 +162,14 @@ func NewGRPCClient(apiConfigPath, orgID string, timeout time.Duration, maxRows i
 		Certificates: []tls.Certificate{cert},
 		RootCAs:      caPool,
 		ServerName:   serverName,
-		MinVersion:   tls.VersionTLS12,
+		MinVersion:   tls.VersionTLS13,
+		// TLS 1.3 cipher suites are not user-configurable in Go's
+		// crypto/tls; the runtime picks from a curated set. Explicitly
+		// leaving CipherSuites nil avoids accidentally weakening the
+		// handshake. If TLS 1.2 fallback is ever required for an
+		// older Velociraptor server, set MinVersion: tls.VersionTLS12
+		// AND explicitly curate CipherSuites here — never accept Go's
+		// defaults for 1.2 in a security-focused server.
 	})
 
 	conn, err := grpc.NewClient(apiCfg.APIConnectionString, grpc.WithTransportCredentials(creds))
@@ -137,10 +183,34 @@ func NewGRPCClient(apiConfigPath, orgID string, timeout time.Duration, maxRows i
 		clients:      apiClient,
 		clientDetail: apiClient,
 		artifacts:    apiClient,
+		flows:        apiClient,
+		tables:       apiClient,
+		vfs:          apiClient,
+		hunts:        apiClient,
 		timeout:      timeout,
 		orgID:        orgID,
 		maxRows:      maxRows,
 	}, nil
+}
+
+// SupportsBackendOperation reports true for every BackendOperation as of
+// v0.9.0: grpcClient now implements CollectArtifact/CancelFlow (via the
+// real CollectArtifact/CancelFlow RPCs), DownloadFlowUpload (via
+// VFSGetBuffer), and StartHunt/CancelHunt (via CreateHunt/ModifyHunt) for
+// real — see grpcclient_flows.go, grpcclient_hunts.go, and
+// grpcclient_uploads.go. This overrides the embedded placeholderClient's
+// SupportsBackendOperation (which always returns false), so
+// backendOperationReady (internal/mcpserver/server.go) lets a real
+// approval-gated write proceed to consume its approval and call the
+// underlying RPC, instead of reporting backend_not_implemented.
+func (c *grpcClient) SupportsBackendOperation(operation BackendOperation) bool {
+	switch operation {
+	case BackendOpCollectArtifact, BackendOpCancelFlow, BackendOpDownloadFlowUpload,
+		BackendOpStartHunt, BackendOpCancelHunt:
+		return true
+	default:
+		return false
+	}
 }
 
 // HealthCheck calls the Velociraptor API server's dedicated Check RPC
@@ -376,13 +446,36 @@ func (c *grpcClient) GetArtifactDetails(ctx context.Context, name string) (Artif
 // PEM-shaped from an error's text anyway, on the theory that a health
 // check error is exactly the kind of message that tends to get pasted
 // into a ticket or chat without a second thought.
+//
+// This strips every PEM block in the message, not just the first: a
+// gRPC Status error with multiple metadata entries each containing
+// PEM-shaped content would otherwise leak the second-and-later blocks.
+// (Stripping all PEM blocks is the same logic audit.Sanitizer.SanitizeString
+// uses; this inlines a copy so internal/velociraptor does not take an
+// import dependency on internal/audit. The two implementations must
+// stay in sync.)
 func sanitizeTLSError(err error) error {
 	if err == nil {
 		return nil
 	}
 	msg := err.Error()
-	if idx := strings.Index(msg, "-----BEGIN"); idx != -1 {
-		msg = msg[:idx] + "[REDACTED]"
+	for {
+		idx := strings.Index(msg, "-----BEGIN")
+		if idx == -1 {
+			break
+		}
+		end := strings.Index(msg[idx:], "-----END")
+		if end == -1 {
+			msg = msg[:idx] + "[REDACTED]"
+			break
+		}
+		relEnd := idx + end
+		nl := strings.IndexByte(msg[relEnd:], '\n')
+		if nl == -1 {
+			msg = msg[:idx] + "[REDACTED]"
+			break
+		}
+		msg = msg[:idx] + "[REDACTED]" + msg[relEnd+nl+1:]
 	}
 	return fmt.Errorf("%s", msg)
 }

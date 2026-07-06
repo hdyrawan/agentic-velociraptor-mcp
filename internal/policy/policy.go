@@ -76,6 +76,17 @@ func (e *Engine) ProfileAllowed(name string) bool {
 
 // RequiresApproval reports whether the named operation category must go
 // through the approval workflow before it can run.
+//
+// DEPRECATED (v0.8.0+): as of v0.8.0, no handler in internal/mcpserver
+// consults this method. Every approval-gated tool calls verifyApproval
+// unconditionally, which means removing an entry from
+// policy.require_approval_for in the config has NO effect on whether
+// approval is required for that operation. The field is retained as
+// documentation of intent and for any future handler that wants
+// per-operation opt-out. Do NOT rely on it to disable approval for any
+// operation — approval is enforced by the tool handlers, not by this
+// list. If you want to disable a write-capable tool entirely, use
+// policy.mode: read_only (which the handlers DO consult) instead.
 func (e *Engine) RequiresApproval(operation string) bool {
 	for _, op := range e.cfg.RequireApprovalFor {
 		if op == operation {

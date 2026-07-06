@@ -622,6 +622,18 @@ func newDownloadFlowUploadHandler(deps Deps) mcp.ToolHandlerFor[DownloadFlowUplo
 		if result, ok := gateAuditForWrite(deps, audit.Event{Tool: tool, ClientID: in.ClientID, FlowID: in.FlowID, CaseID: in.CaseID, RequestReason: in.Reason, ApprovalID: in.ApprovalReference}); !ok {
 			return nil, DownloadFlowUploadOutput{Result: result, ClientID: in.ClientID, FlowID: in.FlowID}, nil
 		}
+
+		// Pre-flight: ensure DownloadDir exists and is writable
+		// before burning the single-use approval. This avoids
+		// wasting an approval on a configuration error (e.g.
+		// read-only filesystem, missing parent dir, permission
+		// denied) that would only surface after the approval
+		// has been consumed.
+		if err := os.MkdirAll(deps.Config.Velociraptor.DownloadDir, 0o700); err != nil {
+			recordAudit(deps, audit.Event{Tool: tool, Outcome: audit.OutcomeError, ClientID: in.ClientID, FlowID: in.FlowID, CaseID: in.CaseID, ApprovalID: in.ApprovalReference, Reason: "download_dir not writable: " + err.Error()})
+			return nil, DownloadFlowUploadOutput{Result: response.Error("download_dir is not writable: " + err.Error()), ClientID: in.ClientID, FlowID: in.FlowID}, nil
+		}
+
 		result, outcome, ok = consumeApproval(ctx, deps, in.ApprovalReference)
 		if !ok {
 			recordAudit(deps, audit.Event{Tool: tool, Outcome: outcome, ClientID: in.ClientID, FlowID: in.FlowID, CaseID: in.CaseID, RequestReason: in.Reason, ApprovalID: in.ApprovalReference, Reason: result.Message})
@@ -645,10 +657,6 @@ func newDownloadFlowUploadHandler(deps Deps) mcp.ToolHandlerFor[DownloadFlowUplo
 			return nil, DownloadFlowUploadOutput{Result: response.Error(err.Error()), ClientID: in.ClientID, FlowID: in.FlowID}, nil
 		}
 		localPath := filepath.Join(deps.Config.Velociraptor.DownloadDir, filename)
-		if err := os.MkdirAll(deps.Config.Velociraptor.DownloadDir, 0o700); err != nil {
-			recordAudit(deps, audit.Event{Tool: tool, Outcome: audit.OutcomeError, ClientID: in.ClientID, FlowID: in.FlowID, CaseID: in.CaseID, ApprovalID: in.ApprovalReference, Reason: err.Error()})
-			return nil, DownloadFlowUploadOutput{Result: response.Error(err.Error()), ClientID: in.ClientID, FlowID: in.FlowID}, nil
-		}
 		if err := os.WriteFile(localPath, data, 0o600); err != nil {
 			recordAudit(deps, audit.Event{Tool: tool, Outcome: audit.OutcomeError, ClientID: in.ClientID, FlowID: in.FlowID, CaseID: in.CaseID, ApprovalID: in.ApprovalReference, Reason: err.Error()})
 			return nil, DownloadFlowUploadOutput{Result: response.Error(err.Error()), ClientID: in.ClientID, FlowID: in.FlowID}, nil
