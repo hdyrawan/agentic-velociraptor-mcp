@@ -7,36 +7,25 @@ collection flows/results, reviewed DFIR investigation profiles, and a
 controlled, approval-gated single-client collection pilot today, with
 hunt management and IOC hunting on the roadmap.
 
-**Status: v0.4.0**, 20 callable MCP tools: 14 read-only (v0.1.0-v0.5.0)
-plus 6 new approval-gated write tools implementing a controlled,
-auditable single-client collection pilot (collect artifact, collect
-DFIR profile, cancel flow, list/get flow uploads, download flow
-upload). **This is a controlled pilot, not unrestricted Velociraptor
-write access:**
+**Status: v0.6.0**, 27 callable MCP tools: 14 read-only from
+v0.1.0-v0.5.0 (visibility, profiles, workflow, flows/results), plus 6
+approval-gated write tools from v0.4.0 implementing a controlled
+single-client collection pilot (collect artifact/profile, cancel flow,
+list/get/download flow uploads), plus 7 hunt management tools from
+v0.6.0 (preview, start, start-DFIR, list, status, results, cancel).
+Hunt tools include read-only scope preview, list, status, and results
+(mock/real branching) plus approval-gated start, start-DFIR, and cancel
+— all gated through approval, policy, scope validation,
+artifact/profile allowlists, and `max_hunt_clients` enforcement.
 
-- Every approval-gated tool is disabled by default and only activates
-  when an operator explicitly sets `policy.mode: controlled` **and**
-  `approval.store_path` (a third setting, `velociraptor.download_dir`,
-  additionally gates the download tool).
-- **No MCP tool can create or approve its own request.** Approval
-  decisions are made exclusively by a human running the separate
-  `agentic-velociraptor-mcp approve` CLI subcommand — never over MCP,
-  never by an LLM. See [docs/approval-flow.md](docs/approval-flow.md).
-- Every write call requires `case_id`, `reason`, `requester`, and an
-  `approval_reference` that must resolve to an approved, unconsumed,
-  unexpired request whose fingerprint exactly matches the call.
-- Still no hunts, no multi-client collection, no raw VQL, no destructive
-  action anywhere in this codebase.
-- **Known limitation**: the real Velociraptor RPCs for
-  collect/cancel/upload are not yet wired (see
-  [docs/tool-reference.md](docs/tool-reference.md)) — all
-  policy/approval/audit control-flow is implemented and tested against
-  fakes, but a real (non-mock) write client currently reports
-  `ErrNotImplemented` honestly rather than fabricating success.
 
-See [PROJECT_STATE.md](PROJECT_STATE.md) for the exact current tool
-inventory and [PROJECT_PLAN.md](PROJECT_PLAN.md) for the roadmap. Do
-not point this at a production Velociraptor deployment.
+**Important:** v0.4.0's collection tools and v0.6.0's hunt tools are
+safety scaffolds with fake-backed tests. Real gRPC RPCs for
+collect/cancel/upload and hunt execution are NOT yet implemented — write
+operations in real mode report `ErrNotImplemented`. See
+[PROJECT_STATE.md](PROJECT_STATE.md) for the current inventory and
+[PROJECT_PLAN.md](PROJECT_PLAN.md) for the roadmap. Do not point this at
+a production Velociraptor deployment.
 
 ## Contents
 
@@ -140,8 +129,8 @@ go build -o bin/agentic-velociraptor-mcp ./cmd/agentic-velociraptor-mcp
   --profiles-dir profiles
 ```
 
-Either way, the server speaks MCP over stdio and exposes exactly 20
-tools (14 read-only, 6 approval-gated write-capable) — see
+Either way, the server speaks MCP over stdio and exposes exactly 27
+tools (14 read-only, 13 approval-gated or gated) — see
 [docs/tool-reference.md](docs/tool-reference.md) for the current
 callable inventory.
 
@@ -299,7 +288,7 @@ worked example against this server specifically.
 - JSONL audit log with secret redaction and three exhaustive outcomes:
   `success`, `blocked`, `error`.
 - Human approval required for every collection, hunt start/cancel, flow
-  cancel, and evidence download.
+  cancel, hunt cancel, and evidence download.
 - MCP-specific hardening: no credential passthrough (no tool accepts API
   keys/certificates/tokens as arguments), no arbitrary URL fetching,
   unimplemented tools are never registered, session IDs are never
@@ -315,7 +304,7 @@ internal/
   approval/     human-approval request/decision workflow
   config/       YAML config model + validation
   dfir/         DFIR profile model, registry, validation
-  mcpserver/    MCP server + tool registration (20 registered so far)
+  mcpserver/    MCP server + tool registration (27 registered so far)
   policy/       MCP-layer policy engine (allowlists, approval routing)
   validation/   strict input validation (client IDs, artifacts, IOCs, scope)
   velociraptor/ Velociraptor gRPC client (mTLS: health check, client search/detail, artifact catalog, flow/result reads; rest still placeholders)
@@ -328,6 +317,28 @@ tests/          integration-level tests (as they're added)
 Dockerfile      multi-stage build → distroless, non-root runtime image
 ```
 
+## Getting started
+
+Requires **Go 1.25+** (the official MCP Go SDK dependency's minimum).
+
+```sh
+go build -o bin/agentic-velociraptor-mcp ./cmd/agentic-velociraptor-mcp
+./bin/agentic-velociraptor-mcp --version
+./bin/agentic-velociraptor-mcp --help
+
+# Start the MCP stdio server (see examples/client-configs for a sample
+# config.yaml; profiles/ ships 3 DFIR profile definitions):
+./bin/agentic-velociraptor-mcp --config /path/to/config.yaml \
+  --profiles-dir /path/to/agentic-velociraptor-mcp/profiles
+```
+
+Once running, the server speaks MCP over stdio and exposes exactly 27
+tools (14 read-only, plus 6 approval-gated collection tools, plus 7
+hunt management tools) — see
+[docs/tool-reference.md](docs/tool-reference.md) for the current callable
+inventory and [examples/inspector/README.md](examples/inspector/README.md)
+for how to drive it with MCP Inspector. Track progress in
+[PROJECT_STATE.md](PROJECT_STATE.md).
 ## Documentation
 
 - [docs/architecture.md](docs/architecture.md)

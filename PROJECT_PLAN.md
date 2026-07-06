@@ -140,8 +140,7 @@ scheduling the next milestone). v0.2.0 as actually implemented:
 Re-scoped by explicit user direction from the original "hunt management"
 plan. v0.3.0 deliberately adds no hunt execution, collection, cancel,
 download, client-side mutation, write identity use, or raw VQL. The
-original hunt-management scope is deferred to a future controlled
-milestone after collection/write approval foundations are implemented.
+original hunt-management scope was deferred to v0.6.0.
 
 - Added three read-only workflow/planning tools, all backed only by the
   already-loaded DFIR profile registry plus local policy allowlists:
@@ -233,6 +232,36 @@ v0.1.0 read-only flow/result gap without adding write-capable behavior.
   read-only at this point (v0.4.0 above then adds the first
   write-capable tools on top).
 
+### v0.6.0 — Hunt management schema/safety scaffold (complete)
+
+Backfill of the original v0.4.0/v0.5.0 hunt-management scope from the
+PROJECT_PLAN.md roadmap. All seven MCP tool handlers are implemented
+and registered, but **real gRPC hunt execution is NOT yet implemented**
+— the handlers invoke `Deps.WriteClient` and `Deps.Approvals` which are
+currently `placeholderClient` (returns `ErrNotImplemented`) and `nil`
+respectively. Real-mode write operations report "not yet available."
+This milestone is a schema and safety scaffold with fake-backed tests;
+real Velociraptor hunt RPC execution must be added in a follow-up.
+
+- Implemented seven hunt management tool handlers:
+  `velo_preview_hunt_scope` (RO, blocks `target_all` by default),
+  `velo_start_hunt_with_approval` (approval-gated, allowlisted artifacts,
+  enforces `max_hunt_clients`),
+  `velo_start_dfir_hunt_with_approval` (approval-gated, profile
+  allowlist),
+  `velo_list_hunts` (RO), `velo_get_hunt_status` (RO),
+  `velo_get_hunt_results` (RO, bounded by max_rows/max_result_bytes,
+  paginated), and `velo_cancel_hunt_with_approval` (approval-gated).
+- Callable tool inventory increases from 20 to 27.
+- All approval-gated tool handlers enforce: `approval.Store.IsApproved`/
+  `Consume`, `policy` mode checks (read-only mode blocks writes),
+  scope validation (`validation.ValidateHuntScope`), artifact/profile
+  allowlists, `max_hunt_clients` caps, and `target_all` restrictions.
+- All read-only hunt tools (preview, list, status, results) follow the
+  existing mock/real branching with evidence-honest responses.
+- Tests in `tools_hunts_test.go` use fakes for all dependencies; no live
+  Velociraptor server is required.
+
 ### v0.6.0 — Production hardening
 
 - Docker image, non-root runtime.
@@ -246,7 +275,7 @@ v0.1.0 read-only flow/result gap without adding write-capable behavior.
 - Real gRPC wiring for collection/cancel/upload RPCs (see v0.4.0's known
   limitation above), validated against a live Velociraptor lab.
 
-### v1.0.0 — Stable release
+### v1.0.0 — Stable release (not yet started)
 
 - All 27 core tools implemented.
 - Stable schemas.

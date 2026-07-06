@@ -1,35 +1,33 @@
 # Tool reference
 
-v0.4.0 (rebased onto v0.5.0's read-only flow/result backfill), exactly
-20 are implemented and registered as callable MCP tools: the 14
-read-only tools from v0.1.0-v0.5.0 (`velo_health_check`,
+v0.6.0 (rebased onto v0.4.0/v0.5.0), all 27 tools are implemented and
+registered as callable MCP tools: 5 visibility (`velo_health_check`,
 `velo_search_clients`, `velo_get_client_info`, `velo_list_artifact_names`,
-`velo_get_artifact_details`, `velo_list_flows`, `velo_get_flow_status`,
-`velo_get_flow_results`, `velo_list_dfir_profiles`,
-`velo_get_dfir_profile`, `velo_validate_dfir_profile`,
-`velo_plan_dfir_triage`, `velo_compare_dfir_profiles`,
-`velo_find_profiles_by_artifact`), plus six new write-capable,
-approval-gated tools implementing a controlled single-client collection
-pilot: `velo_collect_artifact_with_approval`,
+`velo_get_artifact_details`), 3 DFIR profile (`velo_list_dfir_profiles`,
+`velo_get_dfir_profile`, `velo_validate_dfir_profile`), 3 DFIR workflow
+(`velo_plan_dfir_triage`, `velo_compare_dfir_profiles`,
+`velo_find_profiles_by_artifact`), 3 flow/result (`velo_list_flows`,
+`velo_get_flow_status`, `velo_get_flow_results`), 6 collection/flow-upload
+(`velo_collect_artifact_with_approval`,
 `velo_collect_dfir_profile_with_approval`,
 `velo_cancel_flow_with_approval`, `velo_list_flow_uploads`,
-`velo_get_flow_upload_metadata`, and
-`velo_download_flow_upload_with_approval`. See
-`internal/mcpserver/server.go`'s `New` function — only the hunt and IOC
-execution groups' `ToolSpec` metadata still exists for this document but
-is not wired to `mcp.AddTool`; none of it is callable by any MCP client
-(confirmed by `internal/mcpserver/server_test.go`'s exact-tool-inventory
-and never-registers-unsafe-tools tests). Update the "Implemented" column
-as each remaining tool actually lands.
+`velo_get_flow_upload_metadata`,
+`velo_download_flow_upload_with_approval`), and 7 hunt management
+(`velo_preview_hunt_scope`, `velo_start_hunt_with_approval`,
+`velo_start_dfir_hunt_with_approval`, `velo_list_hunts`,
+`velo_get_hunt_status`, `velo_get_hunt_results`,
+`velo_cancel_hunt_with_approval`). Only the IOC execution group's
+`ToolSpec` metadata (`velo_hunt_ioc_with_approval`) remains unwired but
+is documented below for completeness. Update the "Implemented" column as
+each remaining tool actually lands.
 
 Legend: RO = read-only, no approval. Approval = requires a resolvable
 `approval_reference` (see [approval-flow.md](approval-flow.md)) before
-any Velociraptor call is made. **v0.4.0 is a controlled pilot, not
-unrestricted Velociraptor write access**: every Approval-kind tool below
-is still scoped to a single client per call, still requires
-`policy.mode: controlled` and `approval.store_path` to be explicitly
-configured (off by default), and no hunt or raw-VQL tool exists anywhere
-in this codebase.
+any Velociraptor call is made. **v0.4.0 and v0.6.0 implement a
+controlled pilot, not unrestricted Velociraptor write access**: every
+Approval-kind tool below requires `policy.mode: controlled` and
+`approval.store_path` to be explicitly configured (off by default), and
+no raw-VQL tool exists anywhere in this codebase.
 
 **Response envelope (v0.2.0+):** `velo_search_clients`,
 `velo_get_client_info`, `velo_list_artifact_names`, and
@@ -109,19 +107,20 @@ control-flow for these four tools is implemented and tested (against
 fake `velociraptor.Client` implementations); calling any of them with a
 real (non-mock) write client currently returns
 `velociraptor.ErrNotImplemented`, reported honestly as an `error`-status
-response. Real RPC wiring is deferred to v0.6.0.
+response. Real RPC wiring is still pending for all tool groups
+(collection, flows, and hunts).
 
 ## Hunt tools (`tools_hunts.go`)
 
 | Tool | Kind | Description | Target milestone | Implemented |
 |------|------|-------------|-------------------|-------------|
-| `velo_preview_hunt_scope` | RO | Resolve a proposed scope against the live client population. | v0.3.0 | no |
-| `velo_start_hunt_with_approval` | Approval | Start a hunt for one allowlisted artifact. | v0.3.0 | no |
-| `velo_start_dfir_hunt_with_approval` | Approval | Start a hunt for a DFIR profile's artifacts. | v0.3.0 | no |
-| `velo_list_hunts` | RO | List hunts. | v0.3.0 | no |
-| `velo_get_hunt_status` | RO | State/client count of one hunt. | v0.3.0 | no |
-| `velo_get_hunt_results` | RO | Result rows for one hunt, bounded. | v0.3.0 | no |
-| `velo_cancel_hunt_with_approval` | Approval | Stop a running hunt. | v0.3.0 | no |
+| `velo_preview_hunt_scope` | RO | Resolve a proposed scope against the live client population. Blocks `target_all` by default. | v0.6.0 | **yes** (scaffold: mock/real branching works; real gRPC not implemented) |
+| `velo_start_hunt_with_approval` | Approval | Start a hunt for one allowlisted artifact. Enforces `max_hunt_clients`, artifact allowlist, scope validation. | v0.6.0 | **yes** (scaffold: approval/safety gates active; real gRPC not implemented) |
+| `velo_start_dfir_hunt_with_approval` | Approval | Start a hunt for a DFIR profile's artifacts. Enforces profile allowlist, artifact allowlist, DFIR profile validation. | v0.6.0 | **yes** (scaffold: approval/safety gates active; real gRPC not implemented) |
+| `velo_list_hunts` | RO | List hunts with cursor pagination. | v0.6.0 | **yes** (scaffold: mock/real branching works; real gRPC not implemented) |
+| `velo_get_hunt_status` | RO | State/client count of one hunt. Returns `not_found` for unknown hunt IDs. | v0.6.0 | **yes** (scaffold: mock/real branching works; real gRPC not implemented) |
+| `velo_get_hunt_results` | RO | Result rows for one hunt, bounded by `max_rows`/`max_result_bytes`, with cursor pagination. | v0.6.0 | **yes** (scaffold: mock/real branching works; real gRPC not implemented) |
+| `velo_cancel_hunt_with_approval` | Approval | Stop a running hunt. | v0.6.0 | **yes** (scaffold: approval/safety gates active; real gRPC not implemented) |
 
 ## DFIR profile tools (`tools_profiles.go`)
 
@@ -137,8 +136,8 @@ profile loaded from the profiles directory, not filtered by
 sensitive (it's a reviewed, versioned file, not endpoint data), so it is
 not allowlist-gated. `policy.allowed_profiles` is enforced at the point a
 profile is actually *used* (`velo_collect_dfir_profile_with_approval`,
-implemented in v0.4.0; `velo_start_dfir_hunt_with_approval` remains
-unimplemented). Only
+implemented in v0.4.0; `velo_start_dfir_hunt_with_approval`, implemented
+in v0.6.0). Only
 `velo_validate_dfir_profile` currently cross-checks against
 `policy.allowed_artifacts` (not `allowed_profiles`), since validating
 artifact allowlist membership is exactly what that tool is for.

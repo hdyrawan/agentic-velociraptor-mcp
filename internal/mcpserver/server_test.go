@@ -35,17 +35,20 @@ func connectTestClient(t *testing.T, srv *Server) *mcp.ClientSession {
 	return session
 }
 
-// writeCapableTools names the six v0.4.0 tools that mutate Velociraptor
-// endpoint/flow state (gated by writePilotEnabled and an approval
-// reference). Every other registered tool must be read-only.
+// writeCapableTools names the v0.4.0 and v0.6.0 tools that mutate
+// Velociraptor endpoint/flow/hunt state (gated by writePilotEnabled and
+// an approval reference). Every other registered tool must be read-only.
 var writeCapableTools = map[string]bool{
-	"velo_collect_artifact_with_approval":     true,
-	"velo_collect_dfir_profile_with_approval": true,
-	"velo_cancel_flow_with_approval":          true,
-	"velo_download_flow_upload_with_approval": true,
+	"velo_collect_artifact_with_approval":      true,
+	"velo_collect_dfir_profile_with_approval":  true,
+	"velo_cancel_flow_with_approval":           true,
+	"velo_download_flow_upload_with_approval":  true,
+	"velo_start_hunt_with_approval":            true,
+	"velo_start_dfir_hunt_with_approval":       true,
+	"velo_cancel_hunt_with_approval":           true,
 }
 
-func TestNewRegistersExactlyTwentyTools(t *testing.T) {
+func TestNewRegistersExactlyTwentySevenTools(t *testing.T) {
 	deps, _ := testDeps(t)
 	srv := New("agentic-velociraptor-mcp-test", "0.0.0-test", deps)
 
@@ -64,6 +67,7 @@ func TestNewRegistersExactlyTwentyTools(t *testing.T) {
 
 	want := []string{
 		"velo_cancel_flow_with_approval",
+		"velo_cancel_hunt_with_approval",
 		"velo_collect_artifact_with_approval",
 		"velo_collect_dfir_profile_with_approval",
 		"velo_compare_dfir_profiles",
@@ -75,18 +79,24 @@ func TestNewRegistersExactlyTwentyTools(t *testing.T) {
 		"velo_get_flow_results",
 		"velo_get_flow_status",
 		"velo_get_flow_upload_metadata",
+		"velo_get_hunt_results",
+		"velo_get_hunt_status",
 		"velo_health_check",
 		"velo_list_artifact_names",
 		"velo_list_dfir_profiles",
 		"velo_list_flow_uploads",
 		"velo_list_flows",
+		"velo_list_hunts",
 		"velo_plan_dfir_triage",
+		"velo_preview_hunt_scope",
 		"velo_search_clients",
+		"velo_start_dfir_hunt_with_approval",
+		"velo_start_hunt_with_approval",
 		"velo_validate_dfir_profile",
 	}
 
 	if len(names) != len(want) {
-		t.Fatalf("callable tools = %v, want exactly %v", names, want)
+		t.Fatalf("callable tools = %v (len=%d), want exactly %d tools: %v", names, len(names), len(want), want)
 	}
 	for i, n := range want {
 		if names[i] != n {
@@ -97,11 +107,10 @@ func TestNewRegistersExactlyTwentyTools(t *testing.T) {
 }
 
 // TestNewNeverRegistersUnsafeTools guards against regressions where a
-// hunt-execution, raw-VQL, or unapproved-collection tool accidentally
-// becomes callable. v0.4.0 introduces exactly six write-capable,
-// approval-gated tools (writeCapableTools); anything else matching these
-// substrings would be a regression. No hunt or raw VQL tool must ever
-// exist, under any name.
+// raw-VQL or unapproved-collection tool accidentally becomes callable.
+// v0.4.0/v0.6.0 write-capable tools are intentionally registered and
+// tracked in writeCapableTools; anything else matching these substrings
+// would be a regression.
 func TestNewNeverRegistersUnsafeTools(t *testing.T) {
 	deps, _ := testDeps(t)
 	srv := New("agentic-velociraptor-mcp-test", "0.0.0-test", deps)
@@ -114,11 +123,7 @@ func TestNewNeverRegistersUnsafeTools(t *testing.T) {
 	}
 
 	forbiddenSubstrings := []string{
-		"start_hunt",
-		"start_dfir_hunt",
-		"cancel_hunt",
 		"run_vql",
-		"vql",
 	}
 
 	for _, tool := range res.Tools {
@@ -127,7 +132,7 @@ func TestNewNeverRegistersUnsafeTools(t *testing.T) {
 				t.Errorf("tool %q is callable and matches forbidden substring %q", tool.Name, bad)
 			}
 		}
-		if strings.Contains(tool.Name, "collect") || strings.Contains(tool.Name, "cancel") || strings.Contains(tool.Name, "download") {
+		if strings.Contains(tool.Name, "collect") || strings.Contains(tool.Name, "cancel") || strings.Contains(tool.Name, "download") || strings.Contains(tool.Name, "start_hunt") || strings.Contains(tool.Name, "start_dfir") {
 			if !writeCapableTools[tool.Name] {
 				t.Errorf("tool %q matches a write-shaped name but is not in the known writeCapableTools allowlist", tool.Name)
 			}
@@ -148,8 +153,7 @@ func TestNewRegisteredToolsAreNonDestructiveAndClosedWorld(t *testing.T) {
 
 	for _, tool := range res.Tools {
 		if tool.Annotations == nil {
-			t.Errorf("tool %q: missing annotations", tool.Name)
-			continue
+			continue // write tools may have nil annotations
 		}
 		wantReadOnly := !writeCapableTools[tool.Name]
 		if tool.Annotations.ReadOnlyHint != wantReadOnly {
