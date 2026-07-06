@@ -130,9 +130,8 @@ scheduling the next milestone). v0.2.0 as actually implemented:
   `velo_collect_dfir_profile_with_approval`,
   `velo_cancel_flow_with_approval`, `velo_list_flow_uploads`,
   `velo_get_flow_upload_metadata`,
-  `velo_download_flow_upload_with_approval`) remains unimplemented and
-  unscheduled; see docs/tool-reference.md's "Flow and result tools" /
-  "Collection tools" sections.
+  `velo_download_flow_upload_with_approval`) remained unimplemented as of
+  v0.2.0; see v0.4.0 below, which implements exactly this scope.
 - Callable tool inventory unchanged: still exactly the same 8 read-only
   tools as v0.1.0.
 
@@ -155,10 +154,73 @@ milestone after collection/write approval foundations are implemented.
   read-only. The older 7 hunt-management ToolSpec entries remain
   metadata only and are not registered with MCP.
 
+### v0.4.0 — Controlled single-client collection pilot (complete)
+
+Realigns with the original "Controlled single-client collection" scope
+deferred at v0.2.0 (see that section above), implementing the six
+previously-unscheduled tools named there. This is a **controlled pilot**,
+not unrestricted Velociraptor write access: it adds exactly six new
+tools, all still scoped to a single client per call, still no hunts,
+still no raw VQL, still no destructive action anywhere in the codebase.
+
+- Implement `velo_collect_artifact_with_approval`,
+  `velo_collect_dfir_profile_with_approval`,
+  `velo_cancel_flow_with_approval` (`tools_collection.go`), and
+  `velo_list_flow_uploads`, `velo_get_flow_upload_metadata` (read-only),
+  `velo_download_flow_upload_with_approval` (`tools_flows.go`).
+- Every approval-gated tool requires `case_id`, `reason`, `requester`,
+  the operation's target (client + artifact/profile/flow_id/upload_name),
+  and an `approval_reference`. The reference must resolve, via
+  `internal/approval.Store`, to a Request whose
+  `approval.RequestFingerprint` exactly matches the call being made
+  (operation, case_id, client_id, artifact/profile, parameters, flow_id,
+  upload_name), that has been approved, is unexpired, and has not already
+  been consumed — satisfying this file's Confused Deputy Mitigation
+  section in full (request ID = approval reference, requester, case ID,
+  reason, tool name implied by Operation, target, artifact/profile,
+  fingerprint standing in for "exact payload hash", TTL-based expiry, and
+  Store.Consume enforcing one-time use).
+- No MCP tool can create (`Store.Create`) or decide (`Store.Decide`) an
+  approval: only the `agentic-velociraptor-mcp approve` CLI subcommand
+  can, run directly by a human operator, never over the MCP stdio
+  transport. This is what prevents an LLM (or any other MCP client)
+  driving tool calls from ever self-approving its own request — approval
+  is a real control, not theater.
+- The entire write pilot is disabled by default and only activates when
+  **both** `policy.mode: controlled` and `approval.store_path` are
+  configured (see `mcpserver.writePilotEnabled`); every write-capable
+  tool call is still registered and callable (so its schema is
+  discoverable) but responds with a blocked, audited refusal otherwise.
+- `velo_download_flow_upload_with_approval` never returns raw evidence
+  bytes inline in the MCP response: it writes them to a local,
+  operator-configured directory (`velociraptor.download_dir`, itself a
+  third required explicit setting for that one tool) using a filename
+  derived only from already-validated client/flow IDs plus a random
+  suffix — never from the caller-supplied `upload_name` — and reports
+  path/size/SHA-256 instead.
+- `velo_collect_artifact_with_approval` and
+  `velo_collect_dfir_profile_with_approval` call
+  `internal/velociraptor.Client`'s existing `CollectArtifact`/
+  `CancelFlow`/`ListFlowUploads`/`GetFlowUploadMetadata`/
+  `DownloadFlowUpload` methods; the hand-authored `veloapi` proto mirror
+  (see v0.1.0-alpha.2's rationale) does not yet wire real gRPC bindings
+  for these operations, so a real (non-mock) write client currently
+  returns `velociraptor.ErrNotImplemented` for all of them — reported
+  honestly as an `error`-status response, never fabricated success. Real
+  wiring is a known limitation deferred to v0.6.0 below; all v0.4.0
+  control-flow (policy gating, approval verification, audit, response
+  envelopes) is validated against fake clients instead.
+- Callable tool inventory increases from 14 (after v0.5.0 below) to 20:
+  the six new tools above, all embedding the v0.2.0
+  `internal/response.Result` envelope, plus the 14 read-only tools from
+  v0.1.0-v0.5.0.
+
 ### v0.5.0 — Read-only flow/result backfill (complete)
 
-Re-scoped from generic production hardening to close the original v0.1.0
-read-only flow/result gap without adding write-capable behavior.
+Implemented independently of, and merged before, v0.4.0 above; the two
+milestones are additive and were reconciled by rebasing v0.4.0 onto this
+one. Re-scoped from generic production hardening to close the original
+v0.1.0 read-only flow/result gap without adding write-capable behavior.
 
 - Added callable `velo_list_flows`, `velo_get_flow_status`, and
   `velo_get_flow_results`.
@@ -168,20 +230,10 @@ read-only flow/result gap without adding write-capable behavior.
 - `velo_get_flow_results` enforces row and byte bounds and reports
   truncation honestly.
 - Callable tool inventory increases from 11 to 14, still entirely
-  read-only. Upload, collection, hunt, cancel, download, and IOC
-  execution tools remain unregistered.
+  read-only at this point (v0.4.0 above then adds the first
+  write-capable tools on top).
 
-### v0.4.0 — DFIR profiles and IOC hunting
-
-- Implement: `velo_list_dfir_profiles`, `velo_get_dfir_profile`,
-  `velo_validate_dfir_profile`, `velo_hunt_ioc_with_approval`.
-- Add the initial DFIR profile catalog (see
-  [docs/dfir-profiles.md](docs/dfir-profiles.md)).
-- Validate profile artifacts against the allowlist.
-- Validate hash/IP/domain input.
-- Use fixed templates and approved profile definitions only.
-
-### Future — Production hardening
+### v0.6.0 — Production hardening
 
 - Docker image, non-root runtime.
 - Config validation hardening.
@@ -191,6 +243,8 @@ read-only flow/result gap without adding write-capable behavior.
 - Integration tests; MCP Inspector validation.
 - Security review checklist (see
   [docs/lab-validation-plan.md](docs/lab-validation-plan.md)).
+- Real gRPC wiring for collection/cancel/upload RPCs (see v0.4.0's known
+  limitation above), validated against a live Velociraptor lab.
 
 ### v1.0.0 — Stable release
 

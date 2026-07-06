@@ -2,14 +2,21 @@ package mcpserver
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/hdyrawan/agentic-velociraptor-mcp/internal/approval"
 	"github.com/hdyrawan/agentic-velociraptor-mcp/internal/audit"
 	"github.com/hdyrawan/agentic-velociraptor-mcp/internal/response"
 	"github.com/hdyrawan/agentic-velociraptor-mcp/internal/validation"
@@ -22,10 +29,11 @@ const (
 )
 
 // FlowTools cover read access to collection flow status/results/uploads,
-// plus the one approval-gated upload download. v0.5.0 registers only the
-// first three read-only flow/result tools. Upload listing/metadata and
-// download remain unregistered: downloads disclose evidence bytes and
-// belong to a future approval-gated collection/download path.
+// plus the one approval-gated upload download. velo_list_flows,
+// velo_get_flow_status, and velo_get_flow_results (v0.5.0) and
+// velo_list_flow_uploads, velo_get_flow_upload_metadata, and
+// velo_download_flow_upload_with_approval (v0.4.0) are all implemented
+// and registered; see registerFlowTools.
 var FlowTools = []ToolSpec{
 	{
 		Name:        "velo_list_flows",
@@ -54,7 +62,7 @@ var FlowTools = []ToolSpec{
 	},
 	{
 		Name:             "velo_download_flow_upload_with_approval",
-		Description:      "Download bytes of one flow upload, bounded by max_upload_bytes. Requires prior approval; treated as evidence disclosure, not a read.",
+		Description:      "Download bytes of one flow upload, bounded by max_upload_bytes, and save to a local operator-configured directory. Requires case_id, reason, requester, and a pre-approved approval_reference; treated as evidence disclosure, not a read.",
 		RequiresApproval: true,
 	},
 }
@@ -113,6 +121,9 @@ type GetFlowResultsOutput struct {
 	Truncated    bool             `json:"truncated"`
 }
 
+// registerFlowTools registers all six FlowTools entries: the three
+// v0.5.0 read-only flow/result tools, the two v0.4.0 read-only upload
+// tools, and the one v0.4.0 approval-gated download tool.
 func registerFlowTools(s *mcp.Server, deps Deps) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "velo_list_flows",
@@ -131,6 +142,24 @@ func registerFlowTools(s *mcp.Server, deps Deps) {
 		Description: FlowTools[2].Description,
 		Annotations: readOnlyAnnotations("Get Velociraptor flow results"),
 	}, newGetFlowResultsHandler(deps))
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "velo_list_flow_uploads",
+		Description: FlowTools[3].Description,
+		Annotations: readOnlyAnnotations("List Velociraptor flow uploads"),
+	}, newListFlowUploadsHandler(deps))
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "velo_get_flow_upload_metadata",
+		Description: FlowTools[4].Description,
+		Annotations: readOnlyAnnotations("Get Velociraptor flow upload metadata"),
+	}, newGetFlowUploadMetadataHandler(deps))
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "velo_download_flow_upload_with_approval",
+		Description: FlowTools[5].Description,
+		Annotations: writeAnnotations("Download Velociraptor flow upload (approval-gated)"),
+	}, newDownloadFlowUploadHandler(deps))
 }
 
 func newListFlowsHandler(deps Deps) mcp.ToolHandlerFor[ListFlowsInput, ListFlowsOutput] {
@@ -343,4 +372,295 @@ func minInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// UploadSummaryOutput mirrors velociraptor.UploadSummary with explicit
+// JSON tags for the MCP tool response schema.
+type UploadSummaryOutput struct {
+	Component string `json:"component,omitempty"`
+	Name      string `json:"name"`
+	SizeBytes int64  `json:"size_bytes"`
+	Hash      string `json:"hash,omitempty"`
+}
+
+func toUploadSummaryOutput(u velociraptor.UploadSummary) UploadSummaryOutput {
+	return UploadSummaryOutput{Component: u.Component, Name: u.Name, SizeBytes: u.SizeBytes, Hash: u.Hash}
+}
+
+// ListFlowUploadsInput names the client/flow to list uploads for.
+type ListFlowUploadsInput struct {
+	ClientID string `json:"client_id" jsonschema:"Velociraptor client ID, e.g. C.1234abcd5678ef90"`
+	FlowID   string `json:"flow_id" jsonschema:"Velociraptor flow ID, e.g. F.BN2HJC4N4T6KG"`
+}
+
+// ListFlowUploadsOutput reports the upload list plus, honestly, mode and
+// any failure message, following the same mock/real convention as the
+// v0.1.0 visibility tools.
+type ListFlowUploadsOutput struct {
+	response.Result
+	Mode     string                `json:"mode"`
+	Uploads  []UploadSummaryOutput `json:"uploads"`
+	ClientID string                `json:"client_id,omitempty"`
+	FlowID   string                `json:"flow_id,omitempty"`
+}
+
+func newListFlowUploadsHandler(deps Deps) mcp.ToolHandlerFor[ListFlowUploadsInput, ListFlowUploadsOutput] {
+	return func(ctx context.Context, req *mcp.CallToolRequest, in ListFlowUploadsInput) (*mcp.CallToolResult, ListFlowUploadsOutput, error) {
+		const tool = "velo_list_flow_uploads"
+
+		if err := validation.ClientID(in.ClientID); err != nil {
+			recordAudit(deps, audit.Event{Tool: tool, Outcome: audit.OutcomeBlocked, ClientID: in.ClientID, FlowID: in.FlowID, Reason: "invalid client id syntax"})
+			return nil, ListFlowUploadsOutput{}, fmt.Errorf("invalid client id %q", in.ClientID)
+		}
+		if err := validation.FlowID(in.FlowID); err != nil {
+			recordAudit(deps, audit.Event{Tool: tool, Outcome: audit.OutcomeBlocked, ClientID: in.ClientID, FlowID: in.FlowID, Reason: "invalid flow id syntax"})
+			return nil, ListFlowUploadsOutput{}, fmt.Errorf("invalid flow id %q", in.FlowID)
+		}
+
+		if deps.VelociraptorReadMode != VelociraptorModeReal {
+			recordAudit(deps, audit.Event{Tool: tool, Outcome: audit.OutcomeSuccess, ClientID: in.ClientID, FlowID: in.FlowID, Reason: "mock mode, no Velociraptor call made"})
+			return nil, ListFlowUploadsOutput{
+				Result:   response.Success("MCP server is running in mock mode (velociraptor.read_api_config_path is not configured); no Velociraptor call was made"),
+				Mode:     VelociraptorModeMock,
+				Uploads:  []UploadSummaryOutput{},
+				ClientID: in.ClientID,
+				FlowID:   in.FlowID,
+			}, nil
+		}
+		if deps.ReadClient == nil {
+			recordAudit(deps, audit.Event{Tool: tool, Outcome: audit.OutcomeError, ClientID: in.ClientID, FlowID: in.FlowID, Reason: "VelociraptorReadMode is real but ReadClient is nil"})
+			return nil, ListFlowUploadsOutput{
+				Result:   response.Error("real mode is configured but no Velociraptor client is available"),
+				Mode:     VelociraptorModeReal,
+				Uploads:  []UploadSummaryOutput{},
+				ClientID: in.ClientID,
+				FlowID:   in.FlowID,
+			}, nil
+		}
+
+		uploads, err := deps.ReadClient.ListFlowUploads(ctx, in.ClientID, in.FlowID)
+		if err != nil {
+			recordAudit(deps, audit.Event{Tool: tool, Outcome: audit.OutcomeError, ClientID: in.ClientID, FlowID: in.FlowID, Reason: err.Error()})
+			return nil, ListFlowUploadsOutput{
+				Result:   response.Error(err.Error()),
+				Mode:     VelociraptorModeReal,
+				Uploads:  []UploadSummaryOutput{},
+				ClientID: in.ClientID,
+				FlowID:   in.FlowID,
+			}, nil
+		}
+
+		out := make([]UploadSummaryOutput, 0, len(uploads))
+		for _, u := range uploads {
+			out = append(out, toUploadSummaryOutput(u))
+		}
+		recordAudit(deps, audit.Event{Tool: tool, Outcome: audit.OutcomeSuccess, ClientID: in.ClientID, FlowID: in.FlowID, RowCount: len(out)})
+		return nil, ListFlowUploadsOutput{
+			Result:   response.Result{Status: response.StatusForCount(len(out))},
+			Mode:     VelociraptorModeReal,
+			Uploads:  out,
+			ClientID: in.ClientID,
+			FlowID:   in.FlowID,
+		}, nil
+	}
+}
+
+// GetFlowUploadMetadataInput names the client/flow/upload to fetch
+// metadata for.
+type GetFlowUploadMetadataInput struct {
+	ClientID   string `json:"client_id" jsonschema:"Velociraptor client ID, e.g. C.1234abcd5678ef90"`
+	FlowID     string `json:"flow_id" jsonschema:"Velociraptor flow ID, e.g. F.BN2HJC4N4T6KG"`
+	UploadName string `json:"upload_name" jsonschema:"upload component/name as returned by velo_list_flow_uploads"`
+}
+
+// GetFlowUploadMetadataOutput reports upload metadata plus, honestly,
+// mode and any failure message. Status distinguishes a genuine "no such
+// upload" lookup (response.StatusNotFound, via
+// velociraptor.ErrUploadNotFound) from any other connectivity/RPC
+// failure (response.StatusError).
+type GetFlowUploadMetadataOutput struct {
+	response.Result
+	Mode   string               `json:"mode"`
+	Upload *UploadSummaryOutput `json:"upload,omitempty"`
+}
+
+func newGetFlowUploadMetadataHandler(deps Deps) mcp.ToolHandlerFor[GetFlowUploadMetadataInput, GetFlowUploadMetadataOutput] {
+	return func(ctx context.Context, req *mcp.CallToolRequest, in GetFlowUploadMetadataInput) (*mcp.CallToolResult, GetFlowUploadMetadataOutput, error) {
+		const tool = "velo_get_flow_upload_metadata"
+
+		if err := validation.ClientID(in.ClientID); err != nil {
+			recordAudit(deps, audit.Event{Tool: tool, Outcome: audit.OutcomeBlocked, ClientID: in.ClientID, FlowID: in.FlowID, Reason: "invalid client id syntax"})
+			return nil, GetFlowUploadMetadataOutput{}, fmt.Errorf("invalid client id %q", in.ClientID)
+		}
+		if err := validation.FlowID(in.FlowID); err != nil {
+			recordAudit(deps, audit.Event{Tool: tool, Outcome: audit.OutcomeBlocked, ClientID: in.ClientID, FlowID: in.FlowID, Reason: "invalid flow id syntax"})
+			return nil, GetFlowUploadMetadataOutput{}, fmt.Errorf("invalid flow id %q", in.FlowID)
+		}
+		if err := validation.UploadName(in.UploadName); err != nil {
+			recordAudit(deps, audit.Event{Tool: tool, Outcome: audit.OutcomeBlocked, ClientID: in.ClientID, FlowID: in.FlowID, Reason: "invalid upload name"})
+			return nil, GetFlowUploadMetadataOutput{}, err
+		}
+
+		if deps.VelociraptorReadMode != VelociraptorModeReal {
+			recordAudit(deps, audit.Event{Tool: tool, Outcome: audit.OutcomeSuccess, ClientID: in.ClientID, FlowID: in.FlowID, Reason: "mock mode, no Velociraptor call made"})
+			return nil, GetFlowUploadMetadataOutput{
+				Result: response.Success("MCP server is running in mock mode (velociraptor.read_api_config_path is not configured); no Velociraptor call was made"),
+				Mode:   VelociraptorModeMock,
+			}, nil
+		}
+		if deps.ReadClient == nil {
+			recordAudit(deps, audit.Event{Tool: tool, Outcome: audit.OutcomeError, ClientID: in.ClientID, FlowID: in.FlowID, Reason: "VelociraptorReadMode is real but ReadClient is nil"})
+			return nil, GetFlowUploadMetadataOutput{
+				Result: response.Error("real mode is configured but no Velociraptor client is available"),
+				Mode:   VelociraptorModeReal,
+			}, nil
+		}
+
+		upload, err := deps.ReadClient.GetFlowUploadMetadata(ctx, in.ClientID, in.FlowID, in.UploadName)
+		if err != nil {
+			recordAudit(deps, audit.Event{Tool: tool, Outcome: audit.OutcomeError, ClientID: in.ClientID, FlowID: in.FlowID, Reason: err.Error()})
+			result := response.Error(err.Error())
+			if errors.Is(err, velociraptor.ErrUploadNotFound) {
+				result = response.NotFound(err.Error())
+			}
+			return nil, GetFlowUploadMetadataOutput{Result: result, Mode: VelociraptorModeReal}, nil
+		}
+
+		out := toUploadSummaryOutput(upload)
+		recordAudit(deps, audit.Event{Tool: tool, Outcome: audit.OutcomeSuccess, ClientID: in.ClientID, FlowID: in.FlowID})
+		return nil, GetFlowUploadMetadataOutput{
+			Result: response.Result{Status: response.StatusSuccess},
+			Mode:   VelociraptorModeReal,
+			Upload: &out,
+		}, nil
+	}
+}
+
+// DownloadFlowUploadInput is velo_download_flow_upload_with_approval's
+// argument shape.
+type DownloadFlowUploadInput struct {
+	ClientID          string `json:"client_id" jsonschema:"Velociraptor client ID, e.g. C.1234abcd5678ef90"`
+	FlowID            string `json:"flow_id" jsonschema:"Velociraptor flow ID, e.g. F.BN2HJC4N4T6KG"`
+	UploadName        string `json:"upload_name" jsonschema:"upload component/name as returned by velo_list_flow_uploads"`
+	CaseID            string `json:"case_id" jsonschema:"investigation/case identifier this download is tied to"`
+	Reason            string `json:"reason" jsonschema:"justification for why this download is needed"`
+	Requester         string `json:"requester" jsonschema:"identity of whoever is asking for this download"`
+	ApprovalReference string `json:"approval_reference" jsonschema:"reference to a pre-approved request created via the approve CLI subcommand"`
+}
+
+// DownloadFlowUploadOutput reports the outcome of a download attempt.
+// Raw evidence bytes are never returned inline: on success, the bytes
+// are written to a local file under
+// config.VelociraptorConfig.DownloadDir and only that path, its size,
+// and a SHA-256 checksum are reported.
+type DownloadFlowUploadOutput struct {
+	response.Result
+	ClientID  string `json:"client_id,omitempty"`
+	FlowID    string `json:"flow_id,omitempty"`
+	LocalPath string `json:"local_path,omitempty"`
+	SizeBytes int64  `json:"size_bytes,omitempty"`
+	SHA256    string `json:"sha256,omitempty"`
+	Truncated bool   `json:"truncated,omitempty"`
+}
+
+// downloadFilename derives a local filename from already-validated
+// clientID/flowID (strict charset, no path separators) plus a random
+// suffix. It never incorporates the caller-supplied uploadName, which
+// may contain arbitrary VFS-path-shaped text, so a crafted upload_name
+// can never influence where the file is written.
+func downloadFilename(clientID, flowID string) (string, error) {
+	suffix := make([]byte, 8)
+	if _, err := rand.Read(suffix); err != nil {
+		return "", fmt.Errorf("generate download filename: %w", err)
+	}
+	return fmt.Sprintf("%s_%s_%d_%s.bin", clientID, flowID, time.Now().UnixNano(), hex.EncodeToString(suffix)), nil
+}
+
+func newDownloadFlowUploadHandler(deps Deps) mcp.ToolHandlerFor[DownloadFlowUploadInput, DownloadFlowUploadOutput] {
+	return func(ctx context.Context, req *mcp.CallToolRequest, in DownloadFlowUploadInput) (*mcp.CallToolResult, DownloadFlowUploadOutput, error) {
+		const tool = "velo_download_flow_upload_with_approval"
+
+		if enabled, reason := writePilotEnabled(deps); !enabled {
+			recordAudit(deps, audit.Event{Tool: tool, Outcome: audit.OutcomeBlocked, ClientID: in.ClientID, FlowID: in.FlowID, CaseID: in.CaseID, Reason: reason})
+			return nil, DownloadFlowUploadOutput{}, errors.New(reason)
+		}
+		if deps.Config == nil || deps.Config.Velociraptor.DownloadDir == "" {
+			const reason = "the controlled write pilot is disabled: velociraptor.download_dir is not configured"
+			recordAudit(deps, audit.Event{Tool: tool, Outcome: audit.OutcomeBlocked, ClientID: in.ClientID, FlowID: in.FlowID, CaseID: in.CaseID, Reason: reason})
+			return nil, DownloadFlowUploadOutput{}, errors.New(reason)
+		}
+
+		if err := validateApprovalFields(in.ClientID, in.CaseID, in.Reason, in.Requester, in.ApprovalReference); err != nil {
+			recordAudit(deps, audit.Event{Tool: tool, Outcome: audit.OutcomeBlocked, ClientID: in.ClientID, FlowID: in.FlowID, CaseID: in.CaseID, Reason: err.Error()})
+			return nil, DownloadFlowUploadOutput{}, err
+		}
+		if err := validation.FlowID(in.FlowID); err != nil {
+			recordAudit(deps, audit.Event{Tool: tool, Outcome: audit.OutcomeBlocked, ClientID: in.ClientID, FlowID: in.FlowID, CaseID: in.CaseID, Reason: "invalid flow id syntax"})
+			return nil, DownloadFlowUploadOutput{}, fmt.Errorf("invalid flow id %q", in.FlowID)
+		}
+		if err := validation.UploadName(in.UploadName); err != nil {
+			recordAudit(deps, audit.Event{Tool: tool, Outcome: audit.OutcomeBlocked, ClientID: in.ClientID, FlowID: in.FlowID, CaseID: in.CaseID, Reason: "invalid upload name"})
+			return nil, DownloadFlowUploadOutput{}, err
+		}
+
+		candidate := approval.Request{
+			Operation:  approval.OperationDownloadFlowUpload,
+			CaseID:     in.CaseID,
+			ClientID:   in.ClientID,
+			FlowID:     in.FlowID,
+			UploadName: in.UploadName,
+		}
+		result, outcome, ok := verifyAndConsumeApproval(ctx, deps, in.ApprovalReference, candidate)
+		if !ok {
+			recordAudit(deps, audit.Event{Tool: tool, Outcome: outcome, ClientID: in.ClientID, FlowID: in.FlowID, CaseID: in.CaseID, RequestReason: in.Reason, ApprovalID: in.ApprovalReference, Reason: result.Message})
+			return nil, DownloadFlowUploadOutput{Result: result, ClientID: in.ClientID, FlowID: in.FlowID}, nil
+		}
+
+		if deps.WriteClient == nil {
+			recordAudit(deps, audit.Event{Tool: tool, Outcome: audit.OutcomeError, ClientID: in.ClientID, FlowID: in.FlowID, CaseID: in.CaseID, ApprovalID: in.ApprovalReference, Reason: "no Velociraptor write client is configured"})
+			return nil, DownloadFlowUploadOutput{
+				Result:   response.Error("real mode is configured but no Velociraptor write client is available"),
+				ClientID: in.ClientID,
+				FlowID:   in.FlowID,
+			}, nil
+		}
+
+		maxBytes := deps.Config.Velociraptor.MaxUploadBytes
+		data, err := deps.WriteClient.DownloadFlowUpload(ctx, in.ClientID, in.FlowID, in.UploadName, maxBytes)
+		if err != nil {
+			recordAudit(deps, audit.Event{Tool: tool, Outcome: audit.OutcomeError, ClientID: in.ClientID, FlowID: in.FlowID, CaseID: in.CaseID, ApprovalID: in.ApprovalReference, Reason: err.Error()})
+			result := response.Error(err.Error())
+			if errors.Is(err, velociraptor.ErrUploadNotFound) {
+				result = response.NotFound(err.Error())
+			}
+			return nil, DownloadFlowUploadOutput{Result: result, ClientID: in.ClientID, FlowID: in.FlowID}, nil
+		}
+
+		filename, err := downloadFilename(in.ClientID, in.FlowID)
+		if err != nil {
+			recordAudit(deps, audit.Event{Tool: tool, Outcome: audit.OutcomeError, ClientID: in.ClientID, FlowID: in.FlowID, CaseID: in.CaseID, ApprovalID: in.ApprovalReference, Reason: err.Error()})
+			return nil, DownloadFlowUploadOutput{Result: response.Error(err.Error()), ClientID: in.ClientID, FlowID: in.FlowID}, nil
+		}
+		localPath := filepath.Join(deps.Config.Velociraptor.DownloadDir, filename)
+		if err := os.MkdirAll(deps.Config.Velociraptor.DownloadDir, 0o700); err != nil {
+			recordAudit(deps, audit.Event{Tool: tool, Outcome: audit.OutcomeError, ClientID: in.ClientID, FlowID: in.FlowID, CaseID: in.CaseID, ApprovalID: in.ApprovalReference, Reason: err.Error()})
+			return nil, DownloadFlowUploadOutput{Result: response.Error(err.Error()), ClientID: in.ClientID, FlowID: in.FlowID}, nil
+		}
+		if err := os.WriteFile(localPath, data, 0o600); err != nil {
+			recordAudit(deps, audit.Event{Tool: tool, Outcome: audit.OutcomeError, ClientID: in.ClientID, FlowID: in.FlowID, CaseID: in.CaseID, ApprovalID: in.ApprovalReference, Reason: err.Error()})
+			return nil, DownloadFlowUploadOutput{Result: response.Error(err.Error()), ClientID: in.ClientID, FlowID: in.FlowID}, nil
+		}
+
+		sum := sha256.Sum256(data)
+		recordAudit(deps, audit.Event{Tool: tool, Outcome: audit.OutcomeSuccess, ClientID: in.ClientID, FlowID: in.FlowID, CaseID: in.CaseID, RequestReason: in.Reason, ApprovalID: in.ApprovalReference, ByteCount: int64(len(data))})
+		return nil, DownloadFlowUploadOutput{
+			Result:    response.Result{Status: response.StatusSuccess},
+			ClientID:  in.ClientID,
+			FlowID:    in.FlowID,
+			LocalPath: localPath,
+			SizeBytes: int64(len(data)),
+			SHA256:    hex.EncodeToString(sum[:]),
+			Truncated: maxBytes > 0 && int64(len(data)) >= maxBytes,
+		}, nil
+	}
 }

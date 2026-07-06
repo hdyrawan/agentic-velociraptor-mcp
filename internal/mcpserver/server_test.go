@@ -35,7 +35,17 @@ func connectTestClient(t *testing.T, srv *Server) *mcp.ClientSession {
 	return session
 }
 
-func TestNewRegistersExactlyFourteenSafeTools(t *testing.T) {
+// writeCapableTools names the six v0.4.0 tools that mutate Velociraptor
+// endpoint/flow state (gated by writePilotEnabled and an approval
+// reference). Every other registered tool must be read-only.
+var writeCapableTools = map[string]bool{
+	"velo_collect_artifact_with_approval":     true,
+	"velo_collect_dfir_profile_with_approval": true,
+	"velo_cancel_flow_with_approval":          true,
+	"velo_download_flow_upload_with_approval": true,
+}
+
+func TestNewRegistersExactlyTwentyTools(t *testing.T) {
 	deps, _ := testDeps(t)
 	srv := New("agentic-velociraptor-mcp-test", "0.0.0-test", deps)
 
@@ -53,16 +63,22 @@ func TestNewRegistersExactlyFourteenSafeTools(t *testing.T) {
 	sort.Strings(names)
 
 	want := []string{
+		"velo_cancel_flow_with_approval",
+		"velo_collect_artifact_with_approval",
+		"velo_collect_dfir_profile_with_approval",
 		"velo_compare_dfir_profiles",
+		"velo_download_flow_upload_with_approval",
 		"velo_find_profiles_by_artifact",
 		"velo_get_artifact_details",
 		"velo_get_client_info",
 		"velo_get_dfir_profile",
 		"velo_get_flow_results",
 		"velo_get_flow_status",
+		"velo_get_flow_upload_metadata",
 		"velo_health_check",
 		"velo_list_artifact_names",
 		"velo_list_dfir_profiles",
+		"velo_list_flow_uploads",
 		"velo_list_flows",
 		"velo_plan_dfir_triage",
 		"velo_search_clients",
@@ -81,9 +97,11 @@ func TestNewRegistersExactlyFourteenSafeTools(t *testing.T) {
 }
 
 // TestNewNeverRegistersUnsafeTools guards against regressions where a
-// collection, hunt execution, download, cancel, or raw-VQL tool
-// accidentally becomes callable. v0.3.0 is read-only workflow expansion
-// only; see PROJECT_PLAN.md.
+// hunt-execution, raw-VQL, or unapproved-collection tool accidentally
+// becomes callable. v0.4.0 introduces exactly six write-capable,
+// approval-gated tools (writeCapableTools); anything else matching these
+// substrings would be a regression. No hunt or raw VQL tool must ever
+// exist, under any name.
 func TestNewNeverRegistersUnsafeTools(t *testing.T) {
 	deps, _ := testDeps(t)
 	srv := New("agentic-velociraptor-mcp-test", "0.0.0-test", deps)
@@ -96,11 +114,9 @@ func TestNewNeverRegistersUnsafeTools(t *testing.T) {
 	}
 
 	forbiddenSubstrings := []string{
-		"collect",
 		"start_hunt",
 		"start_dfir_hunt",
-		"download",
-		"cancel",
+		"cancel_hunt",
 		"run_vql",
 		"vql",
 	}
@@ -111,10 +127,15 @@ func TestNewNeverRegistersUnsafeTools(t *testing.T) {
 				t.Errorf("tool %q is callable and matches forbidden substring %q", tool.Name, bad)
 			}
 		}
+		if strings.Contains(tool.Name, "collect") || strings.Contains(tool.Name, "cancel") || strings.Contains(tool.Name, "download") {
+			if !writeCapableTools[tool.Name] {
+				t.Errorf("tool %q matches a write-shaped name but is not in the known writeCapableTools allowlist", tool.Name)
+			}
+		}
 	}
 }
 
-func TestNewRegisteredToolsAreReadOnlyNonDestructive(t *testing.T) {
+func TestNewRegisteredToolsAreNonDestructiveAndClosedWorld(t *testing.T) {
 	deps, _ := testDeps(t)
 	srv := New("agentic-velociraptor-mcp-test", "0.0.0-test", deps)
 
@@ -130,8 +151,9 @@ func TestNewRegisteredToolsAreReadOnlyNonDestructive(t *testing.T) {
 			t.Errorf("tool %q: missing annotations", tool.Name)
 			continue
 		}
-		if !tool.Annotations.ReadOnlyHint {
-			t.Errorf("tool %q: ReadOnlyHint = false, want true", tool.Name)
+		wantReadOnly := !writeCapableTools[tool.Name]
+		if tool.Annotations.ReadOnlyHint != wantReadOnly {
+			t.Errorf("tool %q: ReadOnlyHint = %v, want %v", tool.Name, tool.Annotations.ReadOnlyHint, wantReadOnly)
 		}
 		if tool.Annotations.DestructiveHint == nil || *tool.Annotations.DestructiveHint {
 			t.Errorf("tool %q: DestructiveHint = %v, want false", tool.Name, tool.Annotations.DestructiveHint)
@@ -174,6 +196,77 @@ func TestCallNewVisibilityToolsOverMCPSession(t *testing.T) {
 		{name: "velo_get_client_info", args: map[string]any{"client_id": "C.1234abcd5678ef90"}},
 		{name: "velo_list_artifact_names", args: map[string]any{}},
 		{name: "velo_get_artifact_details", args: map[string]any{"name": "Generic.Client.Info"}},
+	}
+
+	for _, tc := range cases {
+		res, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: tc.name, Arguments: tc.args})
+		if err != nil {
+			t.Fatalf("CallTool %s: %v", tc.name, err)
+		}
+		if res.IsError {
+			t.Fatalf("CallTool %s returned IsError=true: %+v", tc.name, res)
+		}
+	}
+}
+
+// TestCallCollectionToolsBlockedByDefaultOverMCPSession confirms every
+// v0.4.0 write-capable tool is registered and callable at the MCP
+// protocol level, but refuses to do anything beyond reporting itself
+// disabled under the default read-only/no-approval-store testDeps
+// configuration — the write pilot must never be silently on.
+func TestCallCollectionToolsBlockedByDefaultOverMCPSession(t *testing.T) {
+	deps, _ := testDeps(t)
+	srv := New("agentic-velociraptor-mcp-test", "0.0.0-test", deps)
+
+	session := connectTestClient(t, srv)
+
+	cases := []struct {
+		name string
+		args map[string]any
+	}{
+		{name: "velo_collect_artifact_with_approval", args: map[string]any{
+			"client_id": "C.1234abcd5678ef90", "artifact": "Generic.Client.Info",
+			"case_id": "CASE-1", "reason": "triage", "requester": "analyst", "approval_reference": "ref-1",
+		}},
+		{name: "velo_collect_dfir_profile_with_approval", args: map[string]any{
+			"client_id": "C.1234abcd5678ef90", "profile": "windows_basic_triage",
+			"case_id": "CASE-1", "reason": "triage", "requester": "analyst", "approval_reference": "ref-1",
+		}},
+		{name: "velo_cancel_flow_with_approval", args: map[string]any{
+			"client_id": "C.1234abcd5678ef90", "flow_id": "F.BN2HJC4N4T6KG",
+			"case_id": "CASE-1", "reason": "stop it", "requester": "analyst", "approval_reference": "ref-1",
+		}},
+		{name: "velo_download_flow_upload_with_approval", args: map[string]any{
+			"client_id": "C.1234abcd5678ef90", "flow_id": "F.BN2HJC4N4T6KG", "upload_name": "file.bin",
+			"case_id": "CASE-1", "reason": "evidence", "requester": "analyst", "approval_reference": "ref-1",
+		}},
+	}
+
+	for _, tc := range cases {
+		res, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: tc.name, Arguments: tc.args})
+		if err != nil {
+			t.Fatalf("CallTool %s: unexpected transport error: %v", tc.name, err)
+		}
+		if !res.IsError {
+			t.Errorf("CallTool %s: IsError = false, want true (write pilot must be disabled by default)", tc.name)
+		}
+	}
+}
+
+// TestCallReadOnlyFlowUploadToolsOverMCPSession confirms the two v0.4.0
+// read-only upload tools are callable regardless of write-pilot state.
+func TestCallReadOnlyFlowUploadToolsOverMCPSession(t *testing.T) {
+	deps, _ := testDeps(t)
+	srv := New("agentic-velociraptor-mcp-test", "0.0.0-test", deps)
+
+	session := connectTestClient(t, srv)
+
+	cases := []struct {
+		name string
+		args map[string]any
+	}{
+		{name: "velo_list_flow_uploads", args: map[string]any{"client_id": "C.1234abcd5678ef90", "flow_id": "F.BN2HJC4N4T6KG"}},
+		{name: "velo_get_flow_upload_metadata", args: map[string]any{"client_id": "C.1234abcd5678ef90", "flow_id": "F.BN2HJC4N4T6KG", "upload_name": "file.bin"}},
 	}
 
 	for _, tc := range cases {

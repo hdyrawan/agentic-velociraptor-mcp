@@ -1,6 +1,15 @@
 package velociraptor
 
-import "context"
+import (
+	"context"
+	"errors"
+)
+
+// ErrUploadNotFound is returned by GetFlowUploadMetadata and
+// DownloadFlowUpload when the named upload does not exist on the given
+// client/flow, so callers can distinguish "no such upload" from any
+// other connectivity/RPC failure.
+var ErrUploadNotFound = errors.New("velociraptor: upload not found")
 
 // UploadSummary describes one file uploaded to the server as part of a
 // flow's results (e.g. a collected memory sample or exported file),

@@ -35,6 +35,35 @@ func TestValidateRejectsRawVQL(t *testing.T) {
 	}
 }
 
+func TestValidateAllowsEmptyApprovalStorePath(t *testing.T) {
+	cfg := Default()
+	cfg.Approval.StorePath = ""
+
+	if err := Validate(cfg); err != nil {
+		t.Fatalf("Validate: expected nil for empty approval.store_path, got %v", err)
+	}
+}
+
+func TestValidateRejectsApprovalTTLWhenStorePathSet(t *testing.T) {
+	cfg := Default()
+	cfg.Approval.StorePath = "/tmp/approvals.json"
+	cfg.Approval.TTLSeconds = 0
+
+	if err := Validate(cfg); err == nil {
+		t.Fatal("Validate: expected error when approval.store_path is set but ttl_seconds is 0")
+	}
+}
+
+func TestValidateAcceptsApprovalStorePathWithPositiveTTL(t *testing.T) {
+	cfg := Default()
+	cfg.Approval.StorePath = "/tmp/approvals.json"
+	cfg.Approval.TTLSeconds = 900
+
+	if err := Validate(cfg); err != nil {
+		t.Fatalf("Validate: expected nil, got %v", err)
+	}
+}
+
 func TestLoadParsesYAML(t *testing.T) {
 	path := t.TempDir() + "/config.yaml"
 	if err := os.WriteFile(path, []byte(minimalYAML), 0o600); err != nil {

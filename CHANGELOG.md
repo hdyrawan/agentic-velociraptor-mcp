@@ -33,6 +33,81 @@ downloads, write-identity use, or raw VQL exposure.
 - Docs updated: README, PROJECT_PLAN, PROJECT_STATE, tool reference,
   security model, lab validation plan, and CLI help/version text.
 
+## [0.4.0] - 2026-07-06
+
+### Added — v0.4.0 controlled single-client collection pilot
+
+This project's **first write-capable Velociraptor feature**. It is a
+controlled pilot, not unrestricted write access: still single-client per
+call, still no hunts, still no raw VQL, still no destructive action.
+
+- Added six new callable MCP tools:
+  `velo_collect_artifact_with_approval`,
+  `velo_collect_dfir_profile_with_approval`,
+  `velo_cancel_flow_with_approval` (`internal/mcpserver/tools_collection.go`),
+  `velo_list_flow_uploads`, `velo_get_flow_upload_metadata` (read-only),
+  and `velo_download_flow_upload_with_approval`
+  (`internal/mcpserver/tools_flows.go`). Callable tool inventory
+  increases from 14 (after v0.5.0's read-only flow/result backfill,
+  merged separately and reconciled by rebase) to 20.
+- Implemented `internal/approval.FileStore`, the first real
+  `approval.Store`: JSON-file-backed, re-reads on every call, and adds
+  `Requester`/`Parameters`/`FlowID`/`UploadName` to `approval.Request`
+  plus a `Status` type (`Consumed`/`Expired` lifecycle) and `Consume`
+  method to the `Store` interface. `approval.RequestFingerprint` now
+  covers parameters/flow_id/upload_name in addition to the original
+  operation/case/client/artifact/profile/hunt fields.
+- Added a non-MCP `agentic-velociraptor-mcp approve` CLI subcommand: the
+  only way to create and decide an `approval.Request`. It is never
+  called by the MCP server and has no MCP tool equivalent, so no MCP
+  client — including an LLM driving tool calls — can self-approve its
+  own request.
+- Every approval-gated tool call requires `case_id`, `reason`,
+  `requester`, its target, and an `approval_reference`, verified by the
+  new `mcpserver.verifyAndConsumeApproval`: the reference must resolve to
+  an approved, unconsumed, unexpired record whose fingerprint exactly
+  matches the call, or the tool refuses (typed `not_found`/`error`
+  responses, audited `blocked`) without ever calling Velociraptor.
+  Approval is consumed before the Velociraptor call, so a single human
+  decision authorizes at most one execution attempt.
+- The whole write pilot is off unless both `policy.mode: controlled` and
+  the new `approval.store_path` config are set
+  (`mcpserver.writePilotEnabled`); `velo_download_flow_upload_with_approval`
+  additionally requires the new `velociraptor.download_dir` setting and
+  never returns raw evidence bytes inline — only a local path, size, and
+  SHA-256 after writing them to that directory under a filename derived
+  only from already-validated client/flow IDs, never the caller-supplied
+  upload name.
+- `cmd/agentic-velociraptor-mcp` now also constructs a real `WriteClient`/
+  `VelociraptorWriteMode` from `velociraptor.write_api_config_path`,
+  mirroring the existing read-client wiring.
+- **Known limitation**: the hand-authored `veloapi` proto mirror does not
+  yet wire real gRPC bindings for `CollectArtifact`/`CancelFlow`/upload
+  RPCs, so a real (non-mock) write client currently reports
+  `velociraptor.ErrNotImplemented` honestly rather than fabricating
+  success. All policy/approval/audit control-flow is implemented and
+  tested against fake `velociraptor.Client` implementations; see
+  `internal/mcpserver/tools_collection_test.go` and `tools_flows_test.go`.
+  Real RPC wiring is deferred to v0.6.0.
+- Existing 14 read-only tools (v0.1.0-v0.5.0), the v0.2.0
+  `response.Result` envelope, and the v0.3.0 workflow tools are all
+  preserved unchanged.
+- Tests added: `internal/approval/filestore_test.go` (Store lifecycle,
+  fingerprinting), `internal/validation/request_test.go` (new
+  CaseID/Reason/Requester/ApprovalReference/FlowID/UploadName/
+  CollectionParameters validators), `internal/config/config_test.go`
+  (approval config validation), `internal/mcpserver/tools_collection_test.go`
+  and `tools_flows_test.go` (disabled mode, invalid input, missing/denied/
+  expired/consumed/mismatched approval, approved fake execution, audit
+  fields, response statuses), and `cmd/agentic-velociraptor-mcp/main_test.go`
+  (approve CLI, write-client/approval-store wiring). `server_test.go`
+  updated to the 20-tool inventory (rebased onto v0.5.0's 14-tool
+  read-only baseline).
+- Docs updated: README, CHANGELOG, PROJECT_PLAN (realigned with the
+  original roadmap; production hardening renumbered to v0.6.0),
+  PROJECT_STATE, docs/tool-reference.md, docs/approval-flow.md (from
+  draft design to implemented workflow), docs/security-model.md.
+
 ## [0.3.0] - 2026-07-06
 
 ### Added — v0.3.0 read-only DFIR workflow expansion

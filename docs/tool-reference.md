@@ -1,25 +1,35 @@
 # Tool reference
 
-Status: this describes the **planned** stable core of 27 tools. As of
-v0.5.0, exactly 14 are implemented and registered as callable MCP tools:
-`velo_health_check`, `velo_search_clients`, `velo_get_client_info`,
-`velo_list_artifact_names`, `velo_get_artifact_details`,
-`velo_list_flows`, `velo_get_flow_status`, `velo_get_flow_results`,
-`velo_list_dfir_profiles`, `velo_get_dfir_profile`,
-`velo_validate_dfir_profile`, `velo_plan_dfir_triage`,
-`velo_compare_dfir_profiles`, and `velo_find_profiles_by_artifact`. See
-`internal/mcpserver/server.go`'s `New` function — only the visibility,
-flow/result, profile, and workflow registration functions are called;
-the upload, collection, hunt, and IOC execution groups' `ToolSpec`
-metadata exists for this document but is not wired to `mcp.AddTool` yet,
-and is therefore not callable by any MCP client (confirmed by
-`internal/mcpserver/server_test.go`'s exact-tool-inventory and
-never-registers-unsafe-tools tests). Update the "Implemented" column as
-each remaining tool actually lands.
+v0.4.0 (rebased onto v0.5.0's read-only flow/result backfill), exactly
+20 are implemented and registered as callable MCP tools: the 14
+read-only tools from v0.1.0-v0.5.0 (`velo_health_check`,
+`velo_search_clients`, `velo_get_client_info`, `velo_list_artifact_names`,
+`velo_get_artifact_details`, `velo_list_flows`, `velo_get_flow_status`,
+`velo_get_flow_results`, `velo_list_dfir_profiles`,
+`velo_get_dfir_profile`, `velo_validate_dfir_profile`,
+`velo_plan_dfir_triage`, `velo_compare_dfir_profiles`,
+`velo_find_profiles_by_artifact`), plus six new write-capable,
+approval-gated tools implementing a controlled single-client collection
+pilot: `velo_collect_artifact_with_approval`,
+`velo_collect_dfir_profile_with_approval`,
+`velo_cancel_flow_with_approval`, `velo_list_flow_uploads`,
+`velo_get_flow_upload_metadata`, and
+`velo_download_flow_upload_with_approval`. See
+`internal/mcpserver/server.go`'s `New` function — only the hunt and IOC
+execution groups' `ToolSpec` metadata still exists for this document but
+is not wired to `mcp.AddTool`; none of it is callable by any MCP client
+(confirmed by `internal/mcpserver/server_test.go`'s exact-tool-inventory
+and never-registers-unsafe-tools tests). Update the "Implemented" column
+as each remaining tool actually lands.
 
-Legend: RO = read-only, no approval. Approval = requires a matching
-`approval.Decision` (see [approval-flow.md](approval-flow.md)) before any
-Velociraptor call is made.
+Legend: RO = read-only, no approval. Approval = requires a resolvable
+`approval_reference` (see [approval-flow.md](approval-flow.md)) before
+any Velociraptor call is made. **v0.4.0 is a controlled pilot, not
+unrestricted Velociraptor write access**: every Approval-kind tool below
+is still scoped to a single client per call, still requires
+`policy.mode: controlled` and `approval.store_path` to be explicitly
+configured (off by default), and no hunt or raw-VQL tool exists anywhere
+in this codebase.
 
 **Response envelope (v0.2.0+):** `velo_search_clients`,
 `velo_get_client_info`, `velo_list_artifact_names`, and
@@ -28,9 +38,20 @@ a top-level `status` field (`"success"` / `"empty"` / `"not_found"` /
 `"error"`) alongside their existing `mode`/data/`message` fields — see
 docs/security-model.md's "Evidence honesty" section for the full
 contract, including why `velo_health_check`'s own pre-existing `status`
-field (`"ok"`/`"error"`) was left as-is rather than migrated.
-v0.3.0's three workflow tools and v0.5.0's three flow/result tools also
-embed the same `internal/response.Result` envelope.
+field (`"ok"`/`"error"`) was left as-is rather than migrated. v0.3.0's
+three workflow tools, v0.5.0's three flow/result tools, and every v0.4.0
+tool also embed the same `internal/response.Result` envelope.
+
+**Approval-gated tool inputs (v0.4.0+):** every Approval-kind tool takes
+`case_id`, `reason`, `requester`, its target (client plus
+artifact/profile/flow_id/upload_name as applicable), and an
+`approval_reference`. The reference must name an
+`internal/approval.Store` record — created and approved out-of-band by a
+human operator via the `agentic-velociraptor-mcp approve` CLI subcommand,
+never by any MCP tool — that is approved, unconsumed, unexpired, and
+whose `approval.RequestFingerprint` exactly matches the call's operation/
+case_id/client_id/artifact/profile/parameters/flow_id/upload_name. See
+[approval-flow.md](approval-flow.md) for the full operator workflow.
 
 ## Visibility tools (`tools_visibility.go`)
 
@@ -49,9 +70,9 @@ embed the same `internal/response.Result` envelope.
 | `velo_list_flows` | RO | List flows for a client, bounded by `max_rows` with cursor pagination. | v0.1.0 / v0.5.0 backfill | **yes (mock or read-client; real gRPC backend not yet implemented)** |
 | `velo_get_flow_status` | RO | State of one flow. `client_id` and `flow_id` are validated before any call. | v0.1.0 / v0.5.0 backfill | **yes (mock or read-client; real gRPC backend not yet implemented)** |
 | `velo_get_flow_results` | RO | Result rows for one flow, bounded by `max_rows` and `max_result_bytes`; reports `truncated`, `returned_rows`, `byte_count`, and optional `next_cursor`. | v0.1.0 / v0.5.0 backfill | **yes (mock or read-client; real gRPC backend not yet implemented)** |
-| `velo_list_flow_uploads` | RO | List uploads attached to a flow. | unscheduled (was v0.2.0; see PROJECT_PLAN.md's v0.2.0 re-scope note) | no |
-| `velo_get_flow_upload_metadata` | RO | Metadata for one upload. | unscheduled (was v0.2.0; see PROJECT_PLAN.md's v0.2.0 re-scope note) | no |
-| `velo_download_flow_upload_with_approval` | Approval | Download upload bytes, bounded by `max_upload_bytes`. | unscheduled (was v0.2.0; see PROJECT_PLAN.md's v0.2.0 re-scope note) | no |
+| `velo_list_flow_uploads` | RO | List uploads attached to a flow via `Deps.ReadClient`; same mock/real convention as the visibility tools. | v0.4.0 | **yes (mock or real)** |
+| `velo_get_flow_upload_metadata` | RO | Size/hash metadata for one upload; `status: "not_found"` via `velociraptor.ErrUploadNotFound` for an unknown upload. | v0.4.0 | **yes (mock or real)** |
+| `velo_download_flow_upload_with_approval` | Approval | Download upload bytes (bounded by `max_upload_bytes`) and write them to a local `velociraptor.download_dir` file; the MCP response never carries raw bytes, only `local_path`/`size_bytes`/`sha256`. Requires `velociraptor.download_dir` configured in addition to the standard write-pilot gate. | v0.4.0 | **yes (control-flow only — see "known limitation" below)** |
 
 
 ### Flow/result response contract
@@ -77,9 +98,18 @@ requested. Audit events include `client_id`, `flow_id`, `row_count`, and
 
 | Tool | Kind | Description | Target milestone | Implemented |
 |------|------|-------------|-------------------|-------------|
-| `velo_collect_artifact_with_approval` | Approval | Collect one allowlisted artifact from one client. | unscheduled (was v0.2.0; see PROJECT_PLAN.md's v0.2.0 re-scope note) | no |
-| `velo_collect_dfir_profile_with_approval` | Approval | Collect every artifact in an allowlisted DFIR profile from one client. | unscheduled (was v0.2.0; see PROJECT_PLAN.md's v0.2.0 re-scope note) | no |
-| `velo_cancel_flow_with_approval` | Approval | Cancel a running flow. | unscheduled (was v0.2.0; see PROJECT_PLAN.md's v0.2.0 re-scope note) | no |
+| `velo_collect_artifact_with_approval` | Approval | Collect one allowlisted artifact from one client, with optional agent-supplied `parameters`. | v0.4.0 | **yes (control-flow only — see "known limitation" below)** |
+| `velo_collect_dfir_profile_with_approval` | Approval | Collect every artifact in an allowlisted, locally-loaded DFIR profile from one client, using each artifact's own fixed profile parameters (no agent-supplied parameters). Reports partial progress (`flows`) if collection stops partway through. | v0.4.0 | **yes (control-flow only — see "known limitation" below)** |
+| `velo_cancel_flow_with_approval` | Approval | Cancel a running flow. | v0.4.0 | **yes (control-flow only — see "known limitation" below)** |
+
+**Known limitation**: the hand-authored `veloapi` proto mirror (see
+v0.1.0-alpha.2's rationale) does not yet wire real gRPC bindings for
+`CollectArtifact`/`CancelFlow`/upload RPCs. All approval/policy/audit
+control-flow for these four tools is implemented and tested (against
+fake `velociraptor.Client` implementations); calling any of them with a
+real (non-mock) write client currently returns
+`velociraptor.ErrNotImplemented`, reported honestly as an `error`-status
+response. Real RPC wiring is deferred to v0.6.0.
 
 ## Hunt tools (`tools_hunts.go`)
 
@@ -97,17 +127,18 @@ requested. Audit events include `client_id`, `flow_id`, `row_count`, and
 
 | Tool | Kind | Description | Target milestone | Implemented |
 |------|------|-------------|-------------------|-------------|
-| `velo_list_dfir_profiles` | RO | List DFIR profiles loaded from the profiles directory. | v0.4.0 (moved up to v0.1.0-alpha.1) | **yes** |
-| `velo_get_dfir_profile` | RO | Full definition of one profile; safe structured error if the name doesn't exist. | v0.4.0 (moved up to v0.1.0-alpha.1) | **yes** |
-| `velo_validate_dfir_profile` | RO | Validate a profile's artifacts against the current policy artifact allowlist. | v0.4.0 (moved up to v0.1.0-alpha.1) | **yes** |
+| `velo_list_dfir_profiles` | RO | List DFIR profiles loaded from the profiles directory. | originally planned for v0.4.0, moved up to v0.1.0-alpha.1 | **yes** |
+| `velo_get_dfir_profile` | RO | Full definition of one profile; safe structured error if the name doesn't exist. | originally planned for v0.4.0, moved up to v0.1.0-alpha.1 | **yes** |
+| `velo_validate_dfir_profile` | RO | Validate a profile's artifacts against the current policy artifact allowlist. | originally planned for v0.4.0, moved up to v0.1.0-alpha.1 | **yes** |
 
 Note: `velo_list_dfir_profiles` and `velo_get_dfir_profile` return every
 profile loaded from the profiles directory, not filtered by
 `policy.allowed_profiles` — reading a profile *definition* is not
 sensitive (it's a reviewed, versioned file, not endpoint data), so it is
 not allowlist-gated. `policy.allowed_profiles` is enforced at the point a
-profile is actually *used* (`velo_collect_dfir_profile_with_approval` /
-`velo_start_dfir_hunt_with_approval`, both still unimplemented). Only
+profile is actually *used* (`velo_collect_dfir_profile_with_approval`,
+implemented in v0.4.0; `velo_start_dfir_hunt_with_approval` remains
+unimplemented). Only
 `velo_validate_dfir_profile` currently cross-checks against
 `policy.allowed_artifacts` (not `allowed_profiles`), since validating
 artifact allowlist membership is exactly what that tool is for.
@@ -189,7 +220,7 @@ Example:
 
 | Tool | Kind | Description | Target milestone | Implemented |
 |------|------|-------------|-------------------|-------------|
-| `velo_hunt_ioc_with_approval` | Approval | Hunt for a validated hash/IP/domain using a fixed template. | v0.4.0 | no |
+| `velo_hunt_ioc_with_approval` | Approval | Hunt for a validated hash/IP/domain using a fixed template. | unscheduled (depends on hunt management, itself unscheduled) | no |
 
 ## Explicitly not in the stable core
 
