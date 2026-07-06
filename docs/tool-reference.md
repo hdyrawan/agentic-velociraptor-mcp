@@ -1,6 +1,6 @@
 # Tool reference
 
-v0.7.0 (rebased onto v0.4.0/v0.5.0/v0.6.0), all 28 tools — the full
+v0.8.0 (preserving the v0.7.0 inventory), all 28 tools — the full
 stable-core target — are implemented and registered as callable MCP
 tools: 5 visibility (`velo_health_check`,
 `velo_search_clients`, `velo_get_client_info`, `velo_list_artifact_names`,
@@ -48,7 +48,7 @@ artifact/profile/flow_id/upload_name as applicable), and an
 human operator via the `agentic-velociraptor-mcp approve` CLI subcommand,
 never by any MCP tool — that is approved, unconsumed, unexpired, and
 whose `approval.RequestFingerprint` exactly matches the call's operation/
-case_id/client_id/artifact/profile/parameters/flow_id/upload_name. See
+case_id/client_id/artifact/profile/parameters/flow_id/upload_name. In v0.8.0, backend-capability checks happen before approval consumption, so scaffolded write paths preserve the approval. See
 [approval-flow.md](approval-flow.md) for the full operator workflow.
 
 ## Visibility tools (`tools_visibility.go`)
@@ -106,8 +106,8 @@ v0.1.0-alpha.2's rationale) does not yet wire real gRPC bindings for
 control-flow for these four tools is implemented and tested (against
 fake `velociraptor.Client` implementations); calling any of them with a
 real (non-mock) write client currently returns
-`velociraptor.ErrNotImplemented`, reported honestly as an `error`-status
-response. Real RPC wiring is still pending for every write-capable tool
+`velociraptor.ErrNotImplemented`, reported honestly as a structured `backend_not_implemented`/`error`-status
+response without consuming approval. Real RPC wiring is still pending for every write-capable tool
 group (collection, flows, hunts, and IOC hunting).
 
 ## Hunt tools (`tools_hunts.go`)
@@ -238,10 +238,26 @@ Output embeds `status`/`message` plus `mode`, `hunt_id`, `kind`,
 `scope_desc`. A fingerprint-mismatched approval (e.g. approved for one
 indicator value/scope, called for another) returns `status: "error"`
 mentioning "does not match" with `status` unchanged by a Go-level error
-(same convention as every other `verifyAndConsumeApproval`-gated tool).
+(same convention as every other `verifyApproval/consumeApproval`-gated tool).
 
 ## Explicitly not in the stable core
 
 - `run_vql` / any raw-VQL tool — see
   [security-model.md](security-model.md).
 - Any generic remote shell / command-execution tool.
+
+
+## v0.8.0 backend wiring status
+
+v0.8.0 is a backend-wiring review milestone that preserves the v0.7.0 28-tool MCP inventory. The hand-authored `internal/velociraptor/veloapi` mirror currently exposes only `Check`, `ListClients`, `GetClient`, and `GetArtifacts`; it does not include reviewed typed RPC bindings for flow enumeration/results, collection execution, flow cancel, uploads, hunt execution/cancel, hunt results, or IOC hunt execution. Implementing those by exposing a generic VQL query path would violate the stable-core raw-VQL rule, so they remain scaffolded with structured errors.
+
+| Group | v0.8.0 status |
+|---|---|
+| Visibility (`health`, client search/info, artifact list/details) | Real gRPC already implemented and unchanged. |
+| Flow list/status/results | Handler contracts, validation, limits, pagination, audit unchanged; real gRPC remains scaffolded (`backend_not_implemented`/`error`, no panic). |
+| Collection start / DFIR profile collection / flow cancel | Approval/policy/input/allowlist gates unchanged; backend capability is now checked before consuming approval; real gRPC remains scaffolded. |
+| Flow uploads list/metadata/download | Read handlers and download file controls unchanged; download backend capability is now checked before consuming approval; real gRPC upload RPCs remain scaffolded. |
+| Hunts list/status/results/preview | Handler contracts, limits, target_all/max-client policy unchanged; real gRPC remains scaffolded. |
+| Approved hunt start/cancel and IOC hunt | Approval fingerprint/scope/template gates unchanged; backend capability is now checked before consuming approval; real gRPC hunt RPCs remain scaffolded. |
+
+Live-lab validation remains pending for every scaffolded operation above. Required follow-up: add reviewed typed protobuf bindings for the specific Velociraptor RPCs, prove least-privilege read/write API permissions in a disposable lab, and keep `max_rows`, `max_result_bytes`, `max_upload_bytes`, `max_hunt_clients`, `target_all`, cursor, audit, and no-raw-VQL invariants under test.

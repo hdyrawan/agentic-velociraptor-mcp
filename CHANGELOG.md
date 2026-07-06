@@ -7,6 +7,16 @@ releases begin.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-07-06
+
+### Changed — backend wiring review and approval consume ordering
+
+- Preserved the v0.7.0 28-tool MCP inventory exactly; no tools were added or removed.
+- Reviewed every scaffolded flow, collection, upload, hunt, and IOC backend path. Because the current hand-authored `veloapi` mirror only includes `Check`, `ListClients`, `GetClient`, and `GetArtifacts`, no additional real Velociraptor write/read RPCs could be wired safely without introducing a generic/raw VQL path.
+- Added explicit backend-capability checks for approval-gated operations. Policy/input/scope/allowlist/backend gates now pass before `approval.Store.Consume` is called; scaffolded or missing write backends return structured `backend_not_implemented`/`error` results and preserve the one-shot approval.
+- Kept real gRPC visibility paths unchanged: health, client search/info, and artifact list/details remain the only real Velociraptor RPC-backed operations in this build.
+- Added regression coverage proving scaffolded backend gaps do not consume approvals.
+
 ## [0.7.0] - 2026-07-06
 
 ### Added — v0.7.0 IOC hunting helper
@@ -32,7 +42,7 @@ hunt approval/scope/audit machinery.
   (`velociraptor.HuntWriter.StartHunt` still returns `ErrNotImplemented`
   on `grpcClient`).
 - New `approval.OperationHuntIOC` operation category; every approval-gated
-  IOC hunt goes through the same `verifyAndConsumeApproval`
+  IOC hunt goes through the same `verifyApproval/consumeApproval`
   fingerprint-matching path as every other approval-gated tool (no
   bespoke, weaker approval check). `approval.Request`/`RequestFingerprint`
   gained `ClientIDs`/`Label`/`TargetAll` fields so a hunt's multi-client
@@ -59,7 +69,7 @@ fixed as part of landing it:
   never that the approved request's operation/case/artifact/scope
   actually matched the call being made. Any valid, unconsumed approval
   could be replayed to start or cancel a *different* hunt than a human
-  approved. Replaced with the same `verifyAndConsumeApproval` fingerprint
+  approved. Replaced with the same `verifyApproval/consumeApproval` fingerprint
   check every other approval-gated tool uses, and extended
   `approval.Request` with hunt-scope fields (see above) so scope is
   covered too. This also fixed approvals being consumed before the
@@ -133,11 +143,11 @@ call, still no hunts, still no raw VQL, still no destructive action.
   own request.
 - Every approval-gated tool call requires `case_id`, `reason`,
   `requester`, its target, and an `approval_reference`, verified by the
-  new `mcpserver.verifyAndConsumeApproval`: the reference must resolve to
+  new `mcpserver.verifyApproval/consumeApproval`: the reference must resolve to
   an approved, unconsumed, unexpired record whose fingerprint exactly
   matches the call, or the tool refuses (typed `not_found`/`error`
   responses, audited `blocked`) without ever calling Velociraptor.
-  Approval is consumed before the Velociraptor call, so a single human
+  As of v0.8.0, approval is consumed only after backend-capability gates pass and immediately before the Velociraptor call, so a single human
   decision authorizes at most one execution attempt.
 - The whole write pilot is off unless both `policy.mode: controlled` and
   the new `approval.store_path` config are set

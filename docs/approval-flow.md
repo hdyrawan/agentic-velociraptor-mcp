@@ -12,7 +12,7 @@ every approval-gated tool (v0.4.0: `velo_collect_artifact_with_approval`,
 `velo_start_dfir_hunt_with_approval`,
 `velo_cancel_hunt_with_approval`; v0.7.0: `velo_hunt_ioc_with_approval`)
 verifies against it before calling Velociraptor, via the same
-fingerprint-checked `verifyAndConsumeApproval` path described below —
+fingerprint-checked `verifyApproval/consumeApproval` path described below —
 **not** a separate, weaker check per tool (see "v0.7.0 fix" note under
 "Known limitations"). This document describes the operator-facing
 workflow those tools depend on.
@@ -149,7 +149,7 @@ the same `approval_reference`. The tool handler:
 
 Every one of these checks is `errors`/`response.Result`-typed and
 produces exactly one audit event (`success`/`blocked`/`error`); see
-`internal/mcpserver/server.go`'s `verifyAndConsumeApproval`.
+`internal/mcpserver/server.go`'s `verifyApproval/consumeApproval`.
 
 ## Fingerprinting
 
@@ -184,7 +184,7 @@ wording differences there must never cause a spurious mismatch.
   artifact/scope. Any valid unconsumed approval could start/cancel a
   different hunt than approved. This was found in code review before
   merging and fixed by routing those tools (and the new
-  `velo_hunt_ioc_with_approval`) through `verifyAndConsumeApproval`, the
+  `velo_hunt_ioc_with_approval`) through `verifyApproval/consumeApproval`, the
   same path this document has always described. If you have an
   operational runbook or automation built against v0.6.0's actual
   (unfingerprinted) behavior, it must be updated: an approval now must
@@ -197,3 +197,19 @@ wording differences there must never cause a spurious mismatch.
   own request was safe.
 - Reusing one approval across multiple executions, multiple clients, or
   different targets — see "Fingerprinting" and `Store.Consume` above.
+
+
+## v0.8.0 backend wiring status
+
+v0.8.0 is a backend-wiring review milestone that preserves the v0.7.0 28-tool MCP inventory. The hand-authored `internal/velociraptor/veloapi` mirror currently exposes only `Check`, `ListClients`, `GetClient`, and `GetArtifacts`; it does not include reviewed typed RPC bindings for flow enumeration/results, collection execution, flow cancel, uploads, hunt execution/cancel, hunt results, or IOC hunt execution. Implementing those by exposing a generic VQL query path would violate the stable-core raw-VQL rule, so they remain scaffolded with structured errors.
+
+| Group | v0.8.0 status |
+|---|---|
+| Visibility (`health`, client search/info, artifact list/details) | Real gRPC already implemented and unchanged. |
+| Flow list/status/results | Handler contracts, validation, limits, pagination, audit unchanged; real gRPC remains scaffolded (`backend_not_implemented`/`error`, no panic). |
+| Collection start / DFIR profile collection / flow cancel | Approval/policy/input/allowlist gates unchanged; backend capability is now checked before consuming approval; real gRPC remains scaffolded. |
+| Flow uploads list/metadata/download | Read handlers and download file controls unchanged; download backend capability is now checked before consuming approval; real gRPC upload RPCs remain scaffolded. |
+| Hunts list/status/results/preview | Handler contracts, limits, target_all/max-client policy unchanged; real gRPC remains scaffolded. |
+| Approved hunt start/cancel and IOC hunt | Approval fingerprint/scope/template gates unchanged; backend capability is now checked before consuming approval; real gRPC hunt RPCs remain scaffolded. |
+
+Live-lab validation remains pending for every scaffolded operation above. Required follow-up: add reviewed typed protobuf bindings for the specific Velociraptor RPCs, prove least-privilege read/write API permissions in a disposable lab, and keep `max_rows`, `max_result_bytes`, `max_upload_bytes`, `max_hunt_clients`, `target_all`, cursor, audit, and no-raw-VQL invariants under test.

@@ -7,7 +7,7 @@ collection flows/results, reviewed DFIR investigation profiles, a
 controlled, approval-gated single-client collection pilot, hunt
 management, and a fixed-template IOC hunting helper.
 
-**Status: v0.7.0**, 28 callable MCP tools: 14 read-only from
+**Status: v0.8.0**, 28 callable MCP tools: 14 read-only from
 v0.1.0-v0.5.0 (visibility, profiles, workflow, flows/results), plus 6
 approval-gated write tools from v0.4.0 implementing a controlled
 single-client collection pilot (collect artifact/profile, cancel flow,
@@ -20,16 +20,7 @@ approval-gated start, start-DFIR, cancel, and IOC hunt — all gated
 through approval, policy, scope validation, artifact/profile/template
 allowlists, and `max_hunt_clients` enforcement.
 
-**Important:** v0.4.0's collection tools, v0.6.0's hunt tools, and
-v0.7.0's IOC tool are safety scaffolds with fake-backed tests. Real gRPC
-RPCs for collect/cancel/upload and hunt/IOC execution are NOT yet
-implemented — write operations in real mode report `ErrNotImplemented`.
-What v0.7.0 *did* implement for real: the deterministic
-IOC-kind → template → artifact/parameter mapping (`internal/vql.Bind`,
-pure Go, no gRPC call) and process/path indicator validation
-(`internal/validation`). See [PROJECT_STATE.md](PROJECT_STATE.md) for
-the current inventory and [PROJECT_PLAN.md](PROJECT_PLAN.md) for the
-roadmap. Do not point this at a production Velociraptor deployment.
+**Important:** v0.8.0 preserves the 28-tool v0.7.0 inventory and reviews backend wiring. Real gRPC remains limited to health, client search/info, and artifact list/details. Flow, collection, upload, hunt, and IOC execution paths remain scaffolded because this repo does not yet have reviewed typed Velociraptor protobuf bindings for those RPCs, and exposing generic/raw VQL is still forbidden. Approval-gated scaffolded paths now fail before consuming a one-shot approval. See [PROJECT_STATE.md](PROJECT_STATE.md) for the current inventory and [PROJECT_PLAN.md](PROJECT_PLAN.md) for the roadmap. Do not point this at a production Velociraptor deployment.
 
 ## Contents
 

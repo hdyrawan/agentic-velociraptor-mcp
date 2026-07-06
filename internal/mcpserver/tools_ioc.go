@@ -18,7 +18,8 @@ import (
 // IOCTools expose the single IOC-hunting convenience tool. This is the
 // only place a hash/IP/domain/process/path literal enters a hunt; it is
 // built on top of the same approval/scope/audit machinery as HuntTools
-// (verifyAndConsumeApproval, validateHuntScopeInput, writePilotEnabled),
+// (verifyApproval, backendOperationReady, consumeApproval,
+// validateHuntScopeInput, writePilotEnabled),
 // resolves its target through vql.KnownTemplates/vql.Bind, and starts
 // the hunt via the same velociraptor.HuntWriter.StartHunt path
 // velo_start_hunt_with_approval uses. Never raw VQL, never a
@@ -137,15 +138,19 @@ func newHuntIOCHandler(deps Deps) mcp.ToolHandlerFor[HuntIOCInput, HuntIOCOutput
 			Label:      in.Label,
 			TargetAll:  in.All,
 		}
-		result, outcome, ok := verifyAndConsumeApproval(ctx, deps, in.ApprovalID, candidate)
+		result, outcome, ok := verifyApproval(ctx, deps, in.ApprovalID, candidate)
 		if !ok {
 			recordAudit(deps, audit.Event{Tool: tool, Outcome: outcome, CaseID: in.CaseID, Artifact: artifact, IOCKind: in.Kind, IOCValue: in.Value, RequestReason: in.Reason, ApprovalID: in.ApprovalID, Reason: result.Message})
 			return nil, HuntIOCOutput{Result: result, Kind: in.Kind, Artifact: artifact}, nil
 		}
-
-		if deps.WriteClient == nil {
-			recordAudit(deps, audit.Event{Tool: tool, Outcome: audit.OutcomeError, CaseID: in.CaseID, Artifact: artifact, IOCKind: in.Kind, IOCValue: in.Value, ApprovalID: in.ApprovalID, Reason: "no write client configured"})
-			return nil, HuntIOCOutput{Result: response.Error("real mode is configured but no Velociraptor write client is available"), Kind: in.Kind, Artifact: artifact}, nil
+		if result := backendOperationReady(deps.WriteClient, velociraptor.BackendOpStartHunt); result.Status != "" {
+			recordAudit(deps, audit.Event{Tool: tool, Outcome: audit.OutcomeError, CaseID: in.CaseID, Artifact: artifact, IOCKind: in.Kind, IOCValue: in.Value, Reason: result.Message})
+			return nil, HuntIOCOutput{Result: result, Kind: in.Kind, Artifact: artifact}, nil
+		}
+		result, outcome, ok = consumeApproval(ctx, deps, in.ApprovalID)
+		if !ok {
+			recordAudit(deps, audit.Event{Tool: tool, Outcome: outcome, CaseID: in.CaseID, Artifact: artifact, IOCKind: in.Kind, IOCValue: in.Value, RequestReason: in.Reason, ApprovalID: in.ApprovalID, Reason: result.Message})
+			return nil, HuntIOCOutput{Result: result, Kind: in.Kind, Artifact: artifact}, nil
 		}
 
 		hunt, err := deps.WriteClient.StartHunt(ctx, velociraptor.HuntRequest{

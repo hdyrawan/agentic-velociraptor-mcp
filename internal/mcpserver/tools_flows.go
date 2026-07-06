@@ -610,19 +610,19 @@ func newDownloadFlowUploadHandler(deps Deps) mcp.ToolHandlerFor[DownloadFlowUplo
 			FlowID:     in.FlowID,
 			UploadName: in.UploadName,
 		}
-		result, outcome, ok := verifyAndConsumeApproval(ctx, deps, in.ApprovalReference, candidate)
+		result, outcome, ok := verifyApproval(ctx, deps, in.ApprovalReference, candidate)
 		if !ok {
 			recordAudit(deps, audit.Event{Tool: tool, Outcome: outcome, ClientID: in.ClientID, FlowID: in.FlowID, CaseID: in.CaseID, RequestReason: in.Reason, ApprovalID: in.ApprovalReference, Reason: result.Message})
 			return nil, DownloadFlowUploadOutput{Result: result, ClientID: in.ClientID, FlowID: in.FlowID}, nil
 		}
-
-		if deps.WriteClient == nil {
-			recordAudit(deps, audit.Event{Tool: tool, Outcome: audit.OutcomeError, ClientID: in.ClientID, FlowID: in.FlowID, CaseID: in.CaseID, ApprovalID: in.ApprovalReference, Reason: "no Velociraptor write client is configured"})
-			return nil, DownloadFlowUploadOutput{
-				Result:   response.Error("real mode is configured but no Velociraptor write client is available"),
-				ClientID: in.ClientID,
-				FlowID:   in.FlowID,
-			}, nil
+		if result := backendOperationReady(deps.WriteClient, velociraptor.BackendOpDownloadFlowUpload); result.Status != "" {
+			recordAudit(deps, audit.Event{Tool: tool, Outcome: audit.OutcomeError, ClientID: in.ClientID, FlowID: in.FlowID, CaseID: in.CaseID, Reason: result.Message})
+			return nil, DownloadFlowUploadOutput{Result: result, ClientID: in.ClientID, FlowID: in.FlowID}, nil
+		}
+		result, outcome, ok = consumeApproval(ctx, deps, in.ApprovalReference)
+		if !ok {
+			recordAudit(deps, audit.Event{Tool: tool, Outcome: outcome, ClientID: in.ClientID, FlowID: in.FlowID, CaseID: in.CaseID, RequestReason: in.Reason, ApprovalID: in.ApprovalReference, Reason: result.Message})
+			return nil, DownloadFlowUploadOutput{Result: result, ClientID: in.ClientID, FlowID: in.FlowID}, nil
 		}
 
 		maxBytes := deps.Config.Velociraptor.MaxUploadBytes

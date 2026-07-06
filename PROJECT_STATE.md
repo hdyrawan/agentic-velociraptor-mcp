@@ -1,9 +1,28 @@
 # Project state
 
-Last updated: 2026-07-06 (v0.7.0, IOC hunting helper, completing the
-28-tool stable-core target).
+Last updated: 2026-07-06 (v0.8.0, backend wiring review with 28-tool inventory preserved).
 
 ## Current milestone
+
+**v0.8.0 — Real backend wiring review.** Preserves the v0.7.0 28-tool inventory and adds a reviewed backend-capability gate before approval consumption. No new real flow/collection/upload/hunt/IOC Velociraptor RPCs were wired because the current `veloapi` mirror only exposes `Check`, `ListClients`, `GetClient`, and `GetArtifacts`; wiring the remaining paths via generic/raw VQL would violate the stable-core safety model. Scaffolded paths return structured errors and do not consume approvals.
+
+
+## v0.8.0 backend wiring status
+
+v0.8.0 is a backend-wiring review milestone that preserves the v0.7.0 28-tool MCP inventory. The hand-authored `internal/velociraptor/veloapi` mirror currently exposes only `Check`, `ListClients`, `GetClient`, and `GetArtifacts`; it does not include reviewed typed RPC bindings for flow enumeration/results, collection execution, flow cancel, uploads, hunt execution/cancel, hunt results, or IOC hunt execution. Implementing those by exposing a generic VQL query path would violate the stable-core raw-VQL rule, so they remain scaffolded with structured errors.
+
+| Group | v0.8.0 status |
+|---|---|
+| Visibility (`health`, client search/info, artifact list/details) | Real gRPC already implemented and unchanged. |
+| Flow list/status/results | Handler contracts, validation, limits, pagination, audit unchanged; real gRPC remains scaffolded (`backend_not_implemented`/`error`, no panic). |
+| Collection start / DFIR profile collection / flow cancel | Approval/policy/input/allowlist gates unchanged; backend capability is now checked before consuming approval; real gRPC remains scaffolded. |
+| Flow uploads list/metadata/download | Read handlers and download file controls unchanged; download backend capability is now checked before consuming approval; real gRPC upload RPCs remain scaffolded. |
+| Hunts list/status/results/preview | Handler contracts, limits, target_all/max-client policy unchanged; real gRPC remains scaffolded. |
+| Approved hunt start/cancel and IOC hunt | Approval fingerprint/scope/template gates unchanged; backend capability is now checked before consuming approval; real gRPC hunt RPCs remain scaffolded. |
+
+Live-lab validation remains pending for every scaffolded operation above. Required follow-up: add reviewed typed protobuf bindings for the specific Velociraptor RPCs, prove least-privilege read/write API permissions in a disposable lab, and keep `max_rows`, `max_result_bytes`, `max_upload_bytes`, `max_hunt_clients`, `target_all`, cursor, audit, and no-raw-VQL invariants under test.
+
+## Previous milestone
 
 **v0.7.0 — IOC hunting helper.** Adds the last planned tool
 (`velo_hunt_ioc_with_approval`) on top of v0.6.0's hunt management
@@ -19,7 +38,7 @@ execution, which stays scaffolded — see "What does not exist yet").
   a hunt via the same `velociraptor.HuntWriter.StartHunt` path
   `velo_start_hunt_with_approval` uses. Approval-gated via the new
   `approval.OperationHuntIOC` category, going through the same
-  `verifyAndConsumeApproval` fingerprint check as every other
+  `verifyApproval/consumeApproval` fingerprint check as every other
   approval-gated tool.
 - **Completed `internal/vql.Bind`**: previously always failed closed
   ("not yet implemented"); now deterministically maps each of 5
@@ -43,7 +62,7 @@ execution, which stays scaffolded — see "What does not exist yet").
   approved and unconsumed," never that the approved request's
   operation/case/artifact/scope matched the actual call — any valid
   unconsumed approval could start/cancel a *different* hunt than
-  approved. Replaced with `verifyAndConsumeApproval`, the same
+  approved. Replaced with `verifyApproval/consumeApproval`, the same
   fingerprint-matching path v0.4.0's collection tools use. Extended
   `approval.Request`/`RequestFingerprint` with `ClientIDs`/`Label`/
   `TargetAll` so a hunt's multi-client scope (not just `ClientID`) is

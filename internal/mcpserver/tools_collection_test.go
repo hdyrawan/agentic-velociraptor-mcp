@@ -399,3 +399,74 @@ func TestCancelFlowApprovedFakeExecutionSucceeds(t *testing.T) {
 		t.Errorf("audit event = %+v, ok=%v", evt, ok)
 	}
 }
+
+func TestCollectArtifactBackendNotImplementedDoesNotConsumeApproval(t *testing.T) {
+	deps, _ := testWritePilotDeps(t)
+	deps.WriteClient = velociraptor.NewClient()
+	deps.VelociraptorWriteMode = VelociraptorModeReal
+
+	ref := approveRequest(t, deps.Approvals, approval.Request{
+		ID:        "ref-collect-backend-gap",
+		Operation: approval.OperationCollectArtifact,
+		CaseID:    "CASE-BACKEND-COLLECT",
+		Reason:    "backend gate regression",
+		Requester: "tester",
+		ClientID:  testCollectClientID,
+		Artifact:  testCollectArtifact,
+	})
+
+	handler := newCollectArtifactHandler(deps)
+	_, out, err := handler(context.Background(), nil, CollectArtifactInput{
+		ClientID: testCollectClientID, Artifact: testCollectArtifact,
+		CaseID: "CASE-BACKEND-COLLECT", Reason: "backend gate regression", Requester: "tester", ApprovalReference: ref,
+	})
+	if err != nil {
+		t.Fatalf("unexpected Go error: %v", err)
+	}
+	if out.Status != response.StatusError || !strings.Contains(out.Message, "backend_not_implemented") {
+		t.Fatalf("out = %+v, want backend_not_implemented error", out)
+	}
+	status, err := deps.Approvals.Get(context.Background(), ref)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if status.Consumed {
+		t.Error("approval consumed before backend-capability gate passed")
+	}
+}
+
+func TestDownloadFlowUploadBackendNotImplementedDoesNotConsumeApproval(t *testing.T) {
+	deps, _ := testDownloadPilotDeps(t)
+	deps.WriteClient = velociraptor.NewClient()
+	deps.VelociraptorWriteMode = VelociraptorModeReal
+
+	ref := approveRequest(t, deps.Approvals, approval.Request{
+		ID:         "ref-download-backend-gap",
+		Operation:  approval.OperationDownloadFlowUpload,
+		CaseID:     "CASE-BACKEND-DOWNLOAD",
+		Reason:     "backend gate regression",
+		Requester:  "tester",
+		ClientID:   testCollectClientID,
+		FlowID:     testFlowID,
+		UploadName: "memory.dmp",
+	})
+
+	handler := newDownloadFlowUploadHandler(deps)
+	_, out, err := handler(context.Background(), nil, DownloadFlowUploadInput{
+		ClientID: testCollectClientID, FlowID: testFlowID, UploadName: "memory.dmp",
+		CaseID: "CASE-BACKEND-DOWNLOAD", Reason: "backend gate regression", Requester: "tester", ApprovalReference: ref,
+	})
+	if err != nil {
+		t.Fatalf("unexpected Go error: %v", err)
+	}
+	if out.Status != response.StatusError || !strings.Contains(out.Message, "backend_not_implemented") {
+		t.Fatalf("out = %+v, want backend_not_implemented error", out)
+	}
+	status, err := deps.Approvals.Get(context.Background(), ref)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if status.Consumed {
+		t.Error("approval consumed before backend-capability gate passed")
+	}
+}

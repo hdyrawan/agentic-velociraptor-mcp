@@ -449,8 +449,9 @@ func TestHuntIOCApprovedFakePath(t *testing.T) {
 // TestHuntIOCScaffoldedRealModeReturnsHonestError confirms that when
 // WriteClient is a real (non-mock) client without hunt RPCs implemented
 // (placeholderClient, embedded by grpcClient), the tool reports the
-// underlying ErrNotImplemented honestly as an error-status result rather
-// than fabricating success.
+// underlying scaffolded backend gap honestly as an error-status result
+// rather than fabricating success or consuming approval before the
+// backend gate passes.
 func TestHuntIOCScaffoldedRealModeReturnsHonestError(t *testing.T) {
 	deps, sink, store := testIOCDeps(t)
 	deps.WriteClient = velociraptor.NewClient() // placeholderClient: StartHunt -> ErrNotImplemented
@@ -493,16 +494,15 @@ func TestHuntIOCScaffoldedRealModeReturnsHonestError(t *testing.T) {
 		t.Errorf("audit event outcome = %q, want error", evt.Outcome)
 	}
 
-	// The approval was consumed (it authorized one execution attempt);
-	// the attempt then failed honestly. This matches the established
-	// v0.4.0/v0.6.0 semantics: Consume happens before the Velociraptor
-	// call, so a failed attempt still burns the approval.
+	// The approval was not consumed: v0.8.0 runs backend-capability gates
+	// before burning one-shot approvals, so a scaffolded path preserves the
+	// approval for a later build that can actually execute it.
 	status, err := store.Get(context.Background(), ref)
 	if err != nil {
 		t.Fatalf("store.Get: %v", err)
 	}
-	if !status.Consumed {
-		t.Error("approval should have been consumed before the (failing) Velociraptor call")
+	if status.Consumed {
+		t.Error("approval was consumed even though backend support failed before execution")
 	}
 }
 

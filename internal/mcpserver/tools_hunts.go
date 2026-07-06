@@ -221,15 +221,19 @@ func newStartHuntHandler(deps Deps) mcp.ToolHandlerFor[StartHuntInput, StartHunt
 			Label:      in.Label,
 			TargetAll:  in.All,
 		}
-		result, outcome, ok := verifyAndConsumeApproval(ctx, deps, in.ApprovalID, candidate)
+		result, outcome, ok := verifyApproval(ctx, deps, in.ApprovalID, candidate)
 		if !ok {
 			recordAudit(deps, audit.Event{Tool: "velo_start_hunt_with_approval", Outcome: outcome, Artifact: in.Artifact, CaseID: in.CaseID, RequestReason: in.Reason, ApprovalID: in.ApprovalID, Reason: result.Message})
 			return nil, StartHuntOutput{Result: result, Artifact: in.Artifact}, nil
 		}
-
-		if deps.WriteClient == nil {
-			recordAudit(deps, audit.Event{Tool: "velo_start_hunt_with_approval", Outcome: audit.OutcomeError, Artifact: in.Artifact, CaseID: in.CaseID, ApprovalID: in.ApprovalID, Reason: "no write client configured"})
-			return nil, StartHuntOutput{Result: response.Error("real mode is configured but no Velociraptor write client is available"), Artifact: in.Artifact}, nil
+		if result := backendOperationReady(deps.WriteClient, velociraptor.BackendOpStartHunt); result.Status != "" {
+			recordAudit(deps, audit.Event{Tool: "velo_start_hunt_with_approval", Outcome: audit.OutcomeError, Artifact: in.Artifact, CaseID: in.CaseID, Reason: result.Message})
+			return nil, StartHuntOutput{Result: result, Artifact: in.Artifact}, nil
+		}
+		result, outcome, ok = consumeApproval(ctx, deps, in.ApprovalID)
+		if !ok {
+			recordAudit(deps, audit.Event{Tool: "velo_start_hunt_with_approval", Outcome: outcome, Artifact: in.Artifact, CaseID: in.CaseID, RequestReason: in.Reason, ApprovalID: in.ApprovalID, Reason: result.Message})
+			return nil, StartHuntOutput{Result: result, Artifact: in.Artifact}, nil
 		}
 
 		hunt, err := deps.WriteClient.StartHunt(ctx, velociraptor.HuntRequest{
@@ -340,15 +344,19 @@ func newStartDFIRHuntHandler(deps Deps) mcp.ToolHandlerFor[StartDFIRHuntInput, S
 			Label:     in.Label,
 			TargetAll: in.All,
 		}
-		result, outcome, ok := verifyAndConsumeApproval(ctx, deps, in.ApprovalID, candidate)
+		result, outcome, ok := verifyApproval(ctx, deps, in.ApprovalID, candidate)
 		if !ok {
 			recordAudit(deps, audit.Event{Tool: "velo_start_dfir_hunt_with_approval", Outcome: outcome, Profile: in.Profile, CaseID: in.CaseID, RequestReason: in.Reason, ApprovalID: in.ApprovalID, Reason: result.Message})
 			return nil, StartDFIRHuntOutput{Result: result, Profile: in.Profile}, nil
 		}
-
-		if deps.WriteClient == nil {
-			recordAudit(deps, audit.Event{Tool: "velo_start_dfir_hunt_with_approval", Outcome: audit.OutcomeError, Profile: in.Profile, CaseID: in.CaseID, ApprovalID: in.ApprovalID, Reason: "no write client configured"})
-			return nil, StartDFIRHuntOutput{Result: response.Error("real mode is configured but no Velociraptor write client is available"), Profile: in.Profile}, nil
+		if result := backendOperationReady(deps.WriteClient, velociraptor.BackendOpStartHunt); result.Status != "" {
+			recordAudit(deps, audit.Event{Tool: "velo_start_dfir_hunt_with_approval", Outcome: audit.OutcomeError, Profile: in.Profile, CaseID: in.CaseID, Reason: result.Message})
+			return nil, StartDFIRHuntOutput{Result: result, Profile: in.Profile}, nil
+		}
+		result, outcome, ok = consumeApproval(ctx, deps, in.ApprovalID)
+		if !ok {
+			recordAudit(deps, audit.Event{Tool: "velo_start_dfir_hunt_with_approval", Outcome: outcome, Profile: in.Profile, CaseID: in.CaseID, RequestReason: in.Reason, ApprovalID: in.ApprovalID, Reason: result.Message})
+			return nil, StartDFIRHuntOutput{Result: result, Profile: in.Profile}, nil
 		}
 
 		// Collect all artifacts from the profile
@@ -613,15 +621,19 @@ func newCancelHuntHandler(deps Deps) mcp.ToolHandlerFor[CancelHuntInput, CancelH
 			CaseID:    in.CaseID,
 			HuntID:    in.HuntID,
 		}
-		result, outcome, ok := verifyAndConsumeApproval(ctx, deps, in.ApprovalID, candidate)
+		result, outcome, ok := verifyApproval(ctx, deps, in.ApprovalID, candidate)
 		if !ok {
 			recordAudit(deps, audit.Event{Tool: "velo_cancel_hunt_with_approval", Outcome: outcome, HuntID: in.HuntID, CaseID: in.CaseID, RequestReason: in.Reason, ApprovalID: in.ApprovalID, Reason: result.Message})
 			return nil, CancelHuntOutput{Result: result, HuntID: in.HuntID}, nil
 		}
-
-		if deps.WriteClient == nil {
-			recordAudit(deps, audit.Event{Tool: "velo_cancel_hunt_with_approval", Outcome: audit.OutcomeError, HuntID: in.HuntID, CaseID: in.CaseID, ApprovalID: in.ApprovalID, Reason: "no write client configured"})
-			return nil, CancelHuntOutput{Result: response.Error("real mode is configured but no Velociraptor write client is available"), HuntID: in.HuntID}, nil
+		if result := backendOperationReady(deps.WriteClient, velociraptor.BackendOpCancelHunt); result.Status != "" {
+			recordAudit(deps, audit.Event{Tool: "velo_cancel_hunt_with_approval", Outcome: audit.OutcomeError, HuntID: in.HuntID, CaseID: in.CaseID, Reason: result.Message})
+			return nil, CancelHuntOutput{Result: result, HuntID: in.HuntID}, nil
+		}
+		result, outcome, ok = consumeApproval(ctx, deps, in.ApprovalID)
+		if !ok {
+			recordAudit(deps, audit.Event{Tool: "velo_cancel_hunt_with_approval", Outcome: outcome, HuntID: in.HuntID, CaseID: in.CaseID, RequestReason: in.Reason, ApprovalID: in.ApprovalID, Reason: result.Message})
+			return nil, CancelHuntOutput{Result: result, HuntID: in.HuntID}, nil
 		}
 
 		if err := deps.WriteClient.CancelHunt(ctx, in.HuntID); err != nil {

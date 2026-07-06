@@ -23,7 +23,7 @@ This is the authoritative roadmap for `agentic-velociraptor-mcp`. For
 - stdio MCP transport first; HTTP/SSE/streamable HTTP only if/when
   explicitly requested.
 
-## Stable core target: 28 tools (complete as of v0.7.0)
+## Stable core target: 28 tools (complete as of v0.7.0, preserved in v0.8.0)
 
 See [docs/tool-reference.md](docs/tool-reference.md) for the full table.
 Groups: visibility (5), flow/results (6), collection (3), hunts (7),
@@ -38,6 +38,13 @@ See [docs/dfir-profiles.md](docs/dfir-profiles.md) for the full mapping
 from investigation case to profile.
 
 ## Version roadmap
+
+### v0.8.0 — Real backend wiring review (complete)
+
+- Preserved exactly 28 callable MCP tools; no raw VQL tool or parameter was added.
+- Reviewed flow, collection, upload, hunt, and IOC backend paths against the available typed `veloapi` surface. No additional real RPC could be implemented safely in this repo yet because the needed typed bindings are absent.
+- Added backend-capability checks before approval consumption for approval-gated operations, preserving approvals when a backend path is scaffolded or missing.
+- Documented live-lab validation as pending for every scaffolded operation.
 
 ### v0.0.x — Project foundation (this run)
 
@@ -257,7 +264,7 @@ real Velociraptor hunt RPC execution must be added in a follow-up.
   paginated), and `velo_cancel_hunt_with_approval` (approval-gated).
 - Callable tool inventory increases from 20 to 27.
 - All approval-gated tool handlers enforce: fingerprint-matched approval
-  verification (`verifyAndConsumeApproval`, added in the v0.7.0 fix
+  verification (`verifyApproval/consumeApproval`, added in the v0.7.0 fix
   below — the schema/safety scaffold as originally merged used a weaker,
   non-fingerprint-checking `checkHuntApproval` helper; see
   [CHANGELOG.md](CHANGELOG.md)'s v0.7.0 entry), `policy` mode checks
@@ -281,7 +288,7 @@ paths for anything safe/clear to implement for real.
   and starts a hunt via the same `velociraptor.HuntWriter.StartHunt`
   path `velo_start_hunt_with_approval` uses. New
   `approval.OperationHuntIOC` category; approval-gated like every other
-  write tool via `verifyAndConsumeApproval`.
+  write tool via `verifyApproval/consumeApproval`.
 - Completed `internal/vql.Bind`'s template → (artifact, parameter key)
   mapping for all 5 IOC templates — real, deterministic Go logic
   involving no gRPC call. The artifact names themselves remain
