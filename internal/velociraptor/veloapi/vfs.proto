@@ -1,0 +1,28 @@
+// Copyright 2026 hdyrawan
+//
+// Minimal mirror of api/proto/api.proto's VFSFileBuffer message, used
+// only through the VFSGetBuffer RPC: "This can be used by API clients to
+// fetch file content" (upstream's own doc comment on VFSGetBuffer,
+// distinguishing it from the GUI's separate HTTP-only download
+// handlers). This is the one typed, chunked, offset/length-bounded RPC
+// Velociraptor exposes over gRPC for reading already-collected file
+// bytes by client_id + file-store components — the mechanism
+// velo_download_flow_upload_with_approval uses, never a raw filesystem
+// or HTTP path.
+//
+// Regenerate with (from the repository root):
+//   buf generate internal/velociraptor/veloapi
+syntax = "proto3";
+
+package proto;
+
+option go_package = "github.com/hdyrawan/agentic-velociraptor-mcp/internal/velociraptor/veloapi";
+
+message VFSFileBuffer {
+  string client_id = 1;
+  uint64 offset = 3;
+  uint32 length = 4;
+  bytes data = 5;
+  repeated string components = 6;
+  optional bool padding = 8;
+}

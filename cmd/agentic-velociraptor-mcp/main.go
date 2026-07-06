@@ -207,7 +207,10 @@ func buildDeps(configPath, profilesDir string) (mcpserver.Deps, string, error) {
 
 	var auditSink audit.Sink
 	if cfg.Audit.Enabled {
-		auditSink, err = audit.NewJSONLWriter(cfg.Audit.Path)
+		auditSink, err = audit.NewJSONLWriterWithRotation(cfg.Audit.Path, audit.RotationConfig{
+			MaxSizeBytes: cfg.Audit.MaxSizeBytes,
+			MaxFiles:     cfg.Audit.MaxFiles,
+		})
 		if err != nil {
 			return mcpserver.Deps{}, "", err
 		}

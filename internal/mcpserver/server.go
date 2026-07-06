@@ -184,11 +184,25 @@ func (s *Server) Run(ctx context.Context) error {
 // discoverable at operation time rather than only via missing log
 // entries. Approval-gated write handlers additionally fail closed on a
 // broken sink before executing anything; see gateAuditForWrite.
+//
+// Reason and RequestReason are routed through audit.Sanitizer before
+// being written. These fields routinely carry err.Error() strings that
+// may have interpolated user input or, worse, PEM-shaped key material
+// from a gRPC/TLS error. SanitizeString excises any embedded PEM block
+// so the audit log can never accidentally persist a leaked secret
+// hidden inside an innocent-looking error message. Key-name based
+// redaction of structured fields happens in the caller before the
+// audit.Event is built (see docs/security-model.md).
 func recordAudit(deps Deps, evt audit.Event) {
 	if deps.Audit == nil {
 		return
 	}
 	evt.Timestamp = time.Now().UTC()
+	if deps.Config != nil {
+		sanitizer := audit.NewSanitizer(deps.Config.Audit.RedactFields)
+		evt.Reason = sanitizer.SanitizeString(evt.Reason)
+		evt.RequestReason = sanitizer.SanitizeString(evt.RequestReason)
+	}
 	if err := deps.Audit.Write(evt); err != nil {
 		fmt.Fprintf(os.Stderr, "agentic-velociraptor-mcp: audit write failed (tool=%s outcome=%s): %v\n", evt.Tool, evt.Outcome, err)
 	}
@@ -207,6 +221,11 @@ func gateAuditForWrite(deps Deps, evt audit.Event) (response.Result, bool) {
 	}
 	evt.Timestamp = time.Now().UTC()
 	evt.Outcome = audit.OutcomeAttempt
+	if deps.Config != nil {
+		sanitizer := audit.NewSanitizer(deps.Config.Audit.RedactFields)
+		evt.Reason = sanitizer.SanitizeString(evt.Reason)
+		evt.RequestReason = sanitizer.SanitizeString(evt.RequestReason)
+	}
 	if err := deps.Audit.Write(evt); err != nil {
 		fmt.Fprintf(os.Stderr, "agentic-velociraptor-mcp: audit write failed (tool=%s outcome=%s): %v\n", evt.Tool, evt.Outcome, err)
 		return response.Error("audit log is unavailable; refusing to execute this approval-gated operation (the approval was not consumed)"), false

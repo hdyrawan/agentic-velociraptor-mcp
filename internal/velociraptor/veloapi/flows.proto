@@ -1,0 +1,101 @@
+// Copyright 2026 hdyrawan
+//
+// Minimal mirror of flows/proto/artifact_collector.proto and
+// api/proto/flows.proto: the subset of Velociraptor's flow-launching and
+// flow-status messages this project's collection/cancel/flow-status
+// tools need. Field names and numbers are copied from upstream so these
+// messages stay wire-compatible with a real server.
+//
+// ArtifactCollectorArgs deliberately has no field carrying VQL text —
+// artifacts are always referenced by name (Artifacts / ArtifactSpec.artifact)
+// and parameters are always bound as VQLEnv key/value pairs
+// (ArtifactParameters.env), never a raw query string. See
+// docs/security-model.md.
+//
+// Regenerate with (from the repository root):
+//   buf generate internal/velociraptor/veloapi
+syntax = "proto3";
+
+package proto;
+
+option go_package = "github.com/hdyrawan/agentic-velociraptor-mcp/internal/velociraptor/veloapi";
+
+import "vql.proto";
+
+message ArtifactParameters {
+  repeated VQLEnv env = 3;
+}
+
+message ArtifactSpec {
+  string artifact = 1;
+  ArtifactParameters parameters = 2;
+}
+
+message ArtifactCollectorArgs {
+  string creator = 1;
+  string client_id = 3;
+  string flow_id = 31;
+
+  // Old-style artifact list (no per-artifact parameters).
+  repeated string artifacts = 2;
+
+  // New-style artifact list, each with its own bound parameters. This
+  // project always uses specs (never the bare artifacts list above) so
+  // every collection/hunt carries explicit, fixed parameter bindings.
+  repeated ArtifactSpec specs = 24;
+
+  uint64 timeout = 7;
+  uint64 max_rows = 22;
+  uint64 max_upload_bytes = 23;
+}
+
+message ArtifactCollectorResponse {
+  string flow_id = 1;
+  ArtifactCollectorArgs request = 2;
+}
+
+// ArtifactCollectorContext deliberately omits every field this project's
+// flow-status tool does not read (backtraces, per-query stats, previous
+// flow history, ...); see FlowDetails.
+message ArtifactCollectorContext {
+  string client_id = 27;
+  string session_id = 13;
+  ArtifactCollectorArgs request = 11;
+
+  uint64 create_time = 3;
+  uint64 active_time = 17;
+
+  uint64 total_collected_rows = 28;
+  uint64 total_uploaded_bytes = 26;
+
+  // Contents of an error/cancellation status string sent by the client
+  // or set by CancelFlow ("Cancelled by <user>: ..."). Used to
+  // distinguish a genuinely errored flow from an operator-cancelled one,
+  // since Velociraptor's real State enum below has no separate
+  // "cancelled" value — cancellation is ERROR plus this status prefix.
+  string status = 15;
+
+  enum State {
+    UNSET = 0;
+    RUNNING = 1;
+    FINISHED = 2;
+    ERROR = 3;
+    IN_PROGRESS = 4;
+    UNRESPONSIVE = 5;
+    WAITING = 6;
+  }
+  State state = 14;
+}
+
+message FlowDetails {
+  ArtifactCollectorContext context = 1;
+}
+
+message ApiFlowRequest {
+  string client_id = 1;
+  string flow_id = 2;
+}
+
+message StartFlowResponse {
+  string flow_id = 1;
+}

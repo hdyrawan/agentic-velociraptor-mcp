@@ -2,18 +2,25 @@
 //
 // Minimal, hand-authored mirror of the subset of Velociraptor's
 // `service API` (package `proto`, see api/proto/api.proto upstream)
-// that this project calls: Check, ListClients, GetClient, and
-// GetArtifacts. Because gRPC dispatches by fully-qualified method name
+// that this project calls: Check, ListClients, GetClient, GetArtifacts,
+// plus (as of v0.9.0) the typed flow/collection, upload, and hunt RPCs
+// listed below. Because gRPC dispatches by fully-qualified method name
 // (e.g. "/proto.API/ListClients"), this minimal service definition
 // reaches the same server-side handlers as the upstream client would,
-// without this project needing the other ~50 RPCs Velociraptor's API
-// service exposes (hunts, collections, VFS, users, notebooks, the
-// generic VQL Query RPC, ...), none of which this project's read-only
-// visibility tools need or are permitted to use.
+// without this project needing the other RPCs Velociraptor's API
+// service exposes (VFS browsing beyond VFSGetBuffer, users, notebooks,
+// the generic free-form VQL Query RPC, ...), none of which this
+// project's tools need or are permitted to use.
 //
-// Every RPC below is read-only against Velociraptor server-side state
-// (it never launches a flow, hunt, or artifact collection). See
-// docs/security-model.md and PROJECT_PLAN.md's v0.1.0 scope.
+// None of the RPCs below accept or return caller-supplied VQL text: flow
+// results and hunt results are read via the fixed GetTable/GetHuntResults
+// RPCs (whatever server-side query backs them is Velociraptor's own,
+// internal, non-parameterized-by-us implementation detail — this
+// project only ever sends client_id/flow_id/artifact/hunt_id/type
+// values, never a query string), and collections/hunts are launched via
+// ArtifactCollectorArgs/Hunt, which reference artifacts by name and bind
+// parameters as VQLEnv key/value pairs, never raw VQL. See
+// docs/security-model.md.
 //
 // Regenerate with (from the repository root):
 //   buf generate internal/velociraptor/veloapi
@@ -31,6 +38,7 @@ import (
 	grpc "google.golang.org/grpc"
 	codes "google.golang.org/grpc/codes"
 	status "google.golang.org/grpc/status"
+	emptypb "google.golang.org/protobuf/types/known/emptypb"
 )
 
 // This is a compile-time assertion to ensure that this generated file
@@ -39,10 +47,22 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	API_Check_FullMethodName        = "/proto.API/Check"
-	API_ListClients_FullMethodName  = "/proto.API/ListClients"
-	API_GetClient_FullMethodName    = "/proto.API/GetClient"
-	API_GetArtifacts_FullMethodName = "/proto.API/GetArtifacts"
+	API_Check_FullMethodName           = "/proto.API/Check"
+	API_ListClients_FullMethodName     = "/proto.API/ListClients"
+	API_GetClient_FullMethodName       = "/proto.API/GetClient"
+	API_GetArtifacts_FullMethodName    = "/proto.API/GetArtifacts"
+	API_GetClientFlows_FullMethodName  = "/proto.API/GetClientFlows"
+	API_GetFlowDetails_FullMethodName  = "/proto.API/GetFlowDetails"
+	API_GetTable_FullMethodName        = "/proto.API/GetTable"
+	API_CollectArtifact_FullMethodName = "/proto.API/CollectArtifact"
+	API_CancelFlow_FullMethodName      = "/proto.API/CancelFlow"
+	API_VFSGetBuffer_FullMethodName    = "/proto.API/VFSGetBuffer"
+	API_CreateHunt_FullMethodName      = "/proto.API/CreateHunt"
+	API_ModifyHunt_FullMethodName      = "/proto.API/ModifyHunt"
+	API_ListHunts_FullMethodName       = "/proto.API/ListHunts"
+	API_GetHunt_FullMethodName         = "/proto.API/GetHunt"
+	API_GetHuntResults_FullMethodName  = "/proto.API/GetHuntResults"
+	API_EstimateHunt_FullMethodName    = "/proto.API/EstimateHunt"
 )
 
 // APIClient is the client API for API service.
@@ -62,6 +82,41 @@ type APIClient interface {
 	// or exact name. Backs velo_list_artifact_names and
 	// velo_get_artifact_details.
 	GetArtifacts(ctx context.Context, in *GetArtifactsRequest, opts ...grpc.CallOption) (*ArtifactDescriptors, error)
+	// List collection flows for a client. Backs velo_list_flows.
+	GetClientFlows(ctx context.Context, in *GetTableRequest, opts ...grpc.CallOption) (*GetTableResponse, error)
+	// Fetch one flow's status. Backs velo_get_flow_status.
+	GetFlowDetails(ctx context.Context, in *ApiFlowRequest, opts ...grpc.CallOption) (*FlowDetails, error)
+	// Fetch result rows for one flow/artifact, or (with type="uploads")
+	// one flow's upload metadata table. Backs velo_get_flow_results,
+	// velo_list_flow_uploads, and velo_get_flow_upload_metadata.
+	GetTable(ctx context.Context, in *GetTableRequest, opts ...grpc.CallOption) (*GetTableResponse, error)
+	// Launch a collection of one or more artifacts against one client.
+	// Backs velo_collect_artifact_with_approval and
+	// velo_collect_dfir_profile_with_approval.
+	CollectArtifact(ctx context.Context, in *ArtifactCollectorArgs, opts ...grpc.CallOption) (*ArtifactCollectorResponse, error)
+	// Cancel a running flow. Backs velo_cancel_flow_with_approval.
+	CancelFlow(ctx context.Context, in *ApiFlowRequest, opts ...grpc.CallOption) (*StartFlowResponse, error)
+	// Fetch a chunk of already-collected file content by client_id plus
+	// file-store components (never a VFS browse, never an HTTP download
+	// link). Backs velo_download_flow_upload_with_approval.
+	VFSGetBuffer(ctx context.Context, in *VFSFileBuffer, opts ...grpc.CallOption) (*VFSFileBuffer, error)
+	// Launch a hunt. Backs velo_start_hunt_with_approval,
+	// velo_start_dfir_hunt_with_approval, and
+	// velo_hunt_ioc_with_approval.
+	CreateHunt(ctx context.Context, in *Hunt, opts ...grpc.CallOption) (*StartFlowResponse, error)
+	// Mutate a hunt's state (this project only ever sets state=STOPPED).
+	// Backs velo_cancel_hunt_with_approval.
+	ModifyHunt(ctx context.Context, in *HuntMutation, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	// List hunts. Backs velo_list_hunts.
+	ListHunts(ctx context.Context, in *ListHuntsRequest, opts ...grpc.CallOption) (*ListHuntsResponse, error)
+	// Fetch one hunt's status. Backs velo_get_hunt_status.
+	GetHunt(ctx context.Context, in *GetHuntRequest, opts ...grpc.CallOption) (*Hunt, error)
+	// Fetch result rows for one hunt/artifact. Backs
+	// velo_get_hunt_results.
+	GetHuntResults(ctx context.Context, in *GetHuntResultsRequest, opts ...grpc.CallOption) (*GetTableResponse, error)
+	// Estimate how many clients a proposed hunt condition would match,
+	// without creating anything. Backs velo_preview_hunt_scope.
+	EstimateHunt(ctx context.Context, in *HuntEstimateRequest, opts ...grpc.CallOption) (*HuntStats, error)
 }
 
 type aPIClient struct {
@@ -112,6 +167,126 @@ func (c *aPIClient) GetArtifacts(ctx context.Context, in *GetArtifactsRequest, o
 	return out, nil
 }
 
+func (c *aPIClient) GetClientFlows(ctx context.Context, in *GetTableRequest, opts ...grpc.CallOption) (*GetTableResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetTableResponse)
+	err := c.cc.Invoke(ctx, API_GetClientFlows_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *aPIClient) GetFlowDetails(ctx context.Context, in *ApiFlowRequest, opts ...grpc.CallOption) (*FlowDetails, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FlowDetails)
+	err := c.cc.Invoke(ctx, API_GetFlowDetails_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *aPIClient) GetTable(ctx context.Context, in *GetTableRequest, opts ...grpc.CallOption) (*GetTableResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetTableResponse)
+	err := c.cc.Invoke(ctx, API_GetTable_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *aPIClient) CollectArtifact(ctx context.Context, in *ArtifactCollectorArgs, opts ...grpc.CallOption) (*ArtifactCollectorResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ArtifactCollectorResponse)
+	err := c.cc.Invoke(ctx, API_CollectArtifact_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *aPIClient) CancelFlow(ctx context.Context, in *ApiFlowRequest, opts ...grpc.CallOption) (*StartFlowResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(StartFlowResponse)
+	err := c.cc.Invoke(ctx, API_CancelFlow_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *aPIClient) VFSGetBuffer(ctx context.Context, in *VFSFileBuffer, opts ...grpc.CallOption) (*VFSFileBuffer, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(VFSFileBuffer)
+	err := c.cc.Invoke(ctx, API_VFSGetBuffer_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *aPIClient) CreateHunt(ctx context.Context, in *Hunt, opts ...grpc.CallOption) (*StartFlowResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(StartFlowResponse)
+	err := c.cc.Invoke(ctx, API_CreateHunt_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *aPIClient) ModifyHunt(ctx context.Context, in *HuntMutation, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, API_ModifyHunt_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *aPIClient) ListHunts(ctx context.Context, in *ListHuntsRequest, opts ...grpc.CallOption) (*ListHuntsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListHuntsResponse)
+	err := c.cc.Invoke(ctx, API_ListHunts_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *aPIClient) GetHunt(ctx context.Context, in *GetHuntRequest, opts ...grpc.CallOption) (*Hunt, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Hunt)
+	err := c.cc.Invoke(ctx, API_GetHunt_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *aPIClient) GetHuntResults(ctx context.Context, in *GetHuntResultsRequest, opts ...grpc.CallOption) (*GetTableResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetTableResponse)
+	err := c.cc.Invoke(ctx, API_GetHuntResults_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *aPIClient) EstimateHunt(ctx context.Context, in *HuntEstimateRequest, opts ...grpc.CallOption) (*HuntStats, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(HuntStats)
+	err := c.cc.Invoke(ctx, API_EstimateHunt_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // APIServer is the server API for API service.
 // All implementations must embed UnimplementedAPIServer
 // for forward compatibility.
@@ -129,6 +304,41 @@ type APIServer interface {
 	// or exact name. Backs velo_list_artifact_names and
 	// velo_get_artifact_details.
 	GetArtifacts(context.Context, *GetArtifactsRequest) (*ArtifactDescriptors, error)
+	// List collection flows for a client. Backs velo_list_flows.
+	GetClientFlows(context.Context, *GetTableRequest) (*GetTableResponse, error)
+	// Fetch one flow's status. Backs velo_get_flow_status.
+	GetFlowDetails(context.Context, *ApiFlowRequest) (*FlowDetails, error)
+	// Fetch result rows for one flow/artifact, or (with type="uploads")
+	// one flow's upload metadata table. Backs velo_get_flow_results,
+	// velo_list_flow_uploads, and velo_get_flow_upload_metadata.
+	GetTable(context.Context, *GetTableRequest) (*GetTableResponse, error)
+	// Launch a collection of one or more artifacts against one client.
+	// Backs velo_collect_artifact_with_approval and
+	// velo_collect_dfir_profile_with_approval.
+	CollectArtifact(context.Context, *ArtifactCollectorArgs) (*ArtifactCollectorResponse, error)
+	// Cancel a running flow. Backs velo_cancel_flow_with_approval.
+	CancelFlow(context.Context, *ApiFlowRequest) (*StartFlowResponse, error)
+	// Fetch a chunk of already-collected file content by client_id plus
+	// file-store components (never a VFS browse, never an HTTP download
+	// link). Backs velo_download_flow_upload_with_approval.
+	VFSGetBuffer(context.Context, *VFSFileBuffer) (*VFSFileBuffer, error)
+	// Launch a hunt. Backs velo_start_hunt_with_approval,
+	// velo_start_dfir_hunt_with_approval, and
+	// velo_hunt_ioc_with_approval.
+	CreateHunt(context.Context, *Hunt) (*StartFlowResponse, error)
+	// Mutate a hunt's state (this project only ever sets state=STOPPED).
+	// Backs velo_cancel_hunt_with_approval.
+	ModifyHunt(context.Context, *HuntMutation) (*emptypb.Empty, error)
+	// List hunts. Backs velo_list_hunts.
+	ListHunts(context.Context, *ListHuntsRequest) (*ListHuntsResponse, error)
+	// Fetch one hunt's status. Backs velo_get_hunt_status.
+	GetHunt(context.Context, *GetHuntRequest) (*Hunt, error)
+	// Fetch result rows for one hunt/artifact. Backs
+	// velo_get_hunt_results.
+	GetHuntResults(context.Context, *GetHuntResultsRequest) (*GetTableResponse, error)
+	// Estimate how many clients a proposed hunt condition would match,
+	// without creating anything. Backs velo_preview_hunt_scope.
+	EstimateHunt(context.Context, *HuntEstimateRequest) (*HuntStats, error)
 	mustEmbedUnimplementedAPIServer()
 }
 
@@ -150,6 +360,42 @@ func (UnimplementedAPIServer) GetClient(context.Context, *GetClientRequest) (*Ap
 }
 func (UnimplementedAPIServer) GetArtifacts(context.Context, *GetArtifactsRequest) (*ArtifactDescriptors, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetArtifacts not implemented")
+}
+func (UnimplementedAPIServer) GetClientFlows(context.Context, *GetTableRequest) (*GetTableResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetClientFlows not implemented")
+}
+func (UnimplementedAPIServer) GetFlowDetails(context.Context, *ApiFlowRequest) (*FlowDetails, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetFlowDetails not implemented")
+}
+func (UnimplementedAPIServer) GetTable(context.Context, *GetTableRequest) (*GetTableResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetTable not implemented")
+}
+func (UnimplementedAPIServer) CollectArtifact(context.Context, *ArtifactCollectorArgs) (*ArtifactCollectorResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CollectArtifact not implemented")
+}
+func (UnimplementedAPIServer) CancelFlow(context.Context, *ApiFlowRequest) (*StartFlowResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CancelFlow not implemented")
+}
+func (UnimplementedAPIServer) VFSGetBuffer(context.Context, *VFSFileBuffer) (*VFSFileBuffer, error) {
+	return nil, status.Error(codes.Unimplemented, "method VFSGetBuffer not implemented")
+}
+func (UnimplementedAPIServer) CreateHunt(context.Context, *Hunt) (*StartFlowResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CreateHunt not implemented")
+}
+func (UnimplementedAPIServer) ModifyHunt(context.Context, *HuntMutation) (*emptypb.Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method ModifyHunt not implemented")
+}
+func (UnimplementedAPIServer) ListHunts(context.Context, *ListHuntsRequest) (*ListHuntsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListHunts not implemented")
+}
+func (UnimplementedAPIServer) GetHunt(context.Context, *GetHuntRequest) (*Hunt, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetHunt not implemented")
+}
+func (UnimplementedAPIServer) GetHuntResults(context.Context, *GetHuntResultsRequest) (*GetTableResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetHuntResults not implemented")
+}
+func (UnimplementedAPIServer) EstimateHunt(context.Context, *HuntEstimateRequest) (*HuntStats, error) {
+	return nil, status.Error(codes.Unimplemented, "method EstimateHunt not implemented")
 }
 func (UnimplementedAPIServer) mustEmbedUnimplementedAPIServer() {}
 func (UnimplementedAPIServer) testEmbeddedByValue()             {}
@@ -244,6 +490,222 @@ func _API_GetArtifacts_Handler(srv interface{}, ctx context.Context, dec func(in
 	return interceptor(ctx, in, info, handler)
 }
 
+func _API_GetClientFlows_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetTableRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(APIServer).GetClientFlows(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: API_GetClientFlows_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(APIServer).GetClientFlows(ctx, req.(*GetTableRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _API_GetFlowDetails_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ApiFlowRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(APIServer).GetFlowDetails(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: API_GetFlowDetails_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(APIServer).GetFlowDetails(ctx, req.(*ApiFlowRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _API_GetTable_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetTableRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(APIServer).GetTable(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: API_GetTable_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(APIServer).GetTable(ctx, req.(*GetTableRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _API_CollectArtifact_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ArtifactCollectorArgs)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(APIServer).CollectArtifact(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: API_CollectArtifact_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(APIServer).CollectArtifact(ctx, req.(*ArtifactCollectorArgs))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _API_CancelFlow_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ApiFlowRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(APIServer).CancelFlow(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: API_CancelFlow_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(APIServer).CancelFlow(ctx, req.(*ApiFlowRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _API_VFSGetBuffer_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(VFSFileBuffer)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(APIServer).VFSGetBuffer(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: API_VFSGetBuffer_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(APIServer).VFSGetBuffer(ctx, req.(*VFSFileBuffer))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _API_CreateHunt_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Hunt)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(APIServer).CreateHunt(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: API_CreateHunt_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(APIServer).CreateHunt(ctx, req.(*Hunt))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _API_ModifyHunt_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(HuntMutation)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(APIServer).ModifyHunt(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: API_ModifyHunt_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(APIServer).ModifyHunt(ctx, req.(*HuntMutation))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _API_ListHunts_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListHuntsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(APIServer).ListHunts(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: API_ListHunts_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(APIServer).ListHunts(ctx, req.(*ListHuntsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _API_GetHunt_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetHuntRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(APIServer).GetHunt(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: API_GetHunt_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(APIServer).GetHunt(ctx, req.(*GetHuntRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _API_GetHuntResults_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetHuntResultsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(APIServer).GetHuntResults(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: API_GetHuntResults_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(APIServer).GetHuntResults(ctx, req.(*GetHuntResultsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _API_EstimateHunt_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(HuntEstimateRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(APIServer).EstimateHunt(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: API_EstimateHunt_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(APIServer).EstimateHunt(ctx, req.(*HuntEstimateRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // API_ServiceDesc is the grpc.ServiceDesc for API service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -266,6 +728,54 @@ var API_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetArtifacts",
 			Handler:    _API_GetArtifacts_Handler,
+		},
+		{
+			MethodName: "GetClientFlows",
+			Handler:    _API_GetClientFlows_Handler,
+		},
+		{
+			MethodName: "GetFlowDetails",
+			Handler:    _API_GetFlowDetails_Handler,
+		},
+		{
+			MethodName: "GetTable",
+			Handler:    _API_GetTable_Handler,
+		},
+		{
+			MethodName: "CollectArtifact",
+			Handler:    _API_CollectArtifact_Handler,
+		},
+		{
+			MethodName: "CancelFlow",
+			Handler:    _API_CancelFlow_Handler,
+		},
+		{
+			MethodName: "VFSGetBuffer",
+			Handler:    _API_VFSGetBuffer_Handler,
+		},
+		{
+			MethodName: "CreateHunt",
+			Handler:    _API_CreateHunt_Handler,
+		},
+		{
+			MethodName: "ModifyHunt",
+			Handler:    _API_ModifyHunt_Handler,
+		},
+		{
+			MethodName: "ListHunts",
+			Handler:    _API_ListHunts_Handler,
+		},
+		{
+			MethodName: "GetHunt",
+			Handler:    _API_GetHunt_Handler,
+		},
+		{
+			MethodName: "GetHuntResults",
+			Handler:    _API_GetHuntResults_Handler,
+		},
+		{
+			MethodName: "EstimateHunt",
+			Handler:    _API_EstimateHunt_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
