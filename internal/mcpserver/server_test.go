@@ -35,7 +35,7 @@ func connectTestClient(t *testing.T, srv *Server) *mcp.ClientSession {
 	return session
 }
 
-func TestNewRegistersExactlyEightSafeTools(t *testing.T) {
+func TestNewRegistersExactlyElevenSafeTools(t *testing.T) {
 	deps, _ := testDeps(t)
 	srv := New("agentic-velociraptor-mcp-test", "0.0.0-test", deps)
 
@@ -53,12 +53,15 @@ func TestNewRegistersExactlyEightSafeTools(t *testing.T) {
 	sort.Strings(names)
 
 	want := []string{
+		"velo_compare_dfir_profiles",
+		"velo_find_profiles_by_artifact",
 		"velo_get_artifact_details",
 		"velo_get_client_info",
 		"velo_get_dfir_profile",
 		"velo_health_check",
 		"velo_list_artifact_names",
 		"velo_list_dfir_profiles",
+		"velo_plan_dfir_triage",
 		"velo_search_clients",
 		"velo_validate_dfir_profile",
 	}
@@ -75,8 +78,8 @@ func TestNewRegistersExactlyEightSafeTools(t *testing.T) {
 }
 
 // TestNewNeverRegistersUnsafeTools guards against regressions where a
-// collection, hunt, download, cancel, or raw-VQL tool accidentally
-// becomes callable. This milestone (v0.1.0) is read-only visibility
+// collection, hunt execution, download, cancel, or raw-VQL tool
+// accidentally becomes callable. v0.3.0 is read-only workflow expansion
 // only; see PROJECT_PLAN.md.
 func TestNewNeverRegistersUnsafeTools(t *testing.T) {
 	deps, _ := testDeps(t)
@@ -91,7 +94,8 @@ func TestNewNeverRegistersUnsafeTools(t *testing.T) {
 
 	forbiddenSubstrings := []string{
 		"collect",
-		"hunt",
+		"start_hunt",
+		"start_dfir_hunt",
 		"download",
 		"cancel",
 		"run_vql",
@@ -167,6 +171,32 @@ func TestCallNewVisibilityToolsOverMCPSession(t *testing.T) {
 		{name: "velo_get_client_info", args: map[string]any{"client_id": "C.1234abcd5678ef90"}},
 		{name: "velo_list_artifact_names", args: map[string]any{}},
 		{name: "velo_get_artifact_details", args: map[string]any{"name": "Generic.Client.Info"}},
+	}
+
+	for _, tc := range cases {
+		res, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: tc.name, Arguments: tc.args})
+		if err != nil {
+			t.Fatalf("CallTool %s: %v", tc.name, err)
+		}
+		if res.IsError {
+			t.Fatalf("CallTool %s returned IsError=true: %+v", tc.name, res)
+		}
+	}
+}
+
+func TestCallWorkflowToolsOverMCPSession(t *testing.T) {
+	deps, _ := testDeps(t)
+	srv := New("agentic-velociraptor-mcp-test", "0.0.0-test", deps)
+
+	session := connectTestClient(t, srv)
+
+	cases := []struct {
+		name string
+		args map[string]any
+	}{
+		{name: "velo_plan_dfir_triage", args: map[string]any{"case_type": "ransomware", "target_os": "windows"}},
+		{name: "velo_compare_dfir_profiles", args: map[string]any{"names": []any{"windows_basic_triage", "windows_process_network_triage"}}},
+		{name: "velo_find_profiles_by_artifact", args: map[string]any{"artifact": "Generic.Client.Info"}},
 	}
 
 	for _, tc := range cases {

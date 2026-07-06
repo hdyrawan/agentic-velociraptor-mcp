@@ -6,12 +6,13 @@ endpoint DFIR capabilities to MCP-compatible agents: endpoint visibility,
 artifact collection, hunt management, evidence retrieval, IOC hunting,
 and approved DFIR investigation profiles.
 
-**Status: v0.2.0.** A real MCP stdio server is running, exposing the
-same 8 read-only tools as v0.1.0: `velo_health_check`,
-`velo_search_clients`, `velo_get_client_info`,
-`velo_list_artifact_names`, `velo_get_artifact_details`,
-`velo_list_dfir_profiles`, `velo_get_dfir_profile`,
-`velo_validate_dfir_profile`. The five visibility tools make real
+**Status: v0.3.0.** A real MCP stdio server is running, exposing 11
+read-only tools: `velo_health_check`, `velo_search_clients`,
+`velo_get_client_info`, `velo_list_artifact_names`,
+`velo_get_artifact_details`, `velo_list_dfir_profiles`,
+`velo_get_dfir_profile`, `velo_validate_dfir_profile`,
+`velo_plan_dfir_triage`, `velo_compare_dfir_profiles`, and
+`velo_find_profiles_by_artifact`. The five visibility tools make real
 Velociraptor gRPC calls (mTLS, via `velociraptor.read_api_config_path`)
 — `Check`, `ListClients`, `GetClient`, and `GetArtifacts`, never the
 generic VQL `Query` RPC — or run in mock mode if that path is left
@@ -20,7 +21,9 @@ unset. `velo_search_clients`, `velo_get_client_info`,
 return a shared `status` field (`success`/`empty`/`not_found`/`error`,
 via the new `internal/response` package) instead of only a free-text
 `message` — see docs/security-model.md's "Evidence honesty" section.
-No tool can collect, hunt, download, cancel, or run raw VQL.
+The v0.3.0 workflow tools are local planning/comparison helpers over the
+loaded DFIR profile registry and policy allowlists only. No tool can
+collect, start hunts, download, cancel, mutate a client, or run raw VQL.
 **Requires Go 1.25+ to build.** See
 [PROJECT_STATE.md](PROJECT_STATE.md) for exactly what exists today and
 [PROJECT_PLAN.md](PROJECT_PLAN.md) for the roadmap. Do not point this at
@@ -78,7 +81,7 @@ internal/
   approval/     human-approval request/decision workflow
   config/       YAML config model + validation
   dfir/         DFIR profile model, registry, validation
-  mcpserver/    MCP server + tool registration (8 of 24 registered so far)
+  mcpserver/    MCP server + tool registration (11 registered so far)
   policy/       MCP-layer policy engine (allowlists, approval routing)
   validation/   strict input validation (client IDs, artifacts, IOCs, scope)
   velociraptor/ Velociraptor gRPC client (mTLS: health check, client search/detail, artifact catalog real; rest still placeholders)
@@ -105,8 +108,8 @@ go build -o bin/agentic-velociraptor-mcp ./cmd/agentic-velociraptor-mcp
   --profiles-dir /path/to/agentic-velociraptor-mcp/profiles
 ```
 
-Once running, the server speaks MCP over stdio and exposes exactly 8
-tools — see [docs/tool-reference.md](docs/tool-reference.md) for the
+Once running, the server speaks MCP over stdio and exposes exactly 11
+read-only tools — see [docs/tool-reference.md](docs/tool-reference.md) for the
 current callable inventory and
 [examples/inspector/README.md](examples/inspector/README.md) for how to
 drive it with MCP Inspector. Track progress in

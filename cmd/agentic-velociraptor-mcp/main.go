@@ -1,14 +1,14 @@
 // Command agentic-velociraptor-mcp is the entrypoint for the
 // agentic-velociraptor-mcp MCP server.
 //
-// As of v0.1.0 this starts a real MCP server over the stdio transport
+// As of v0.3.0 this starts a real MCP server over the stdio transport
 // (the only transport this project supports; see
-// docs/security-model.md), exposing 8 read-only tools. The five
-// visibility tools (velo_health_check, velo_search_clients,
-// velo_get_client_info, velo_list_artifact_names,
-// velo_get_artifact_details) make real Velociraptor gRPC calls when
+// docs/security-model.md), exposing 11 read-only tools. The five
+// visibility tools make real Velociraptor gRPC calls when
 // velociraptor.read_api_config_path is configured, or run in mock mode
-// otherwise. See PROJECT_PLAN.md and PROJECT_STATE.md for what's left.
+// otherwise. The profile and workflow tools are local read-only helpers
+// over the loaded profile registry and policy. See PROJECT_PLAN.md and
+// PROJECT_STATE.md for what's left.
 //
 // Requires Go 1.25+ (the official MCP Go SDK dependency's minimum).
 package main
@@ -34,7 +34,7 @@ import (
 
 // version is the build version. Overridden at release build time via
 // -ldflags "-X main.version=...".
-var version = "0.2.0"
+var version = "0.3.0"
 
 // defaultProfilesDir is the --profiles-dir flag's default value.
 // resolveProfilesDir only applies its cwd-independent fallback when the
@@ -59,12 +59,11 @@ func run(args []string, out io.Writer) int {
 		fmt.Fprintf(out, "Usage:\n  agentic-velociraptor-mcp --config /path/to/config.yaml [flags]\n\n")
 		fmt.Fprintf(out, "Flags:\n")
 		fs.PrintDefaults()
-		fmt.Fprintf(out, "\nStatus: v0.1.0. Starts a real MCP server over stdio exposing 8 read-only\n")
-		fmt.Fprintf(out, "tools: velo_health_check, velo_search_clients, velo_get_client_info,\n")
-		fmt.Fprintf(out, "velo_list_artifact_names, velo_get_artifact_details, velo_list_dfir_profiles,\n")
-		fmt.Fprintf(out, "velo_get_dfir_profile, and velo_validate_dfir_profile. The five visibility\n")
-		fmt.Fprintf(out, "tools make real Velociraptor gRPC calls when velociraptor.read_api_config_path\n")
-		fmt.Fprintf(out, "is set in --config, and otherwise run in mock mode. See PROJECT_PLAN.md and\n")
+		fmt.Fprintf(out, "\nStatus: v0.3.0. Starts a real MCP server over stdio exposing 11 read-only\n")
+		fmt.Fprintf(out, "tools: 5 visibility tools, 3 DFIR profile catalog tools, and 3 local\n")
+		fmt.Fprintf(out, "workflow planning/comparison tools. Visibility tools make real Velociraptor\n")
+		fmt.Fprintf(out, "gRPC calls when velociraptor.read_api_config_path is set in --config, and\n")
+		fmt.Fprintf(out, "otherwise run in mock mode. v0.3.0 does not execute collections or hunts. See PROJECT_PLAN.md and\n")
 		fmt.Fprintf(out, "PROJECT_STATE.md.\n")
 	}
 

@@ -1,20 +1,23 @@
 // Package mcpserver wires the Velociraptor-facing packages
 // (config, policy, approval, audit, dfir, velociraptor, vql) into an MCP
-// server exposing the stable 24-tool core described in PROJECT_PLAN.md.
+// server exposing the stable core described in PROJECT_PLAN.md.
 //
-// As of v0.1.0, exactly 8 read-only tools are registered:
+// As of v0.3.0, exactly 11 read-only tools are registered:
 // velo_health_check, velo_search_clients, velo_get_client_info,
 // velo_list_artifact_names, velo_get_artifact_details,
 // velo_list_dfir_profiles, velo_get_dfir_profile, and
-// velo_validate_dfir_profile. The five visibility tools (everything
-// except the three DFIR profile tools) call Deps.ReadClient for a real
-// Velociraptor gRPC response when Deps.VelociraptorReadMode is "real",
-// and honestly report mock mode with no Velociraptor call otherwise. No
-// tool in this milestone can collect, hunt, download, cancel, or run
-// raw VQL. The remaining 16 planned tools exist only as ToolSpec
-// metadata in tools_flows.go, tools_collection.go, tools_hunts.go, and
-// tools_ioc.go and are deliberately NOT registered with the MCP server —
-// an unimplemented tool must never be callable.
+// velo_validate_dfir_profile, plus velo_plan_dfir_triage,
+// velo_compare_dfir_profiles, and velo_find_profiles_by_artifact. The
+// five visibility tools call Deps.ReadClient for a real Velociraptor gRPC
+// response when Deps.VelociraptorReadMode is "real", and honestly report
+// mock mode with no Velociraptor call otherwise. The three workflow tools
+// read only the already-loaded DFIR profile registry and local policy. No
+// tool in this milestone can collect, download, cancel, start hunts, or
+// run raw VQL. The remaining planned write-capable tools exist only as
+// ToolSpec metadata in tools_flows.go, tools_collection.go,
+// tools_hunts.go, and tools_ioc.go and are deliberately NOT registered
+// with the MCP server — an unimplemented or unsafe tool must never be
+// callable.
 package mcpserver
 
 import (
@@ -94,15 +97,15 @@ type Server struct {
 }
 
 // New constructs a Server and registers the tools that are safe and
-// implemented for the current release. Only registerVisibilityTools and
-// registerProfileTools are called as of v0.1.0; registering the
-// remaining tool groups is deferred to their respective milestones
-// (v0.2.0, v0.3.0, v0.4.0) in PROJECT_PLAN.md.
+// implemented for the current release. v0.3.0 adds only local read-only
+// workflow helpers; registering write-capable collection/hunt/download
+// tool groups remains deferred to later milestones in PROJECT_PLAN.md.
 func New(name, version string, deps Deps) *Server {
 	s := mcp.NewServer(&mcp.Implementation{Name: name, Version: version}, nil)
 
 	registerVisibilityTools(s, deps)
 	registerProfileTools(s, deps)
+	registerWorkflowTools(s, deps)
 
 	return &Server{mcp: s, deps: deps}
 }

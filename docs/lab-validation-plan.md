@@ -247,7 +247,24 @@ Performed against the disposable lab described in
   `message: "...client not found"` — an honest result consistent with
   this project's evidence-honesty principle.
 
-### Phase 3 — controlled collection (v0.2.0)
+### Phase 3 — read-only DFIR workflow expansion (v0.3.0)
+
+- [x] `ListTools` shows exactly 11 callable tools: the prior 8 plus
+      `velo_plan_dfir_triage`, `velo_compare_dfir_profiles`, and
+      `velo_find_profiles_by_artifact`.
+- [x] `velo_plan_dfir_triage` returns profile recommendations and
+      read-only next steps without making any Velociraptor RPC or using
+      the write client (covered by local unit/MCP-session tests).
+- [x] `velo_compare_dfir_profiles` returns success for known profiles,
+      structured `not_found` for unknown profiles, and blocked errors for
+      malformed/duplicate/too-few inputs.
+- [x] `velo_find_profiles_by_artifact` returns matching profile coverage,
+      structured `not_found` for no matches, and blocked errors for
+      malformed artifact names.
+- [x] No collection, hunt start/cancel, download, mutation, write API
+      identity use, or raw VQL tool is registered.
+
+### Phase 4 — controlled collection (deferred; not v0.3.0)
 
 - [ ] Attempt `velo_collect_artifact_with_approval` without a prior
       approval and confirm it is blocked, not executed.
@@ -264,7 +281,7 @@ Performed against the disposable lab described in
       approval and correctly reflects in subsequent
       `velo_get_flow_status`.
 
-### Phase 4 — hunts (v0.3.0)
+### Phase 5 — hunts (deferred; not v0.3.0)
 
 - [ ] `velo_preview_hunt_scope` against a label/explicit-client-list
       scope returns an accurate matched-client count without creating a
@@ -277,7 +294,7 @@ Performed against the disposable lab described in
 - [ ] `velo_cancel_hunt_with_approval` requires approval and is reflected
       in `velo_get_hunt_status`.
 
-### Phase 5 — DFIR profiles and IOC hunting (v0.4.0)
+### Phase 6 — DFIR profiles and IOC hunting (future)
 
 - [ ] `velo_validate_dfir_profile` correctly flags a profile referencing
       a non-allowlisted artifact.
@@ -289,7 +306,7 @@ Performed against the disposable lab described in
       indicators like `1[.]2[.]3[.]4`, mixed-case hashes, trailing dot
       domains).
 
-### Phase 6 — negative/adversarial testing (v0.5.0)
+### Phase 7 — negative/adversarial testing (v0.5.0)
 
 - [ ] Simulated prompt-injection payload embedded in artifact/collection
       result data (e.g. a filename or registry value containing

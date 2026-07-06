@@ -23,11 +23,11 @@ This is the authoritative roadmap for `agentic-velociraptor-mcp`. For
 - stdio MCP transport first; HTTP/SSE/streamable HTTP only if/when
   explicitly requested.
 
-## Stable core target: 24 tools
+## Stable core target: 27 tools
 
 See [docs/tool-reference.md](docs/tool-reference.md) for the full table.
 Groups: visibility (5), flow/results (6), collection (3), hunts (7),
-DFIR profiles (3), IOC helper (1).
+DFIR profiles (3), DFIR workflow planning helpers (3), IOC helper (1).
 
 ## DFIR cases this design must support
 
@@ -136,15 +136,24 @@ scheduling the next milestone). v0.2.0 as actually implemented:
 - Callable tool inventory unchanged: still exactly the same 8 read-only
   tools as v0.1.0.
 
-### v0.3.0 — Hunt management
+### v0.3.0 — Read-only DFIR workflow expansion (complete)
 
-- Implement: `velo_preview_hunt_scope`, `velo_start_hunt_with_approval`,
-  `velo_start_dfir_hunt_with_approval`, `velo_list_hunts`,
-  `velo_get_hunt_status`, `velo_get_hunt_results`,
-  `velo_cancel_hunt_with_approval`.
-- Hunt preview required before start.
-- Target-all disabled by default; enforce max hunt clients.
-- Approval required for start/cancel.
+Re-scoped by explicit user direction from the original "hunt management"
+plan. v0.3.0 deliberately adds no hunt execution, collection, cancel,
+download, client-side mutation, write identity use, or raw VQL. The
+original hunt-management scope is deferred to a future controlled
+milestone after collection/write approval foundations are implemented.
+
+- Added three read-only workflow/planning tools, all backed only by the
+  already-loaded DFIR profile registry plus local policy allowlists:
+  `velo_plan_dfir_triage`, `velo_compare_dfir_profiles`, and
+  `velo_find_profiles_by_artifact`.
+- All new tool responses embed the v0.2.0 `internal/response.Result`
+  envelope (`success` / `empty` / `not_found` / `error`) and preserve
+  existing visibility/profile tool wire fields.
+- Callable tool inventory increases from 8 to 11, still entirely
+  read-only. The older 7 hunt-management ToolSpec entries remain
+  metadata only and are not registered with MCP.
 
 ### v0.4.0 — DFIR profiles and IOC hunting
 
@@ -169,7 +178,7 @@ scheduling the next milestone). v0.2.0 as actually implemented:
 
 ### v1.0.0 — Stable release
 
-- All 24 core tools implemented.
+- All 27 core tools implemented.
 - Stable schemas.
 - Full documentation.
 - Lab validation report.
