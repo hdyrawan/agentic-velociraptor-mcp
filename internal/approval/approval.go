@@ -21,10 +21,9 @@
 // v0.6.0's velo_start_hunt_with_approval, velo_start_dfir_hunt_with_approval,
 // velo_cancel_hunt_with_approval; v0.7.0's velo_hunt_ioc_with_approval)
 // only ever calls Store.Get/IsApproved/Consume for a caller-supplied
-// reference and always via verifyAndConsumeApproval's
-// RequestFingerprint check; none of them can call Store.Create or
-// Store.Decide. See docs/approval-flow.md for the full operator
-// workflow.
+// reference and always via the MCP server's approval fingerprint check;
+// none of them can call Store.Create or Store.Decide. See
+// docs/approval-flow.md for the full operator workflow.
 package approval
 
 import "time"

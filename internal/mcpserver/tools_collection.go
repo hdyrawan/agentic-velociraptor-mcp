@@ -20,8 +20,8 @@ import (
 // therefore requires case_id, reason, requester, and an
 // approval_reference that must resolve to a matching, approved,
 // unconsumed, unexpired approval.Store record before any Velociraptor
-// call is made; see writePilotEnabled and verifyAndConsumeApproval in
-// server.go.
+// call is made; see writePilotEnabled, verifyApproval, backendOperationReady,
+// and consumeApproval in server.go.
 var CollectionTools = []ToolSpec{
 	{
 		Name:             "velo_collect_artifact_with_approval",
@@ -141,19 +141,22 @@ func newCollectArtifactHandler(deps Deps) mcp.ToolHandlerFor[CollectArtifactInpu
 			Artifact:   in.Artifact,
 			Parameters: in.Parameters,
 		}
-		result, outcome, ok := verifyAndConsumeApproval(ctx, deps, in.ApprovalReference, candidate)
+		result, outcome, ok := verifyApproval(ctx, deps, in.ApprovalReference, candidate)
 		if !ok {
 			recordAudit(deps, audit.Event{Tool: tool, Outcome: outcome, ClientID: in.ClientID, Artifact: in.Artifact, CaseID: in.CaseID, RequestReason: in.Reason, ApprovalID: in.ApprovalReference, Reason: result.Message})
 			return nil, CollectArtifactOutput{Result: result, ClientID: in.ClientID, Artifact: in.Artifact}, nil
 		}
-
-		if deps.WriteClient == nil {
-			recordAudit(deps, audit.Event{Tool: tool, Outcome: audit.OutcomeError, ClientID: in.ClientID, Artifact: in.Artifact, CaseID: in.CaseID, ApprovalID: in.ApprovalReference, Reason: "no Velociraptor write client is configured"})
-			return nil, CollectArtifactOutput{
-				Result:   response.Error("real mode is configured but no Velociraptor write client is available"),
-				ClientID: in.ClientID,
-				Artifact: in.Artifact,
-			}, nil
+		if result := backendOperationReady(deps.WriteClient, velociraptor.BackendOpCollectArtifact); result.Status != "" {
+			recordAudit(deps, audit.Event{Tool: tool, Outcome: audit.OutcomeError, ClientID: in.ClientID, Artifact: in.Artifact, CaseID: in.CaseID, Reason: result.Message})
+			return nil, CollectArtifactOutput{Result: result, ClientID: in.ClientID, Artifact: in.Artifact}, nil
+		}
+		if result, ok := gateAuditForWrite(deps, audit.Event{Tool: tool, ClientID: in.ClientID, Artifact: in.Artifact, CaseID: in.CaseID, RequestReason: in.Reason, ApprovalID: in.ApprovalReference}); !ok {
+			return nil, CollectArtifactOutput{Result: result, ClientID: in.ClientID, Artifact: in.Artifact}, nil
+		}
+		result, outcome, ok = consumeApproval(ctx, deps, in.ApprovalReference)
+		if !ok {
+			recordAudit(deps, audit.Event{Tool: tool, Outcome: outcome, ClientID: in.ClientID, Artifact: in.Artifact, CaseID: in.CaseID, RequestReason: in.Reason, ApprovalID: in.ApprovalReference, Reason: result.Message})
+			return nil, CollectArtifactOutput{Result: result, ClientID: in.ClientID, Artifact: in.Artifact}, nil
 		}
 
 		summary, err := deps.WriteClient.CollectArtifact(ctx, velociraptor.CollectionRequest{
@@ -276,20 +279,22 @@ func newCollectDFIRProfileHandler(deps Deps) mcp.ToolHandlerFor[CollectDFIRProfi
 			ClientID:  in.ClientID,
 			Profile:   in.Profile,
 		}
-		result, outcome, ok := verifyAndConsumeApproval(ctx, deps, in.ApprovalReference, candidate)
+		result, outcome, ok := verifyApproval(ctx, deps, in.ApprovalReference, candidate)
 		if !ok {
 			recordAudit(deps, audit.Event{Tool: tool, Outcome: outcome, ClientID: in.ClientID, Profile: in.Profile, CaseID: in.CaseID, RequestReason: in.Reason, ApprovalID: in.ApprovalReference, Reason: result.Message})
 			return nil, CollectDFIRProfileOutput{Result: result, ClientID: in.ClientID, Profile: in.Profile, Flows: []CollectedFlow{}}, nil
 		}
-
-		if deps.WriteClient == nil {
-			recordAudit(deps, audit.Event{Tool: tool, Outcome: audit.OutcomeError, ClientID: in.ClientID, Profile: in.Profile, CaseID: in.CaseID, ApprovalID: in.ApprovalReference, Reason: "no Velociraptor write client is configured"})
-			return nil, CollectDFIRProfileOutput{
-				Result:   response.Error("real mode is configured but no Velociraptor write client is available"),
-				ClientID: in.ClientID,
-				Profile:  in.Profile,
-				Flows:    []CollectedFlow{},
-			}, nil
+		if result := backendOperationReady(deps.WriteClient, velociraptor.BackendOpCollectArtifact); result.Status != "" {
+			recordAudit(deps, audit.Event{Tool: tool, Outcome: audit.OutcomeError, ClientID: in.ClientID, Profile: in.Profile, CaseID: in.CaseID, Reason: result.Message})
+			return nil, CollectDFIRProfileOutput{Result: result, ClientID: in.ClientID, Profile: in.Profile, Flows: []CollectedFlow{}}, nil
+		}
+		if result, ok := gateAuditForWrite(deps, audit.Event{Tool: tool, ClientID: in.ClientID, Profile: in.Profile, CaseID: in.CaseID, RequestReason: in.Reason, ApprovalID: in.ApprovalReference}); !ok {
+			return nil, CollectDFIRProfileOutput{Result: result, ClientID: in.ClientID, Profile: in.Profile, Flows: []CollectedFlow{}}, nil
+		}
+		result, outcome, ok = consumeApproval(ctx, deps, in.ApprovalReference)
+		if !ok {
+			recordAudit(deps, audit.Event{Tool: tool, Outcome: outcome, ClientID: in.ClientID, Profile: in.Profile, CaseID: in.CaseID, RequestReason: in.Reason, ApprovalID: in.ApprovalReference, Reason: result.Message})
+			return nil, CollectDFIRProfileOutput{Result: result, ClientID: in.ClientID, Profile: in.Profile, Flows: []CollectedFlow{}}, nil
 		}
 
 		flows := make([]CollectedFlow, 0, len(profile.Artifacts))
@@ -370,19 +375,22 @@ func newCancelFlowHandler(deps Deps) mcp.ToolHandlerFor[CancelFlowInput, CancelF
 			ClientID:  in.ClientID,
 			FlowID:    in.FlowID,
 		}
-		result, outcome, ok := verifyAndConsumeApproval(ctx, deps, in.ApprovalReference, candidate)
+		result, outcome, ok := verifyApproval(ctx, deps, in.ApprovalReference, candidate)
 		if !ok {
 			recordAudit(deps, audit.Event{Tool: tool, Outcome: outcome, ClientID: in.ClientID, FlowID: in.FlowID, CaseID: in.CaseID, RequestReason: in.Reason, ApprovalID: in.ApprovalReference, Reason: result.Message})
 			return nil, CancelFlowOutput{Result: result, ClientID: in.ClientID, FlowID: in.FlowID}, nil
 		}
-
-		if deps.WriteClient == nil {
-			recordAudit(deps, audit.Event{Tool: tool, Outcome: audit.OutcomeError, ClientID: in.ClientID, FlowID: in.FlowID, CaseID: in.CaseID, ApprovalID: in.ApprovalReference, Reason: "no Velociraptor write client is configured"})
-			return nil, CancelFlowOutput{
-				Result:   response.Error("real mode is configured but no Velociraptor write client is available"),
-				ClientID: in.ClientID,
-				FlowID:   in.FlowID,
-			}, nil
+		if result := backendOperationReady(deps.WriteClient, velociraptor.BackendOpCancelFlow); result.Status != "" {
+			recordAudit(deps, audit.Event{Tool: tool, Outcome: audit.OutcomeError, ClientID: in.ClientID, FlowID: in.FlowID, CaseID: in.CaseID, Reason: result.Message})
+			return nil, CancelFlowOutput{Result: result, ClientID: in.ClientID, FlowID: in.FlowID}, nil
+		}
+		if result, ok := gateAuditForWrite(deps, audit.Event{Tool: tool, ClientID: in.ClientID, FlowID: in.FlowID, CaseID: in.CaseID, RequestReason: in.Reason, ApprovalID: in.ApprovalReference}); !ok {
+			return nil, CancelFlowOutput{Result: result, ClientID: in.ClientID, FlowID: in.FlowID}, nil
+		}
+		result, outcome, ok = consumeApproval(ctx, deps, in.ApprovalReference)
+		if !ok {
+			recordAudit(deps, audit.Event{Tool: tool, Outcome: outcome, ClientID: in.ClientID, FlowID: in.FlowID, CaseID: in.CaseID, RequestReason: in.Reason, ApprovalID: in.ApprovalReference, Reason: result.Message})
+			return nil, CancelFlowOutput{Result: result, ClientID: in.ClientID, FlowID: in.FlowID}, nil
 		}
 
 		if err := deps.WriteClient.CancelFlow(ctx, in.ClientID, in.FlowID); err != nil {

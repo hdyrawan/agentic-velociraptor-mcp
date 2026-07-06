@@ -355,3 +355,90 @@ func TestRunApproveCreatesCancelHuntRequest(t *testing.T) {
 		t.Errorf("HuntID = %q, want H.1234abcd5678ef90", status.Request.HuntID)
 	}
 }
+
+// TestRunApproveCreatesHuntIOCRequest is the CLI half of the hunt_ioc
+// approval regression: `approve --operation hunt_ioc` must succeed and
+// store a request whose artifact and parameter map are exactly what
+// velo_hunt_ioc_with_approval's fingerprint check expects (resolved via
+// the shared BuildHuntIOCApprovalRequest path, never raw flags). The
+// handler-side half lives in internal/mcpserver's
+// TestCLIBuiltHuntIOCApprovalVerifiesThroughHandler.
+func TestRunApproveCreatesHuntIOCRequest(t *testing.T) {
+	storePath := filepath.Join(t.TempDir(), "approvals.json")
+
+	var buf bytes.Buffer
+	code := run([]string{
+		"approve",
+		"--store", storePath,
+		"--reference", "CASE-9100-01",
+		"--operation", "hunt_ioc",
+		"--case-id", "CASE-9100",
+		"--reason", "hunt known-bad hash",
+		"--requester", "analyst@example.com",
+		"--ioc-kind", "hash",
+		"--ioc-value", "d41d8cd98f00b204e9800998ecf8427e",
+		"--label", "windows",
+		"--approved-by", "ir-lead@example.com",
+	}, &buf)
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0: %s", code, buf.String())
+	}
+
+	store, err := approval.NewFileStore(storePath, time.Hour)
+	if err != nil {
+		t.Fatalf("approval.NewFileStore: %v", err)
+	}
+	status, err := store.Get(context.Background(), "CASE-9100-01")
+	if err != nil {
+		t.Fatalf("store.Get: %v", err)
+	}
+	if status.Request.Operation != approval.OperationHuntIOC {
+		t.Errorf("Operation = %q, want %q", status.Request.Operation, approval.OperationHuntIOC)
+	}
+	if status.Request.Artifact != "System.Hash.Hunt" {
+		t.Errorf("Artifact = %q, want System.Hash.Hunt (resolved from the hash template, not caller-chosen)", status.Request.Artifact)
+	}
+	if got := status.Request.Parameters["HashValue"]; got != "d41d8cd98f00b204e9800998ecf8427e" {
+		t.Errorf("Parameters[HashValue] = %q, want the approved hash", got)
+	}
+	if status.Request.Label != "windows" {
+		t.Errorf("Label = %q, want windows", status.Request.Label)
+	}
+	if status.Decision == nil || !status.Decision.Approved {
+		t.Errorf("Decision = %+v, want approved", status.Decision)
+	}
+}
+
+func TestRunApproveHuntIOCRejectsInvalidIndicator(t *testing.T) {
+	storePath := filepath.Join(t.TempDir(), "approvals.json")
+
+	var buf bytes.Buffer
+	code := run([]string{
+		"approve",
+		"--store", storePath,
+		"--reference", "CASE-9100-02",
+		"--operation", "hunt_ioc",
+		"--case-id", "CASE-9100",
+		"--reason", "bad indicator",
+		"--requester", "analyst@example.com",
+		"--ioc-kind", "hash",
+		"--ioc-value", "not-a-hash",
+		"--label", "windows",
+		"--approved-by", "ir-lead@example.com",
+	}, &buf)
+	if code != 2 {
+		t.Fatalf("exit code = %d, want 2 for an invalid indicator: %s", code, buf.String())
+	}
+	if !strings.Contains(buf.String(), "not a valid") {
+		t.Errorf("output %q should explain the indicator is invalid", buf.String())
+	}
+
+	// Nothing may have been stored for the rejected reference.
+	store, err := approval.NewFileStore(storePath, time.Hour)
+	if err != nil {
+		t.Fatalf("approval.NewFileStore: %v", err)
+	}
+	if _, err := store.Get(context.Background(), "CASE-9100-02"); err == nil {
+		t.Error("a store record exists for the rejected hunt_ioc request")
+	}
+}

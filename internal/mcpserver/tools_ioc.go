@@ -18,7 +18,8 @@ import (
 // IOCTools expose the single IOC-hunting convenience tool. This is the
 // only place a hash/IP/domain/process/path literal enters a hunt; it is
 // built on top of the same approval/scope/audit machinery as HuntTools
-// (verifyAndConsumeApproval, validateHuntScopeInput, writePilotEnabled),
+// (verifyApproval, backendOperationReady, consumeApproval,
+// validateHuntScopeInput, writePilotEnabled),
 // resolves its target through vql.KnownTemplates/vql.Bind, and starts
 // the hunt via the same velociraptor.HuntWriter.StartHunt path
 // velo_start_hunt_with_approval uses. Never raw VQL, never a
@@ -49,6 +50,45 @@ func iocTemplateForKind(kind validation.IOCKind) (vql.TemplateName, bool) {
 	default:
 		return "", false
 	}
+}
+
+// BuildHuntIOCApprovalRequest constructs the exact approval.Request that
+// velo_hunt_ioc_with_approval verifies (and fingerprints) for a given
+// indicator and scope. It is exported so the agentic-velociraptor-mcp
+// `approve` CLI subcommand creates hunt_ioc approvals through the very
+// same validation and template-binding path the MCP handler uses —
+// validation.ValidateHuntScope, validation.ValidateIOC,
+// iocTemplateForKind, and vql.Bind — guaranteeing the stored request's
+// artifact and parameter map are byte-for-byte what the handler
+// fingerprints at execution time. The returned Request carries no ID;
+// the caller sets the approval reference.
+func BuildHuntIOCApprovalRequest(caseID, reason, requester, kind, value string, clientIDs []string, label string, all bool) (approval.Request, error) {
+	if err := validation.ValidateHuntScope(validation.HuntScope{ClientIDs: clientIDs, Label: label, All: all}); err != nil {
+		return approval.Request{}, err
+	}
+	iocKind := validation.IOCKind(kind)
+	if err := validation.ValidateIOC(iocKind, value); err != nil {
+		return approval.Request{}, err
+	}
+	template, ok := iocTemplateForKind(iocKind)
+	if !ok {
+		return approval.Request{}, fmt.Errorf("unsupported ioc kind %q", kind)
+	}
+	artifact, params, err := vql.Bind(template, vql.Env{"value": value})
+	if err != nil {
+		return approval.Request{}, err
+	}
+	return approval.Request{
+		Operation:  approval.OperationHuntIOC,
+		CaseID:     caseID,
+		Reason:     reason,
+		Requester:  requester,
+		Artifact:   artifact,
+		Parameters: params,
+		ClientIDs:  clientIDs,
+		Label:      label,
+		TargetAll:  all,
+	}, nil
 }
 
 // HuntIOCInput is velo_hunt_ioc_with_approval's argument shape. Kind and
@@ -87,7 +127,7 @@ func newHuntIOCHandler(deps Deps) mcp.ToolHandlerFor[HuntIOCInput, HuntIOCOutput
 			recordAudit(deps, audit.Event{Tool: tool, Outcome: audit.OutcomeBlocked, CaseID: in.CaseID, IOCKind: in.Kind, Reason: reason})
 			return nil, HuntIOCOutput{}, errors.New(reason)
 		}
-		if err := validateHuntWriteInput(deps, in.CaseID, in.Reason, in.ApprovalID); err != nil {
+		if err := validateHuntWriteInput(deps, in.CaseID, in.Reason, in.Requester, in.ApprovalID); err != nil {
 			return nil, HuntIOCOutput{}, err
 		}
 		if err := validateHuntScopeInput(in.ClientIDs, in.Label, in.All); err != nil {
@@ -95,25 +135,19 @@ func newHuntIOCHandler(deps Deps) mcp.ToolHandlerFor[HuntIOCInput, HuntIOCOutput
 			return nil, HuntIOCOutput{}, err
 		}
 
-		kind := validation.IOCKind(in.Kind)
-		if err := validation.ValidateIOC(kind, in.Value); err != nil {
-			recordAudit(deps, audit.Event{Tool: tool, Outcome: audit.OutcomeBlocked, CaseID: in.CaseID, IOCKind: in.Kind, Reason: err.Error()})
-			return nil, HuntIOCOutput{}, err
-		}
-
-		template, ok := iocTemplateForKind(kind)
-		if !ok {
-			recordAudit(deps, audit.Event{Tool: tool, Outcome: audit.OutcomeBlocked, CaseID: in.CaseID, IOCKind: in.Kind, Reason: "unsupported ioc kind"})
-			return nil, HuntIOCOutput{}, fmt.Errorf("unsupported ioc kind %q", in.Kind)
-		}
-
-		artifact, params, err := vql.Bind(template, vql.Env{"value": in.Value})
+		// Resolve the indicator to its fixed artifact/parameter binding
+		// through the same exported path the approve CLI uses, so the
+		// candidate fingerprinted below is structurally identical to a
+		// CLI-created hunt_ioc approval for the same inputs.
+		candidate, err := BuildHuntIOCApprovalRequest(in.CaseID, in.Reason, in.Requester, in.Kind, in.Value, in.ClientIDs, in.Label, in.All)
 		if err != nil {
 			recordAudit(deps, audit.Event{Tool: tool, Outcome: audit.OutcomeBlocked, CaseID: in.CaseID, IOCKind: in.Kind, Reason: err.Error()})
 			return nil, HuntIOCOutput{}, err
 		}
+		artifact := candidate.Artifact
+		params := candidate.Parameters
 
-		if deps.Policy != nil && !deps.Policy.ArtifactAllowed(artifact) {
+		if deps.Policy == nil || !deps.Policy.ArtifactAllowed(artifact) {
 			recordAudit(deps, audit.Event{Tool: tool, Outcome: audit.OutcomeBlocked, CaseID: in.CaseID, Artifact: artifact, IOCKind: in.Kind, Reason: "artifact not in allowlist"})
 			return nil, HuntIOCOutput{}, fmt.Errorf("artifact %q (resolved from ioc template) is not in the configured allowlist", artifact)
 		}
@@ -128,24 +162,22 @@ func newHuntIOCHandler(deps Deps) mcp.ToolHandlerFor[HuntIOCInput, HuntIOCOutput
 			maxClients = in.MaxClients
 		}
 
-		candidate := approval.Request{
-			Operation:  approval.OperationHuntIOC,
-			CaseID:     in.CaseID,
-			Artifact:   artifact,
-			Parameters: params,
-			ClientIDs:  in.ClientIDs,
-			Label:      in.Label,
-			TargetAll:  in.All,
-		}
-		result, outcome, ok := verifyAndConsumeApproval(ctx, deps, in.ApprovalID, candidate)
+		result, outcome, ok := verifyApproval(ctx, deps, in.ApprovalID, candidate)
 		if !ok {
 			recordAudit(deps, audit.Event{Tool: tool, Outcome: outcome, CaseID: in.CaseID, Artifact: artifact, IOCKind: in.Kind, IOCValue: in.Value, RequestReason: in.Reason, ApprovalID: in.ApprovalID, Reason: result.Message})
 			return nil, HuntIOCOutput{Result: result, Kind: in.Kind, Artifact: artifact}, nil
 		}
-
-		if deps.WriteClient == nil {
-			recordAudit(deps, audit.Event{Tool: tool, Outcome: audit.OutcomeError, CaseID: in.CaseID, Artifact: artifact, IOCKind: in.Kind, IOCValue: in.Value, ApprovalID: in.ApprovalID, Reason: "no write client configured"})
-			return nil, HuntIOCOutput{Result: response.Error("real mode is configured but no Velociraptor write client is available"), Kind: in.Kind, Artifact: artifact}, nil
+		if result := backendOperationReady(deps.WriteClient, velociraptor.BackendOpStartHunt); result.Status != "" {
+			recordAudit(deps, audit.Event{Tool: tool, Outcome: audit.OutcomeError, CaseID: in.CaseID, Artifact: artifact, IOCKind: in.Kind, IOCValue: in.Value, Reason: result.Message})
+			return nil, HuntIOCOutput{Result: result, Kind: in.Kind, Artifact: artifact}, nil
+		}
+		if result, ok := gateAuditForWrite(deps, audit.Event{Tool: tool, Artifact: artifact, IOCKind: in.Kind, IOCValue: in.Value, CaseID: in.CaseID, RequestReason: in.Reason, ApprovalID: in.ApprovalID}); !ok {
+			return nil, HuntIOCOutput{Result: result, Kind: in.Kind, Artifact: artifact}, nil
+		}
+		result, outcome, ok = consumeApproval(ctx, deps, in.ApprovalID)
+		if !ok {
+			recordAudit(deps, audit.Event{Tool: tool, Outcome: outcome, CaseID: in.CaseID, Artifact: artifact, IOCKind: in.Kind, IOCValue: in.Value, RequestReason: in.Reason, ApprovalID: in.ApprovalID, Reason: result.Message})
+			return nil, HuntIOCOutput{Result: result, Kind: in.Kind, Artifact: artifact}, nil
 		}
 
 		hunt, err := deps.WriteClient.StartHunt(ctx, velociraptor.HuntRequest{

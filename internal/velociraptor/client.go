@@ -20,6 +20,29 @@ import (
 // client shipped in v0.0.x.
 var ErrNotImplemented = errors.New("velociraptor: not implemented in this build")
 
+// BackendOperation names a narrow Velociraptor backend capability the
+// MCP layer may need before it consumes a one-shot approval. These are
+// not MCP tool names and never carry raw VQL; they let handlers
+// distinguish "this concrete backend cannot execute the reviewed typed
+// operation" from a later RPC failure.
+type BackendOperation string
+
+const (
+	BackendOpCollectArtifact    BackendOperation = "collect_artifact"
+	BackendOpCancelFlow         BackendOperation = "cancel_flow"
+	BackendOpDownloadFlowUpload BackendOperation = "download_flow_upload"
+	BackendOpStartHunt          BackendOperation = "start_hunt"
+	BackendOpCancelHunt         BackendOperation = "cancel_hunt"
+)
+
+// BackendOperationSupporter is intentionally optional: test fakes that
+// implement a method directly are treated as capable, while concrete
+// shipped clients can honestly report scaffolded operations before an
+// approval is consumed.
+type BackendOperationSupporter interface {
+	SupportsBackendOperation(operation BackendOperation) bool
+}
+
 // Client is the full set of Velociraptor operations the MCP server may
 // perform, split by concern across clients.go, artifacts.go, flows.go,
 // hunts.go, and uploads.go. Each sub-interface corresponds to one group
@@ -73,4 +96,8 @@ func NewClient() Client {
 
 func (placeholderClient) HealthCheck(ctx context.Context) (Info, error) {
 	return Info{}, ErrNotImplemented
+}
+
+func (placeholderClient) SupportsBackendOperation(operation BackendOperation) bool {
+	return false
 }

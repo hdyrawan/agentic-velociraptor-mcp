@@ -49,7 +49,7 @@ import (
 
 // version is the build version. Overridden at release build time via
 // -ldflags "-X main.version=...".
-var version = "0.7.0"
+var version = "0.8.0"
 
 // defaultProfilesDir is the --profiles-dir flag's default value.
 // resolveProfilesDir only applies its cwd-independent fallback when the
@@ -320,7 +320,7 @@ func runApprove(args []string, out io.Writer) int {
 
 	store := fs.String("store", "", "path to the approval store JSON file (must match the running MCP server's approval.store_path)")
 	reference := fs.String("reference", "", "approval reference to create/decide, e.g. a ticket number")
-	operation := fs.String("operation", "", "one of: collect_artifact, collect_dfir_profile, cancel_flow, download_flow_upload, start_hunt, start_dfir_hunt, cancel_hunt")
+	operation := fs.String("operation", "", "one of: collect_artifact, collect_dfir_profile, cancel_flow, download_flow_upload, start_hunt, start_dfir_hunt, cancel_hunt, hunt_ioc")
 	caseID := fs.String("case-id", "", "investigation/case identifier")
 	reason := fs.String("reason", "", "justification for this operation")
 	requester := fs.String("requester", "", "identity of whoever is asking for this operation")
@@ -335,12 +335,14 @@ func runApprove(args []string, out io.Writer) int {
 	flowID := fs.String("flow-id", "", "target flow ID (cancel_flow, download_flow_upload)")
 	uploadName := fs.String("upload-name", "", "target upload name (download_flow_upload)")
 	huntID := fs.String("hunt-id", "", "target hunt ID (cancel_hunt)")
-	label := fs.String("label", "", "hunt scope label filter (start_hunt, start_dfir_hunt)")
-	targetAll := fs.Bool("all", false, "hunt scope targets all clients (start_hunt, start_dfir_hunt)")
+	label := fs.String("label", "", "hunt scope label filter (start_hunt, start_dfir_hunt, hunt_ioc)")
+	targetAll := fs.Bool("all", false, "hunt scope targets all clients (start_hunt, start_dfir_hunt, hunt_ioc)")
+	iocKind := fs.String("ioc-kind", "", "indicator kind: hash, ip, domain, process, or path (hunt_ioc)")
+	iocValue := fs.String("ioc-value", "", "indicator value to hunt for (hunt_ioc)")
 	params := &paramMapFlag{}
 	fs.Var(params, "param", "artifact parameter as key=value; may be repeated (collect_artifact, start_hunt)")
 	clientIDs := &stringSliceFlag{}
-	fs.Var(clientIDs, "hunt-client-id", "explicit hunt scope client ID; may be repeated (start_hunt, start_dfir_hunt)")
+	fs.Var(clientIDs, "hunt-client-id", "explicit hunt scope client ID; may be repeated (start_hunt, start_dfir_hunt, hunt_ioc)")
 
 	fs.Usage = func() {
 		fmt.Fprintf(out, "agentic-velociraptor-mcp approve: create and decide an approval.Request out-of-band\n\n")
@@ -395,8 +397,22 @@ func runApprove(args []string, out io.Writer) int {
 		req.TargetAll = *targetAll
 	case approval.OperationCancelHunt:
 		req.HuntID = *huntID
+	case approval.OperationHuntIOC:
+		// hunt_ioc approvals must fingerprint-match what
+		// velo_hunt_ioc_with_approval will verify at execution time, so
+		// the request is built through the exact same validation and
+		// template-binding path the MCP handler uses (ValidateHuntScope,
+		// ValidateIOC, template lookup, vql.Bind) — never from raw
+		// --artifact/--param flags.
+		built, err := mcpserver.BuildHuntIOCApprovalRequest(*caseID, *reason, *requester, *iocKind, *iocValue, clientIDs.values, *label, *targetAll)
+		if err != nil {
+			fmt.Fprintf(out, "agentic-velociraptor-mcp approve: hunt_ioc: %v\n", err)
+			return 2
+		}
+		built.ID = *reference
+		req = built
 	default:
-		fmt.Fprintf(out, "agentic-velociraptor-mcp approve: --operation must be one of collect_artifact, collect_dfir_profile, cancel_flow, download_flow_upload, start_hunt, start_dfir_hunt, cancel_hunt (got %q)\n", *operation)
+		fmt.Fprintf(out, "agentic-velociraptor-mcp approve: --operation must be one of collect_artifact, collect_dfir_profile, cancel_flow, download_flow_upload, start_hunt, start_dfir_hunt, cancel_hunt, hunt_ioc (got %q)\n", *operation)
 		return 2
 	}
 

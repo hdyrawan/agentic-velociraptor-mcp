@@ -23,9 +23,25 @@ const (
 var approvalReferencePattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
 
 // checkNoControlChars rejects NUL bytes and other C0 control characters
-// (tabs and newlines allowed) in free-text fields, the same policy
-// SearchQuery applies.
+// (tabs allowed, newlines rejected) in single-line fields. Identifiers
+// and parameter values that participate in approval fingerprinting and
+// audit lines have no legitimate need for a newline, and rejecting one
+// here is defense in depth on top of approval.RequestFingerprint's
+// injective length-prefixed encoding.
 func checkNoControlChars(field, s string) error {
+	for _, r := range s {
+		if r == 0 || (r < 0x20 && r != '\t') {
+			return fmt.Errorf("validation: %s contains a control character", field)
+		}
+	}
+	return nil
+}
+
+// checkNoControlCharsMultiline is checkNoControlChars for genuinely
+// multi-line free text (an operator's justification, an upload's
+// VFS-path-shaped name): tabs and newlines allowed, every other C0
+// control character rejected.
+func checkNoControlCharsMultiline(field, s string) error {
 	for _, r := range s {
 		if r == 0 || (r < 0x20 && r != '\t' && r != '\n') {
 			return fmt.Errorf("validation: %s contains a control character", field)
@@ -55,7 +71,7 @@ func Reason(s string) error {
 	if len(s) > reasonMaxLength {
 		return fmt.Errorf("validation: reason exceeds %d characters", reasonMaxLength)
 	}
-	return checkNoControlChars("reason", s)
+	return checkNoControlCharsMultiline("reason", s)
 }
 
 // Requester validates the identity of whoever is asking for an
@@ -94,7 +110,7 @@ func UploadName(s string) error {
 	if len(s) > uploadNameMaxLength {
 		return fmt.Errorf("validation: upload name exceeds %d characters", uploadNameMaxLength)
 	}
-	if err := checkNoControlChars("upload name", s); err != nil {
+	if err := checkNoControlCharsMultiline("upload name", s); err != nil {
 		return err
 	}
 	return nil

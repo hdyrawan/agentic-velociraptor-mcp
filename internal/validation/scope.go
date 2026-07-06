@@ -19,8 +19,9 @@ type HuntScope struct {
 }
 
 // ValidateHuntScope checks structural validity (not policy eligibility):
-// exactly one targeting mode must be set, and any client IDs must be
-// individually well-formed.
+// exactly one targeting mode must be set, any client IDs must be
+// individually well-formed, and a label must match HuntLabel's
+// allowlisted charset.
 func ValidateHuntScope(s HuntScope) error {
 	modes := 0
 	if len(s.ClientIDs) > 0 {
@@ -38,6 +39,12 @@ func ValidateHuntScope(s HuntScope) error {
 
 	for _, id := range s.ClientIDs {
 		if err := ClientID(id); err != nil {
+			return err
+		}
+	}
+
+	if s.Label != "" {
+		if err := HuntLabel(s.Label); err != nil {
 			return err
 		}
 	}

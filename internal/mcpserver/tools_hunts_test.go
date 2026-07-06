@@ -267,7 +267,14 @@ func TestStartHuntEnforcesMaxHuntClients(t *testing.T) {
 		AllowedArtifacts: []string{"Windows.System.Pslist"},
 		AllowedProfiles:  []string{"windows_basic_triage"},
 	})
-	deps.WriteClient = velociraptor.NewClient()
+	var capturedMaxClients int
+	deps.WriteClient = &fakeHuntClient{
+		Client: velociraptor.NewClient(),
+		startHunt: func(ctx context.Context, req velociraptor.HuntRequest) (velociraptor.HuntSummary, error) {
+			capturedMaxClients = req.MaxClients
+			return velociraptor.HuntSummary{HuntID: "H.MAXCLIENTS", Artifact: req.Artifact, State: velociraptor.HuntStateRunning}, nil
+		},
+	}
 	deps.VelociraptorWriteMode = VelociraptorModeReal
 
 	ref := approveRequest(t, store, approval.Request{
@@ -294,13 +301,14 @@ func TestStartHuntEnforcesMaxHuntClients(t *testing.T) {
 	if err != nil {
 		t.Fatalf("handler: %v", err)
 	}
-	// WriteClient returns ErrNotImplemented so we expect mode=real but error result
 	if out.Mode != VelociraptorModeReal {
 		t.Errorf("Mode = %q, want %q", out.Mode, VelociraptorModeReal)
 	}
-	// The handler reaches WriteClient.StartHunt which fails with ErrNotImplemented
-	if out.Status != response.StatusError {
-		t.Errorf("Status = %q, want %q", out.Status, response.StatusError)
+	if out.Status != response.StatusSuccess {
+		t.Errorf("Status = %q, want %q", out.Status, response.StatusSuccess)
+	}
+	if capturedMaxClients != 3 {
+		t.Errorf("MaxClients sent to StartHunt = %d, want 3", capturedMaxClients)
 	}
 	_ = sink
 }
@@ -870,7 +878,7 @@ func TestCancelHuntBlockedWithoutApproval(t *testing.T) {
 		Reason:     "test cancel",
 		Requester:  "tester",
 		ApprovalID: "approval-nonexistent",
-		HuntID:     "H.1",
+		HuntID:     "H.1111aaaa2222bbbb",
 	})
 	if err != nil {
 		t.Fatalf("unexpected Go error: %v", err)
@@ -900,17 +908,17 @@ func TestCancelHuntRejectsMismatchedApproval(t *testing.T) {
 		CaseID:    "CASE-010B",
 		Reason:    "test cancel mismatch",
 		Requester: "tester",
-		HuntID:    "H.1",
+		HuntID:    "H.1111aaaa2222bbbb",
 	})
 
 	handler := newCancelHuntHandler(deps)
-	// Approval was for H.1; caller actually targets a different hunt.
+	// Approval was for H.1111aaaa2222bbbb111aaaa2222bbbb; caller actually targets a different hunt.
 	_, out, err := handler(context.Background(), nil, CancelHuntInput{
 		CaseID:     "CASE-010B",
 		Reason:     "test cancel mismatch",
 		Requester:  "tester",
 		ApprovalID: ref,
-		HuntID:     "H.2",
+		HuntID:     "H.2222cccc3333dddd",
 	})
 	if err != nil {
 		t.Fatalf("unexpected Go error: %v", err)
@@ -935,7 +943,7 @@ func TestCancelHuntApprovedFakePath(t *testing.T) {
 	deps.WriteClient = &fakeHuntClient{
 		Client: velociraptor.NewClient(),
 		cancelHunt: func(_ context.Context, huntID string) error {
-			if huntID != "H.1" {
+			if huntID != "H.1111aaaa2222bbbb" {
 				return fmt.Errorf("unexpected hunt ID %q", huntID)
 			}
 			return nil
@@ -949,7 +957,7 @@ func TestCancelHuntApprovedFakePath(t *testing.T) {
 		CaseID:    "CASE-011",
 		Reason:    "approved cancel test",
 		Requester: "tester",
-		HuntID:    "H.1",
+		HuntID:    "H.1111aaaa2222bbbb",
 	})
 
 	handler := newCancelHuntHandler(deps)
@@ -958,7 +966,7 @@ func TestCancelHuntApprovedFakePath(t *testing.T) {
 		Reason:     "approved cancel test",
 		Requester:  "tester",
 		ApprovalID: ref,
-		HuntID:     "H.1",
+		HuntID:     "H.1111aaaa2222bbbb",
 	})
 	if err != nil {
 		t.Fatalf("handler: %v", err)
@@ -1111,5 +1119,39 @@ func TestExistingV03ToolsRemainRegistered(t *testing.T) {
 		if !found {
 			t.Errorf("existing v0.3 tool %q is no longer registered", want)
 		}
+	}
+}
+
+func TestCancelHuntBackendNotImplementedDoesNotConsumeApproval(t *testing.T) {
+	deps, _, store := testHuntDeps(t)
+	deps.WriteClient = velociraptor.NewClient()
+	deps.VelociraptorWriteMode = VelociraptorModeReal
+
+	ref := approveRequest(t, store, approval.Request{
+		ID:        "ref-cancel-hunt-backend-gap",
+		Operation: approval.OperationCancelHunt,
+		CaseID:    "CASE-BACKEND-CANCEL-HUNT",
+		Reason:    "backend gate regression",
+		Requester: "tester",
+		HuntID:    "H.1234abcd5678ef90",
+	})
+
+	handler := newCancelHuntHandler(deps)
+	_, out, err := handler(context.Background(), nil, CancelHuntInput{
+		CaseID: "CASE-BACKEND-CANCEL-HUNT", Reason: "backend gate regression", Requester: "tester",
+		ApprovalID: ref, HuntID: "H.1234abcd5678ef90",
+	})
+	if err != nil {
+		t.Fatalf("unexpected Go error: %v", err)
+	}
+	if out.Status != response.StatusError || !strings.Contains(out.Message, "backend_not_implemented") {
+		t.Fatalf("out = %+v, want backend_not_implemented error", out)
+	}
+	status, err := store.Get(context.Background(), ref)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if status.Consumed {
+		t.Error("approval consumed before backend-capability gate passed")
 	}
 }

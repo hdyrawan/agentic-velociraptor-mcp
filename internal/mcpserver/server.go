@@ -2,9 +2,8 @@
 // (config, policy, approval, audit, dfir, velociraptor, vql) into an MCP
 // server exposing the stable core described in PROJECT_PLAN.md.
 //
-// As of v0.7.0 (rebased onto v0.4.0's collection pilot, v0.5.0's
-// read-only flow/result backfill, and v0.6.0's hunt management
-// scaffold), exactly 28 tools are registered: the 14 read-only tools
+// As of v0.8.0 (preserving v0.7.0's completed stable-core inventory),
+// exactly 28 tools are registered: the 14 read-only tools
 // from v0.1.0-v0.5.0 (velo_health_check, velo_search_clients,
 // velo_get_client_info, velo_list_artifact_names,
 // velo_get_artifact_details, velo_list_dfir_profiles,
@@ -55,6 +54,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -148,10 +148,9 @@ type Server struct {
 }
 
 // New constructs a Server and registers the tools that are safe and
-// implemented for the current release. v0.7.0 adds the IOC helper tool
-// on top of v0.6.0's seven hunt management tools, v0.4.0's controlled
-// collection/evidence tools, and v0.5.0's read-only flow/result
-// backfill.
+// implemented for the current release. v0.8.0 keeps the v0.7.0 28-tool
+// inventory unchanged while tightening backend-capability checks before
+// approval consumption.
 func New(name, version string, deps Deps) *Server {
 	s := mcp.NewServer(&mcp.Implementation{Name: name, Version: version}, nil)
 
@@ -180,18 +179,39 @@ func (s *Server) Run(ctx context.Context) error {
 // recordAudit sets Timestamp and writes evt to deps.Audit. Audit write
 // failures are not surfaced to the MCP caller (a broken audit sink must
 // not make the underlying operation appear to fail differently than it
-// did), but are also not silently possible to lose track of forever;
-// see the TODO below.
-//
-// TODO(v0.6.0): decide on a fallback (e.g. stderr line) if deps.Audit.Write
-// itself errors, so a misconfigured audit path is discoverable at
-// startup/operation time rather than only via missing log entries.
+// did), but they are no longer silent either: a failed write falls back
+// to a structured stderr line so a misconfigured audit path is
+// discoverable at operation time rather than only via missing log
+// entries. Approval-gated write handlers additionally fail closed on a
+// broken sink before executing anything; see gateAuditForWrite.
 func recordAudit(deps Deps, evt audit.Event) {
 	if deps.Audit == nil {
 		return
 	}
 	evt.Timestamp = time.Now().UTC()
-	_ = deps.Audit.Write(evt)
+	if err := deps.Audit.Write(evt); err != nil {
+		fmt.Fprintf(os.Stderr, "agentic-velociraptor-mcp: audit write failed (tool=%s outcome=%s): %v\n", evt.Tool, evt.Outcome, err)
+	}
+}
+
+// gateAuditForWrite durably records the pre-execution audit.OutcomeAttempt
+// event for an approval-gated write operation. Handlers call it after
+// every policy/approval/backend gate has passed and immediately before
+// consumeApproval: if the event cannot be persisted, the operation is
+// refused (fail closed) with the single-use approval left unconsumed,
+// so an endpoint-facing write can never execute without an audit record
+// of the attempt. The returned Result is populated only on failure.
+func gateAuditForWrite(deps Deps, evt audit.Event) (response.Result, bool) {
+	if deps.Audit == nil {
+		return response.Result{}, true
+	}
+	evt.Timestamp = time.Now().UTC()
+	evt.Outcome = audit.OutcomeAttempt
+	if err := deps.Audit.Write(evt); err != nil {
+		fmt.Fprintf(os.Stderr, "agentic-velociraptor-mcp: audit write failed (tool=%s outcome=%s): %v\n", evt.Tool, evt.Outcome, err)
+		return response.Error("audit log is unavailable; refusing to execute this approval-gated operation (the approval was not consumed)"), false
+	}
+	return response.Result{}, true
 }
 
 // boolPtr is a small helper for the *bool fields of mcp.ToolAnnotations.
@@ -248,18 +268,31 @@ func writePilotEnabled(deps Deps) (bool, string) {
 	return true, ""
 }
 
-// verifyAndConsumeApproval resolves reference against deps.Approvals and
-// checks it authorizes exactly candidate: not merely "some approval
-// exists," but an approval whose approval.RequestFingerprint matches
-// candidate's targeting fields exactly (operation, case_id, client_id,
-// artifact/profile, parameters, flow_id, upload_name as applicable). On
-// any failure it returns a populated response.Result (NotFound if the
-// reference itself doesn't exist, Error for every other rejection
-// reason) and the audit.Outcome the caller should record; the caller
-// must not proceed to call Velociraptor. On success it consumes the
-// approval (single-use, called before the caller's Velociraptor call so
-// a failed attempt still burns the approval) and returns ok=true.
-func verifyAndConsumeApproval(ctx context.Context, deps Deps, reference string, candidate approval.Request) (result response.Result, outcome audit.Outcome, ok bool) {
+// backendOperationReady checks whether the concrete write backend is
+// present and advertises support for a typed operation before a
+// single-use approval is consumed. Fakes that do not implement
+// velociraptor.BackendOperationSupporter are treated as capable so tests
+// can continue to exercise handler behaviour through direct method
+// overrides; shipped placeholder/grpc clients implement the interface and
+// return false for scaffolded operations.
+func backendOperationReady(client velociraptor.Client, operation velociraptor.BackendOperation) response.Result {
+	if client == nil {
+		return response.Error("real mode is configured but no Velociraptor write client is available")
+	}
+	if supporter, ok := client.(velociraptor.BackendOperationSupporter); ok && !supporter.SupportsBackendOperation(operation) {
+		return response.Error(fmt.Sprintf("backend_not_implemented: Velociraptor backend operation %q is not implemented by this build", operation))
+	}
+	return response.Result{}
+}
+
+// verifyApproval resolves reference against deps.Approvals and checks it
+// authorizes exactly candidate: not merely "some approval exists," but
+// an approval whose approval.RequestFingerprint matches candidate's
+// targeting fields exactly (operation, case_id, client_id,
+// artifact/profile, parameters, flow_id, upload_name as applicable). It
+// deliberately does not consume the approval: handlers must run
+// backend-capability gates after this check and before consumeApproval.
+func verifyApproval(ctx context.Context, deps Deps, reference string, candidate approval.Request) (result response.Result, outcome audit.Outcome, ok bool) {
 	status, err := deps.Approvals.Get(ctx, reference)
 	if errors.Is(err, approval.ErrRequestNotFound) {
 		return response.NotFound(fmt.Sprintf("approval reference %q was not found", reference)), audit.OutcomeBlocked, false
@@ -288,6 +321,14 @@ func verifyAndConsumeApproval(ctx context.Context, deps Deps, reference string, 
 		return response.Error("approval reference has expired"), audit.OutcomeBlocked, false
 	}
 
+	return response.Result{}, audit.OutcomeSuccess, true
+}
+
+// consumeApproval burns a verified approval reference immediately before
+// the handler calls a ready Velociraptor backend. This sequencing keeps
+// approval single-use for real execution attempts while preserving
+// approvals when policy/input/scope/allowlist/backend gates fail.
+func consumeApproval(ctx context.Context, deps Deps, reference string) (response.Result, audit.Outcome, bool) {
 	if err := deps.Approvals.Consume(ctx, reference); err != nil {
 		return response.Error(fmt.Sprintf("failed to consume approval: %v", err)), audit.OutcomeError, false
 	}

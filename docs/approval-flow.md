@@ -12,7 +12,7 @@ every approval-gated tool (v0.4.0: `velo_collect_artifact_with_approval`,
 `velo_start_dfir_hunt_with_approval`,
 `velo_cancel_hunt_with_approval`; v0.7.0: `velo_hunt_ioc_with_approval`)
 verifies against it before calling Velociraptor, via the same
-fingerprint-checked `verifyAndConsumeApproval` path described below —
+fingerprint-checked `verifyApproval/consumeApproval` path described below —
 **not** a separate, weaker check per tool (see "v0.7.0 fix" note under
 "Known limitations"). This document describes the operator-facing
 workflow those tools depend on.
@@ -103,13 +103,13 @@ denial instead — a denied reference resolves but is never usable.
 in-memory caching), specifically so this out-of-process write becomes
 visible to a long-running MCP server without a restart.
 
-For hunt/IOC-hunt operations (`start_hunt`, `start_dfir_hunt`,
-`cancel_hunt`, `hunt_ioc`), use `--artifact`/`--profile` as applicable,
-`--hunt-id` for `cancel_hunt`, and the scope flags `--hunt-client-id`
-(repeatable, for an explicit client list), `--label`, and `--all` —
-these bind into `approval.Request.ClientIDs`/`Label`/`TargetAll`, which
-are part of the fingerprint (see "Fingerprinting" below), so the
-approved scope must match the call's scope exactly:
+For hunt operations (`start_hunt`, `start_dfir_hunt`, `cancel_hunt`),
+use `--artifact`/`--profile` as applicable, `--hunt-id` for
+`cancel_hunt`, and the scope flags `--hunt-client-id` (repeatable, for
+an explicit client list), `--label`, and `--all` — these bind into
+`approval.Request.ClientIDs`/`Label`/`TargetAll`, which are part of the
+fingerprint (see "Fingerprinting" below), so the approved scope must
+match the call's scope exactly:
 
 ```sh
 agentic-velociraptor-mcp approve \
@@ -120,6 +120,30 @@ agentic-velociraptor-mcp approve \
   --reason "sweep for lateral movement" \
   --requester analyst@example.com \
   --artifact Windows.System.Pslist \
+  --label windows \
+  --approved-by ir-lead@example.com
+```
+
+For `hunt_ioc` (v0.8.0+), do **not** pass `--artifact` or `--param`:
+supply `--ioc-kind` (`hash`, `ip`, `domain`, `process`, or `path`) and
+`--ioc-value` plus the scope flags. The CLI resolves the indicator
+through the exact same validation and fixed-template binding path
+(`mcpserver.BuildHuntIOCApprovalRequest` → `validation.ValidateIOC` →
+`vql.Bind`) that `velo_hunt_ioc_with_approval` fingerprints at
+execution time, so the stored artifact and bound parameter are
+byte-for-byte what the handler will verify — an operator can never
+approve an artifact/parameter combination the tool wouldn't produce:
+
+```sh
+agentic-velociraptor-mcp approve \
+  --store /var/lib/agentic-velociraptor-mcp/approvals.json \
+  --reference CASE-1234-03 \
+  --operation hunt_ioc \
+  --case-id CASE-1234 \
+  --reason "hunt known-bad hash from threat intel" \
+  --requester analyst@example.com \
+  --ioc-kind hash \
+  --ioc-value d41d8cd98f00b204e9800998ecf8427e \
   --label windows \
   --approved-by ir-lead@example.com
 ```
@@ -149,7 +173,7 @@ the same `approval_reference`. The tool handler:
 
 Every one of these checks is `errors`/`response.Result`-typed and
 produces exactly one audit event (`success`/`blocked`/`error`); see
-`internal/mcpserver/server.go`'s `verifyAndConsumeApproval`.
+`internal/mcpserver/server.go`'s `verifyApproval/consumeApproval`.
 
 ## Fingerprinting
 
@@ -160,6 +184,16 @@ hunt-scope fields client IDs (sorted), label, and target-all. `reason`
 and `requester` are deliberately excluded — they are investigative
 context, not a description of what Velociraptor operation would run, so
 wording differences there must never cause a spurious mismatch.
+
+As of v0.8.0 the encoding is injective: every field is hashed as
+`name:length:bytes;` (length-prefixed) rather than newline-delimited, so
+a field value containing what looks like another field's serialized
+form — e.g. a parameter value embedding `\nparam:k2=v2` — can never
+collide with a genuinely different request. Regression tests in
+`internal/approval/hash_test.go` pin this property. Validation is
+tightened to match: `case_id`, `requester`, and collection parameter
+keys/values reject embedded newlines outright (multi-line `reason`
+remains legal; it is not fingerprinted).
 
 ## Known limitations (v0.4.0/v0.6.0/v0.7.0)
 
@@ -184,7 +218,7 @@ wording differences there must never cause a spurious mismatch.
   artifact/scope. Any valid unconsumed approval could start/cancel a
   different hunt than approved. This was found in code review before
   merging and fixed by routing those tools (and the new
-  `velo_hunt_ioc_with_approval`) through `verifyAndConsumeApproval`, the
+  `velo_hunt_ioc_with_approval`) through `verifyApproval/consumeApproval`, the
   same path this document has always described. If you have an
   operational runbook or automation built against v0.6.0's actual
   (unfingerprinted) behavior, it must be updated: an approval now must
@@ -197,3 +231,19 @@ wording differences there must never cause a spurious mismatch.
   own request was safe.
 - Reusing one approval across multiple executions, multiple clients, or
   different targets — see "Fingerprinting" and `Store.Consume` above.
+
+
+## v0.8.0 backend wiring status
+
+v0.8.0 is a backend-wiring review milestone that preserves the v0.7.0 28-tool MCP inventory. The hand-authored `internal/velociraptor/veloapi` mirror currently exposes only `Check`, `ListClients`, `GetClient`, and `GetArtifacts`; it does not include reviewed typed RPC bindings for flow enumeration/results, collection execution, flow cancel, uploads, hunt execution/cancel, hunt results, or IOC hunt execution. Implementing those by exposing a generic VQL query path would violate the stable-core raw-VQL rule, so they remain scaffolded with structured errors.
+
+| Group | v0.8.0 status |
+|---|---|
+| Visibility (`health`, client search/info, artifact list/details) | Real gRPC already implemented and unchanged. |
+| Flow list/status/results | Handler contracts, validation, limits, pagination, audit unchanged; real gRPC remains scaffolded (`backend_not_implemented`/`error`, no panic). |
+| Collection start / DFIR profile collection / flow cancel | Approval/policy/input/allowlist gates unchanged; backend capability is now checked before consuming approval; real gRPC remains scaffolded. |
+| Flow uploads list/metadata/download | Read handlers and download file controls unchanged; download backend capability is now checked before consuming approval; real gRPC upload RPCs remain scaffolded. |
+| Hunts list/status/results/preview | Handler contracts, limits, target_all/max-client policy unchanged; real gRPC remains scaffolded. |
+| Approved hunt start/cancel and IOC hunt | Approval fingerprint/scope/template gates unchanged; backend capability is now checked before consuming approval; real gRPC hunt RPCs remain scaffolded. |
+
+Live-lab validation remains pending for every scaffolded operation above. Required follow-up: add reviewed typed protobuf bindings for the specific Velociraptor RPCs, prove least-privilege read/write API permissions in a disposable lab, and keep `max_rows`, `max_result_bytes`, `max_upload_bytes`, `max_hunt_clients`, `target_all`, cursor, audit, and no-raw-VQL invariants under test.

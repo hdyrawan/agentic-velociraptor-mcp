@@ -1,18 +1,24 @@
 // Package audit defines the structured audit event emitted for every
 // tool invocation and the JSONL sink it is written to.
 //
-// Every tool call must produce exactly one Event, regardless of outcome.
-// This is a security control, not a debugging convenience: it must be
-// possible to reconstruct, after the fact, exactly which Velociraptor
-// operations an agent requested, what policy decision was made, and
-// whether the operation actually ran.
+// Every tool call must produce exactly one terminal Event (success,
+// blocked, or error), regardless of outcome. Approval-gated
+// write-capable calls that reach execution additionally produce one
+// OutcomeAttempt event, persisted before the approval is consumed and
+// the Velociraptor call is made — that pre-execution write is what lets
+// those tools fail closed when the audit sink is broken, so no endpoint-
+// facing write can ever execute unrecorded. This is a security control,
+// not a debugging convenience: it must be possible to reconstruct, after
+// the fact, exactly which Velociraptor operations an agent requested,
+// what policy decision was made, and whether the operation actually ran.
 package audit
 
 import "time"
 
-// Outcome is the terminal disposition of a tool invocation. These three
-// values are exhaustive by design: every audited call ends in exactly
-// one of them.
+// Outcome is the disposition recorded on an Event. Success, Blocked, and
+// Error are terminal and exhaustive: every audited call ends in exactly
+// one of them. Attempt is the one non-terminal outcome, recorded before
+// an approval-gated write executes (see the package doc comment).
 type Outcome string
 
 const (
@@ -28,6 +34,14 @@ const (
 	// operational reason (timeout, transport failure, malformed
 	// response, etc.).
 	OutcomeError Outcome = "error"
+
+	// OutcomeAttempt: an approval-gated write operation passed every
+	// policy/approval/backend gate and is about to consume its approval
+	// and execute. Written durably before execution; if this event
+	// cannot be persisted, the operation is refused (fail closed) and
+	// its approval is left unconsumed. A later terminal event on the
+	// same tool call records how the execution actually ended.
+	OutcomeAttempt Outcome = "attempt"
 )
 
 // Event is a single audit record. Fields map close to 1:1 with what a
