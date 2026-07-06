@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"context"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -34,7 +35,7 @@ func connectTestClient(t *testing.T, srv *Server) *mcp.ClientSession {
 	return session
 }
 
-func TestNewRegistersExactlyFourSafeTools(t *testing.T) {
+func TestNewRegistersExactlyEightSafeTools(t *testing.T) {
 	deps, _ := testDeps(t)
 	srv := New("agentic-velociraptor-mcp-test", "0.0.0-test", deps)
 
@@ -52,9 +53,13 @@ func TestNewRegistersExactlyFourSafeTools(t *testing.T) {
 	sort.Strings(names)
 
 	want := []string{
+		"velo_get_artifact_details",
+		"velo_get_client_info",
 		"velo_get_dfir_profile",
 		"velo_health_check",
+		"velo_list_artifact_names",
 		"velo_list_dfir_profiles",
+		"velo_search_clients",
 		"velo_validate_dfir_profile",
 	}
 
@@ -65,6 +70,39 @@ func TestNewRegistersExactlyFourSafeTools(t *testing.T) {
 		if names[i] != n {
 			t.Errorf("callable tools = %v, want %v", names, want)
 			break
+		}
+	}
+}
+
+// TestNewNeverRegistersUnsafeTools guards against regressions where a
+// collection, hunt, download, cancel, or raw-VQL tool accidentally
+// becomes callable. This milestone (v0.1.0) is read-only visibility
+// only; see PROJECT_PLAN.md.
+func TestNewNeverRegistersUnsafeTools(t *testing.T) {
+	deps, _ := testDeps(t)
+	srv := New("agentic-velociraptor-mcp-test", "0.0.0-test", deps)
+
+	session := connectTestClient(t, srv)
+
+	res, err := session.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+
+	forbiddenSubstrings := []string{
+		"collect",
+		"hunt",
+		"download",
+		"cancel",
+		"run_vql",
+		"vql",
+	}
+
+	for _, tool := range res.Tools {
+		for _, bad := range forbiddenSubstrings {
+			if strings.Contains(strings.ToLower(tool.Name), bad) {
+				t.Errorf("tool %q is callable and matches forbidden substring %q", tool.Name, bad)
+			}
 		}
 	}
 }
@@ -109,5 +147,35 @@ func TestCallHealthCheckOverMCPSession(t *testing.T) {
 	}
 	if res.IsError {
 		t.Fatalf("CallTool velo_health_check returned IsError=true: %+v", res)
+	}
+}
+
+// TestCallNewVisibilityToolsOverMCPSession confirms the four v0.1.0
+// visibility tools are actually callable end to end at the MCP protocol
+// level (not just registered), each in mock mode.
+func TestCallNewVisibilityToolsOverMCPSession(t *testing.T) {
+	deps, _ := testDeps(t)
+	srv := New("agentic-velociraptor-mcp-test", "0.0.0-test", deps)
+
+	session := connectTestClient(t, srv)
+
+	cases := []struct {
+		name string
+		args map[string]any
+	}{
+		{name: "velo_search_clients", args: map[string]any{}},
+		{name: "velo_get_client_info", args: map[string]any{"client_id": "C.1234abcd5678ef90"}},
+		{name: "velo_list_artifact_names", args: map[string]any{}},
+		{name: "velo_get_artifact_details", args: map[string]any{"name": "Generic.Client.Info"}},
+	}
+
+	for _, tc := range cases {
+		res, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: tc.name, Arguments: tc.args})
+		if err != nil {
+			t.Fatalf("CallTool %s: %v", tc.name, err)
+		}
+		if res.IsError {
+			t.Fatalf("CallTool %s returned IsError=true: %+v", tc.name, res)
+		}
 	}
 }

@@ -81,10 +81,10 @@ audit:
 | Field                   | Type   | Notes |
 |-------------------------|--------|-------|
 | `org_id`                | string | Velociraptor org to scope operations to. |
-| `read_api_config_path`  | string | Path to a Velociraptor `api.config.yaml` (mTLS bundle) for a least-privilege, read-oriented identity. **Secret**: never logged. **Optional** as of v0.1.0-alpha.2: empty means `velo_health_check` runs in mock mode (no Velociraptor call). If set, it is loaded eagerly at startup and must be valid — see "The read API config file" below — or the server refuses to start. |
-| `write_api_config_path` | string | Separate `api.config.yaml` for an identity used only after approval for write-capable operations. **Secret**: never logged. Optional if the deployment is permanently read-only. **Not read by any code path as of v0.1.0-alpha.2.** |
-| `timeout_seconds`       | int    | Per-call timeout against the Velociraptor gRPC API. Must be > 0. |
-| `max_rows`              | int    | Max result rows returned by any single tool call. Must be > 0. |
+| `read_api_config_path`  | string | Path to a Velociraptor `api.config.yaml` (mTLS bundle) for a least-privilege, read-oriented identity. **Secret**: never logged. **Optional**: empty means every visibility tool (`velo_health_check`, `velo_search_clients`, `velo_get_client_info`, `velo_list_artifact_names`, `velo_get_artifact_details`) runs in mock mode (no Velociraptor call). If set, it is loaded eagerly at startup and must be valid — see "The read API config file" below — or the server refuses to start. |
+| `write_api_config_path` | string | Separate `api.config.yaml` for an identity used only after approval for write-capable operations. **Secret**: never logged. Optional if the deployment is permanently read-only. **Not read by any code path as of v0.1.0.** |
+| `timeout_seconds`       | int    | Per-call timeout against the Velociraptor gRPC API, applied independently to each RPC (`Check`, `ListClients`, `GetClient`, `GetArtifacts`). Must be > 0. |
+| `max_rows`              | int    | Max result rows returned by any single tool call. As of v0.1.0 this bounds `velo_search_clients` (caps both the requested `limit` and the server-reported result count) and `velo_list_artifact_names`. Must be > 0; a non-positive value falls back to an internal default of 100 rather than being treated as unbounded. |
 | `max_result_bytes`      | int64  | Max serialized result size returned by any single tool call. Must be > 0. |
 | `max_upload_bytes`      | int64  | Max bytes returned by `velo_download_flow_upload_with_approval`. Must be > 0. |
 

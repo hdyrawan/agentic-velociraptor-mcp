@@ -1,16 +1,18 @@
 # Tool reference
 
 Status: this describes the **planned** stable core of 24 tools. As of
-v0.1.0-alpha.1, exactly 4 are implemented and registered as callable MCP
-tools: `velo_health_check` (static mock), `velo_list_dfir_profiles`,
-`velo_get_dfir_profile`, and `velo_validate_dfir_profile`. See
-`internal/mcpserver/server.go`'s `New` function — only
-`registerVisibilityTools` and `registerProfileTools` are called; the
-other tool groups' `ToolSpec` metadata exists for this document but is
-not wired to `mcp.AddTool` yet, and is therefore not callable by any MCP
-client (confirmed by `internal/mcpserver/server_test.go`'s
-exact-tool-inventory test). Update the "Implemented" column as each
-remaining tool actually lands.
+v0.1.0, exactly 8 are implemented and registered as callable MCP tools:
+`velo_health_check`, `velo_search_clients`, `velo_get_client_info`,
+`velo_list_artifact_names`, `velo_get_artifact_details`,
+`velo_list_dfir_profiles`, `velo_get_dfir_profile`, and
+`velo_validate_dfir_profile`. See `internal/mcpserver/server.go`'s `New`
+function — only `registerVisibilityTools` and `registerProfileTools` are
+called; the other tool groups' `ToolSpec` metadata exists for this
+document but is not wired to `mcp.AddTool` yet, and is therefore not
+callable by any MCP client (confirmed by
+`internal/mcpserver/server_test.go`'s exact-tool-inventory and
+never-registers-unsafe-tools tests). Update the "Implemented" column as
+each remaining tool actually lands.
 
 Legend: RO = read-only, no approval. Approval = requires a matching
 `approval.Decision` (see [approval-flow.md](approval-flow.md)) before any
@@ -21,10 +23,10 @@ Velociraptor call is made.
 | Tool | Kind | Description | Target milestone | Implemented |
 |------|------|-------------|-------------------|-------------|
 | `velo_health_check` | RO | Connectivity check against the read API via Velociraptor's dedicated `Check` gRPC RPC. Runs in mock mode (no Velociraptor call) when `velociraptor.read_api_config_path` is unset. | v0.1.0-alpha.1 (static, done) / v0.1.0-alpha.2 (real, done) | **yes (mock or real)** |
-| `velo_search_clients` | RO | Search clients by hostname/IP/label substring. | v0.1.0 | no |
-| `velo_get_client_info` | RO | Detail for one client ID. | v0.1.0 | no |
-| `velo_list_artifact_names` | RO | List artifact names (allowlist by default). | v0.1.0 | no |
-| `velo_get_artifact_details` | RO | Parameter schema for one artifact. | v0.1.0 | no |
+| `velo_search_clients` | RO | Search clients by hostname/IP/label substring/glob via Velociraptor's `ListClients` gRPC RPC. `query` and `limit` are optional; results bounded by `velociraptor.max_rows`. | v0.1.0 | **yes (mock or real)** |
+| `velo_get_client_info` | RO | Detail (hostname, OS, last seen, labels, MAC addresses) for one already-identified client ID via `GetClient`. `client_id` validated before any call. | v0.1.0 | **yes (mock or real)** |
+| `velo_list_artifact_names` | RO | List artifact names/descriptions via `GetArtifacts`; restricted to `policy.allowed_artifacts` unless `policy.allow_list_all_artifacts` is set. | v0.1.0 | **yes (mock or real)** |
+| `velo_get_artifact_details` | RO | Parameter schema (never the VQL body) for one artifact via `GetArtifacts` filtered by exact name. `name` validated and allowlist-gated the same as `velo_list_artifact_names`. | v0.1.0 | **yes (mock or real)** |
 
 ## Flow and result tools (`tools_flows.go`)
 

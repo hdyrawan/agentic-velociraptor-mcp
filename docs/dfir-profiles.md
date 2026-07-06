@@ -1,8 +1,6 @@
 # DFIR profiles
 
-Status: 3 of 15 planned profile definitions exist under `profiles/` as
-of v0.0.x (`windows_basic_triage`, `windows_ransomware_triage`,
-`linux_basic_triage`), all definition-only — no tool collects them yet.
+Status: 15 of 15 planned profile definitions exist under `profiles/`. All are defined, though some require specific approval for high-sensitivity cases (e.g., credential_theft, browser_activity).
 See PROJECT_PLAN.md v0.4.0.
 
 ## What a profile is

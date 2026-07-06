@@ -1,0 +1,18 @@
+# DFIR profile: windows_persistence_triage
+#
+# Identify and analyze mechanisms used for maintaining persistence on a Windows system, 
+# such as registry keys, scheduled tasks, or startup folder modification.
+# Artifacts are marked as illustrative unless verified against the production server.
+name: windows_persistence_triage
+display_name: "Windows Persistence Triage"
+description: >
+  Identify and analyze persistence mechanisms on a Windows system (registry, scheduled tasks, etc.).
+target_os: windows
+category: persistence
+risk_level: medium
+requires_approval: false
+max_runtime_seconds: 300
+max_result_rows: 1000
+max_result_bytes: 5242880
+artifacts:
+  - name: Windows.System.Persistence

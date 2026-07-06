@@ -6,15 +6,19 @@ endpoint DFIR capabilities to MCP-compatible agents: endpoint visibility,
 artifact collection, hunt management, evidence retrieval, IOC hunting,
 and approved DFIR investigation profiles.
 
-**Status: v0.1.0-alpha.2.** A real MCP stdio server is running, exposing
-4 read-only tools: `velo_health_check`, `velo_list_dfir_profiles`,
-`velo_get_dfir_profile`, `velo_validate_dfir_profile`.
-`velo_health_check` can now make a real Velociraptor gRPC health check
-(mTLS, via `velociraptor.read_api_config_path`) or run in mock mode if
-that path is left unset — every other tool still makes no Velociraptor
-call. **Requires Go 1.25+ to build.** See [PROJECT_STATE.md](PROJECT_STATE.md)
-for exactly what exists today and [PROJECT_PLAN.md](PROJECT_PLAN.md) for
-the roadmap. Do not point this at a production Velociraptor deployment.
+**Status: v0.1.0.** A real MCP stdio server is running, exposing 8
+read-only tools: `velo_health_check`, `velo_search_clients`,
+`velo_get_client_info`, `velo_list_artifact_names`,
+`velo_get_artifact_details`, `velo_list_dfir_profiles`,
+`velo_get_dfir_profile`, `velo_validate_dfir_profile`. The five
+visibility tools make real Velociraptor gRPC calls (mTLS, via
+`velociraptor.read_api_config_path`) — `Check`, `ListClients`,
+`GetClient`, and `GetArtifacts`, never the generic VQL `Query` RPC — or
+run in mock mode if that path is left unset. No tool can collect, hunt,
+download, cancel, or run raw VQL. **Requires Go 1.25+ to build.** See
+[PROJECT_STATE.md](PROJECT_STATE.md) for exactly what exists today and
+[PROJECT_PLAN.md](PROJECT_PLAN.md) for the roadmap. Do not point this at
+a production Velociraptor deployment.
 
 ## Why this exists
 
@@ -68,11 +72,11 @@ internal/
   approval/     human-approval request/decision workflow
   config/       YAML config model + validation
   dfir/         DFIR profile model, registry, validation
-  mcpserver/    MCP server + tool registration (4 of 24 registered so far)
+  mcpserver/    MCP server + tool registration (8 of 24 registered so far)
   policy/       MCP-layer policy engine (allowlists, approval routing)
   validation/   strict input validation (client IDs, artifacts, IOCs, scope)
-  velociraptor/ Velociraptor gRPC client (mTLS health check real; rest still placeholders)
-  velociraptor/veloapi/  minimal, hand-scoped gRPC stubs (Check RPC only)
+  velociraptor/ Velociraptor gRPC client (mTLS: health check, client search/detail, artifact catalog real; rest still placeholders)
+  velociraptor/veloapi/  minimal, hand-scoped gRPC stubs (Check, ListClients, GetClient, GetArtifacts)
   vql/          allowlisted VQL template binding — no raw VQL execution
 profiles/       DFIR profile definitions (YAML)
 docs/           architecture, security model, config, tool, and ops docs
@@ -95,7 +99,7 @@ go build -o bin/agentic-velociraptor-mcp ./cmd/agentic-velociraptor-mcp
   --profiles-dir /path/to/agentic-velociraptor-mcp/profiles
 ```
 
-Once running, the server speaks MCP over stdio and exposes exactly 4
+Once running, the server speaks MCP over stdio and exposes exactly 8
 tools — see [docs/tool-reference.md](docs/tool-reference.md) for the
 current callable inventory and
 [examples/inspector/README.md](examples/inspector/README.md) for how to

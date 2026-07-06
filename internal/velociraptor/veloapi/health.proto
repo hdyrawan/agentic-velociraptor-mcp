@@ -1,26 +1,24 @@
 // Copyright 2026 hdyrawan
 //
-// Minimal, hand-authored mirror of the single gRPC method this project
-// calls on a Velociraptor server: API.Check (a health check, modeled on
-// the standard gRPC health-checking protocol). Field names, numbers,
-// and the package/service names below are copied from the upstream
-// Velociraptor project's own proto definitions so that this message
-// is wire-compatible with a real `www.velocidex.com/golang/velociraptor`
-// server:
+// Minimal, hand-authored mirror of the health-check messages Velociraptor
+// servers expose. Field names, numbers, and the package name below are
+// copied from the upstream Velociraptor project's own proto definitions
+// so that this message is wire-compatible with a real
+// `www.velocidex.com/golang/velociraptor` server:
 //
 //   - api/proto/health.proto (HealthCheckRequest, HealthCheckResponse)
-//   - api/proto/api.proto (`service API { rpc Check(...) ... }`)
 //   - api/health.go (server-side handler: ignores the request entirely
 //     and returns SERVING unconditionally once a call authenticates)
 //
 // This project deliberately does NOT import the upstream
 // Velocidex/velociraptor Go module (it is a full DFIR server, not a thin
 // client library, and pulls in a large, unrelated dependency tree). This
-// file instead defines only the one RPC this project actually calls, so
-// the generated client stub is small, auditable, and has no other
-// capability. No VQL execution, collection, hunt, or other RPC is
-// defined here — see docs/security-model.md and PROJECT_PLAN.md for why
-// those remain out of scope.
+// file (together with visibility.proto and api.proto) instead defines
+// only the messages/RPCs this project actually calls, so the generated
+// client stub is small, auditable, and has no other capability. No VQL
+// execution, collection, hunt, or other RPC is defined here — see
+// docs/security-model.md and PROJECT_PLAN.md for why those remain out of
+// scope.
 //
 // Regenerate with (from the repository root):
 //   buf generate internal/velociraptor/veloapi
@@ -41,16 +39,4 @@ message HealthCheckResponse {
     NOT_SERVING = 2;
   }
   ServingStatus status = 1;
-}
-
-// API mirrors the subset of Velociraptor's `service API` (package
-// `proto`, see api/proto/api.proto upstream) that this project calls:
-// Check only. Because gRPC dispatches by the fully-qualified method
-// name "/proto.API/Check", this minimal service definition reaches the
-// same server-side handler as the upstream client would, without this
-// project needing the other ~30 RPCs Velociraptor's API service
-// exposes (hunts, collections, VFS, users, ...), none of which this
-// project's read-only health check needs or is permitted to use.
-service API {
-  rpc Check(HealthCheckRequest) returns (HealthCheckResponse);
 }

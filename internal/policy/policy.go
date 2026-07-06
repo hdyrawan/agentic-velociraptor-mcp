@@ -54,6 +54,15 @@ func (e *Engine) ArtifactAllowed(name string) bool {
 	return false
 }
 
+// AllowListAllArtifacts reports whether velo_list_artifact_names and
+// velo_get_artifact_details may serve artifacts outside the configured
+// allowlist. This only affects visibility (listing/reading metadata),
+// never collection: ArtifactAllowed remains the sole gate for actually
+// using an artifact in a collection or hunt.
+func (e *Engine) AllowListAllArtifacts() bool {
+	return e.cfg.AllowListAllArtifacts
+}
+
 // ProfileAllowed reports whether name is present in the DFIR profile
 // allowlist.
 func (e *Engine) ProfileAllowed(name string) bool {

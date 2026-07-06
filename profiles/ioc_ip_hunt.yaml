@@ -1,0 +1,18 @@
+# DFIR profile: ioc_ip_hunt
+#
+# Hunt for specific IP addresses across all available endpoints.
+# IOC are results of fixed-target IP lookups and do not perform hunt logic.
+# Artifacts are marked as illustrative unless verified against the production server.
+name: ioc_ip_hunt
+display_name: "IOC IP Hunt"
+description: >
+  Search for known malicious IP addresses across all systems.
+target_os: any
+category: ioc
+risk_level: low
+requires_approval: false
+max_runtime_seconds: 300
+max_result_rows: 1000
+max_result_bytes: 5242880
+artifacts:
+  - name: System.IP.Hunt

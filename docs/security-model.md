@@ -130,11 +130,16 @@ fields, not on this struct):
   regardless of who writes that code in the future.
 - `internal/velociraptor.sanitizeTLSError` strips anything that looks
   like a PEM block (`-----BEGIN`) out of gRPC/TLS error text before it
-  reaches `velo_health_check`'s output or the audit log, as a
+  reaches any visibility tool's output or the audit log, as a
   belt-and-suspenders measure — standard library TLS/x509 errors don't
-  actually embed key bytes, but a health-check error message is exactly
-  the kind of string that tends to get pasted into a ticket or chat
-  without a second thought.
+  actually embed key bytes, but an error message is exactly the kind of
+  string that tends to get pasted into a ticket or chat without a
+  second thought. As of v0.1.0 this applies uniformly to all five
+  visibility tools (`velo_health_check`, `velo_search_clients`,
+  `velo_get_client_info`, `velo_list_artifact_names`,
+  `velo_get_artifact_details`), not just the health check: every
+  `grpcClient` method wraps its RPC error through the same
+  `sanitizeTLSError` call before returning it.
 - Error messages about a bad API config file **do** include the file
   *path* (an operator-supplied, non-sensitive location string) — only
   the file's *contents* are treated as secret.
@@ -161,6 +166,24 @@ Velociraptor data supports. Concretely:
   unreachable" is data the caller asked for, not a failure of the
   health-check tool itself. A mock-mode response never claims
   `velociraptor_connected: true`.
+- All four v0.1.0 visibility tools (`velo_search_clients`,
+  `velo_get_client_info`, `velo_list_artifact_names`,
+  `velo_get_artifact_details`) follow the same pattern: every response
+  carries an explicit `mode` field (`"mock"` or `"real"`), a
+  connectivity or lookup failure is reported as an empty/`nil` result
+  plus a `message` field rather than a Go-level tool error, and mock
+  mode never returns a populated result list. Only *input validation*
+  failures (a malformed client ID, artifact name, or search query) and
+  policy-allowlist blocks are reported as Go-level tool errors, since
+  those are static defects in the request itself, not information about
+  Velociraptor's state.
+- `velo_get_client_info` and `velo_search_clients` return exactly what
+  Velociraptor's `ApiClient` record reports for a given endpoint
+  (hostname, OS, last-seen time, labels, ...) with no independent
+  verification — this is client-reported telemetry, not a
+  server-attested fact. A compromised or spoofed client could report
+  false values for these fields; nothing in this milestone treats them
+  as trustworthy for anything beyond triage/selection purposes.
 
 ## Dependency surface: no upstream Velociraptor server module
 
@@ -174,19 +197,40 @@ project's supply-chain surface includes code paths (arbitrary VQL
 execution, artifact writing, server administration) that everything
 else in this document argues against exposing at all.
 
-Instead, `internal/velociraptor/veloapi/health.proto` is a small,
-hand-authored `.proto` file defining only the one RPC this project
-calls (`API.Check`), with field names, field numbers, and
-package/service names copied from upstream's own
-`api/proto/health.proto` and `api/proto/api.proto` so the generated
-client is wire-compatible with a real Velociraptor server. It's compiled
-with `buf` + `protoc-gen-go`/`protoc-gen-go-grpc` (see the comment at
-the top of `health.proto` for the regeneration command) into ordinary,
-auditable generated Go code — not hand-rolled wire encoding. Extending
-this project to a new RPC (e.g. a real `Query` call, if that's ever
-justified for a specific, reviewed reason) means adding the specific
+Instead, `internal/velociraptor/veloapi/` is a small, hand-authored set
+of `.proto` files defining only the RPCs this project actually calls —
+as of v0.1.0: `API.Check`, `API.ListClients`, `API.GetClient`, and
+`API.GetArtifacts` — with field names, field numbers, and
+package/service names copied from upstream's own `api/proto/health.proto`,
+`api/proto/clients.proto`, `api/proto/artifacts.proto`,
+`artifacts/proto/artifact.proto`, and `api/proto/api.proto` so the
+generated client is wire-compatible with a real Velociraptor server.
+It's compiled with `buf` + `protoc-gen-go`/`protoc-gen-go-grpc` (see the
+comment at the top of each `.proto` file for the regeneration command)
+into ordinary, auditable generated Go code — not hand-rolled wire
+encoding. Every message here also deliberately declares only the fields
+its tool needs: `visibility.proto`'s `Artifact` message, for example, has
+no field for `ArtifactSource` (upstream field 4), which is where an
+artifact's VQL query body lives — a field this project's generated Go
+struct has no way to decode into, so it can never reach a tool response
+even by accident, regardless of what the server sends. Extending this
+project to a new RPC (e.g. a real `Query` call, if that's ever justified
+for a specific, reviewed reason) means adding the specific
 message/service definitions needed for that one call, not vendoring the
 upstream module.
+
+Notably, none of the four RPCs above is the generic `Query` RPC
+(streaming free-form VQL): `ListClients`, `GetClient`, and
+`GetArtifacts` are purpose-built, narrow RPCs that return exactly the
+structured data `velo_search_clients`, `velo_get_client_info`,
+`velo_list_artifact_names`, and `velo_get_artifact_details` need, with
+every caller-supplied value (search query, client ID, artifact name)
+bound as a plain protobuf field — never a VQL string, bound parameter,
+or any other query-language construct. This sidesteps the raw-VQL
+question entirely for this milestone rather than relying on
+`internal/vql`'s template/parameter-binding mechanism, which remains
+reserved for the one case (`velo_hunt_ioc_with_approval`, v0.4.0) that
+has no purpose-built RPC equivalent.
 
 ## Out of scope for this MCP server (by design)
 

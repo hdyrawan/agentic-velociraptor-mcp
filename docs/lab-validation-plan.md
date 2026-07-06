@@ -78,45 +78,174 @@ Velociraptor server, using fakes at the `healthChecker` seam
       stdio transport ever starts
       (`cmd/agentic-velociraptor-mcp/main_test.go`).
 
-**Not yet done — requires a real disposable Velociraptor lab server**
-(see "Lab environment requirements" above); none of the following can be
-verified by unit tests alone:
+**Done (2026-07-06), against a real disposable lab** — see "Live lab
+validation (2026-07-06)" below for the environment and exact commands:
 
-- [ ] `velo_health_check` succeeds against a real reader identity and
+- [x] `velo_health_check` succeeds against a real reader identity and
       real server (`mode: "real"`, `velociraptor_connected: true`).
 - [ ] `velo_health_check` fails closed (clear `status: "error"`, not a
       crash) when pointed at a real but unreachable/misconfigured
       server (wrong port, expired cert, CA mismatch, wrong
-      `pinned_server_name`).
-- [ ] Confirm no API config contents appear in stdout/stderr/audit log
+      `pinned_server_name`). **Not exercised this pass** — only the
+      happy path was driven against the live server; the fake-based
+      unit tests already cover the failure shapes, but a real
+      misconfigured-server error was not reproduced live.
+- [x] Confirm no API config contents appear in stdout/stderr/audit log
       when run against a real server end to end, including its error
       paths (a live-server complement to the unit tests above, which
       use synthetic/fake errors, not ones actually produced by a real
-      TLS handshake against Velociraptor).
-- [ ] Confirm a reader identity holding only the ACLs recommended in
+      TLS handshake against Velociraptor). Confirmed: audit.jsonl and
+      the smoke-test stdout/stderr from this pass contain no
+      `BEGIN CERTIFICATE`/`BEGIN ... PRIVATE KEY` text or other secret
+      material.
+- [x] Confirm a reader identity holding only the ACLs recommended in
       [velociraptor-permissions.md](velociraptor-permissions.md) (no
       `administrator`, no dangerous permissions) can still successfully
       call `Check` — the upstream handler
       (`api/health.go`) returns `SERVING` unconditionally once a call
       authenticates, so this is expected to work, but should be
       confirmed against a real minimally-privileged identity rather
-      than assumed.
+      than assumed. Confirmed against the lab's `mcp-reader` identity
+      (role `reader`, not `administrator`).
 
-### Phase 2 — read-only visibility (v0.1.0)
+### Phase 2 — read-only visibility (v0.1.0, implemented via `ListClients`/`GetClient`/`GetArtifacts` gRPC RPCs; live-validated 2026-07-06)
 
-- [ ] `velo_search_clients` / `velo_get_client_info` return expected data
-      for the lab clients.
-- [ ] `velo_list_artifact_names` respects `allow_list_all_artifacts`.
-- [ ] `velo_get_artifact_details` never returns raw VQL body (confirm
-      against current implementation decision).
+- [x] `velo_search_clients` / `velo_get_client_info` return expected data
+      for the lab clients (real `ApiClient` field values — hostname, OS,
+      last-seen time, labels, MAC addresses — match what the lab server
+      and GUI report for the same clients). **Partially validated**: the
+      lab has zero enrolled endpoint clients (see "Live lab validation"
+      below), so `velo_search_clients` was only confirmed to return an
+      honest empty list (`clients: []`, `mode: "real"`), not real
+      per-client field values. `velo_get_client_info` against a
+      well-formed but nonexistent client ID surfaced a real bug (now
+      fixed — see below) rather than validating field mapping, since
+      there is no real client to fetch. Field-value correctness against
+      an actual enrolled client remains unverified.
+- [ ] `velo_search_clients`'s `query` field behaves as expected against
+      Velociraptor's real client-search grammar (hostname/IP/label
+      substrings and globs) — this project passes it through unmodified
+      and does not itself define or validate that grammar. **Not
+      verifiable this pass**: zero enrolled clients means no query can
+      be confirmed to actually match/filter anything (an empty result
+      is consistent with both "no clients" and "query matched nothing").
+- [x] `velo_list_artifact_names` respects `policy.allow_list_all_artifacts`
+      (confirm both the `false`/allowlist-only and `true`/full-catalog
+      behaviors against a real server's artifact count). Confirmed:
+      `false` returned exactly the 3 configured `allowed_artifacts`
+      present on the server; `true` returned the full catalog (399
+      artifacts on this lab's Velociraptor 0.76.3).
+- [x] `velo_get_artifact_details` never returns raw VQL body — confirmed
+      structurally in code (`internal/velociraptor/veloapi/visibility.proto`'s
+      `Artifact` message has no field for `ArtifactSource`), but worth
+      re-confirming end to end that a real server's `GetArtifacts`
+      response, once decoded through this project's generated types,
+      truly carries no VQL text into the tool output. Confirmed: the
+      full 399-artifact real-server response was scanned for
+      `SELECT `/`LET ... =`; the only matches were inside human-authored
+      `description` prose that mentions VQL as a usage example (e.g.
+      "``SELECT * from Artifact.Server.Enrichment.VirusTotal(...)``" in
+      an artifact's own doc text) — never an artifact's actual query
+      body, which `ArtifactDetailOutput`/`ArtifactSummaryOutput`
+      structurally have no field for.
+- [x] `velo_get_artifact_details` is blocked (not silently empty) for an
+      artifact outside `policy.allowed_artifacts` when
+      `allow_list_all_artifacts` is `false`. Confirmed: querying
+      `Not.An.Allowed.Artifact` (and a real-but-not-allowlisted name)
+      returned `IsError: true` with `artifact "..." is not in the
+      configured allowlist`, audited as `outcome: "blocked"`.
+- [x] Confirm `velociraptor.max_rows` actually bounds `velo_search_clients`
+      and `velo_list_artifact_names` result counts against a lab server
+      with more clients/artifacts than the configured limit, and that a
+      server returning more rows than requested is still truncated
+      client-side (defense in depth beyond the request-side `limit`).
+      Confirmed for `velo_list_artifact_names`: `max_rows: 3` against a
+      399-artifact real catalog (with `allow_list_all_artifacts: true`)
+      returned exactly 3 results. **Not confirmed for
+      `velo_search_clients`** — zero enrolled clients means truncation
+      can't be distinguished from "no data"; a large `limit` (100000)
+      at least confirmed it doesn't error.
 - [ ] `velo_list_flows` / `velo_get_flow_status` / `velo_get_flow_results`
       correctly truncate at `max_rows` / `max_result_bytes` and report
-      truncation.
-- [ ] Attempt to pass malformed client IDs / artifact names (SQL/VQL
+      truncation. **(Not implemented in v0.1.0 — deferred; no RPC exists
+      yet for these three tools.)**
+- [x] Attempt to pass malformed client IDs / artifact names (SQL/VQL
       injection-shaped strings, path traversal strings) and confirm
       `internal/validation` rejects them before any Velociraptor call.
-- [ ] Confirm every call above produces exactly one audit event with the
-      correct outcome.
+      Confirmed live: `client_id: "not-a-valid-id"` was rejected by
+      `validation.ClientID` (`IsError: true`, audited `blocked`) before
+      any `GetClient` call was attempted.
+- [x] Confirm every call above produces exactly one audit event with the
+      correct outcome. Confirmed by direct inspection of the scratch
+      `audit.jsonl` produced during this pass: one JSONL line per tool
+      call, with `success`/`blocked`/`error` outcomes matching each
+      call's actual result, and no secret material in any line.
+- [x] Confirm none of `velo_search_clients`, `velo_get_client_info`,
+      `velo_list_artifact_names`, or `velo_get_artifact_details` call the
+      generic `Query` RPC or accept anything resembling VQL text — all
+      four use the purpose-built `ListClients`/`GetClient`/`GetArtifacts`
+      RPCs exclusively (see docs/security-model.md's "Dependency
+      surface" section). Reconfirmed: `grpcClient` has no `Query` method
+      at all (`internal/velociraptor/grpcclient.go`), and the live run's
+      `ListTools` output shows exactly the same 8 tools as
+      `internal/mcpserver/server_test.go`'s exact-inventory test — no
+      additional tool was exposed by running against a real server.
+
+#### Live lab validation (2026-07-06)
+
+Performed against the disposable lab described in
+`/home/irawanhd/velociraptor-lab/README.md`:
+
+- **Velociraptor version**: 0.76.3 (`wlambert/velociraptor:latest` image,
+  as reported by that lab's README).
+- **API identity used**: the lab's pre-generated `mcp-reader`
+  `api.config.yaml` (role `reader`, not `administrator`) — the
+  investigator identity was never needed or used, per this validation's
+  hard constraint.
+- **Tools live-validated**: all 8 callable tools were exercised over a
+  real stdio subprocess (`mcp.CommandTransport` driving the actual
+  built binary, the same transport a real MCP client uses):
+  `velo_health_check`, `velo_search_clients`, `velo_get_client_info`,
+  `velo_list_artifact_names`, `velo_get_artifact_details`,
+  `velo_list_dfir_profiles`, `velo_get_dfir_profile`,
+  `velo_validate_dfir_profile` (the three DFIR profile tools were
+  covered by `ListTools`/inventory checks only, since their behavior is
+  local-file-based and already lab-independent).
+- **Client inventory**: empty. The lab has zero enrolled endpoint
+  clients, so `velo_search_clients` was only confirmed to return an
+  honest `clients: []` and `velo_get_client_info` could only be
+  exercised against nonexistent client IDs — see the unchecked items
+  above for exactly what remains unverified as a result.
+- **Callable inventory**: exactly 8, confirmed by `ListTools` against
+  the live subprocess, matching `internal/mcpserver/server_test.go`'s
+  exact-inventory test.
+- **No raw VQL / generic Query path**: confirmed — `grpcClient` has no
+  `Query` method, and no tool call in this pass accepted or surfaced
+  VQL text (see the artifact-details finding above).
+- **Network note**: the lab's `mcp-reader.api.config.yaml` has
+  `api_connection_string: 0.0.0.0:8001` (Velociraptor's own generated
+  value, meaning "the API port this server bound to"), but the lab
+  container only publishes ports 8000/8889 to the host — port 8001
+  (the gRPC API) is reachable only via the container's own bridge-network
+  IP. This validation used a local scratch copy of the reader config
+  with `api_connection_string` rewritten to that container IP; the
+  original secret-bearing file at
+  `/home/irawanhd/velociraptor-lab/data/api-clients/mcp-reader.api.config.yaml`
+  was never modified. This is an artifact of this lab's Docker network
+  topology, not a code or config-schema issue — no change was needed in
+  `internal/velociraptor` or `internal/config` to work around it.
+- **Confirmed bug found and fixed**: `velo_get_client_info` against a
+  well-formed but nonexistent client ID returned a "successful" result
+  with an empty-but-present `client` object (`client_id: ""`) instead of
+  an honest not-found message — because Velociraptor's real `GetClient`
+  RPC returns a zero-value `ApiClient`, not an error, for an unknown ID.
+  Fixed in `internal/velociraptor/grpcclient.go`'s `GetClientInfo`
+  (detects `resp.GetClientId() == ""` and returns the new
+  `ErrClientNotFound` sentinel instead), covered by a new
+  `TestGRPCClientGetClientInfoNotFound` unit test. Re-run live after the
+  fix: the same call now returns `mode: "real"`, no `client` field, and
+  `message: "...client not found"` — an honest result consistent with
+  this project's evidence-honesty principle.
 
 ### Phase 3 — controlled collection (v0.2.0)
 

@@ -1,0 +1,102 @@
+// Copyright 2026 hdyrawan
+//
+// Minimal, hand-authored mirror of the Velociraptor client-search and
+// artifact-catalog messages used by the v0.1.0 read-only visibility
+// tools (velo_search_clients, velo_get_client_info,
+// velo_list_artifact_names, velo_get_artifact_details). Field names and
+// numbers are copied from the upstream Velociraptor project's own proto
+// definitions so these messages are wire-compatible with a real
+// `www.velocidex.com/golang/velociraptor` server:
+//
+//   - api/proto/clients.proto (SearchClientsRequest,
+//     SearchClientsResponse, GetClientRequest, ApiClient,
+//     AgentInformation, Uname)
+//   - artifacts/proto/artifact.proto (Artifact, ArtifactParameter)
+//   - api/proto/artifacts.proto (GetArtifactsRequest, ArtifactDescriptors)
+//
+// Each message here is intentionally a narrow subset of its upstream
+// counterpart: only the fields these four tools actually read are
+// declared. Fields are omitted by field number, not renumbered, so the
+// wire format still matches upstream exactly; a server populating a
+// field this project doesn't declare (e.g. Artifact.sources, which
+// carries the artifact's raw VQL body) simply arrives as an ignored
+// unknown field — this project's generated Go types have no field to
+// decode it into, so artifact VQL text can never reach a tool response
+// even by accident. See docs/security-model.md.
+//
+// Regenerate with (from the repository root):
+//   buf generate internal/velociraptor/veloapi
+syntax = "proto3";
+
+package proto;
+
+option go_package = "github.com/hdyrawan/agentic-velociraptor-mcp/internal/velociraptor/veloapi";
+
+// --- Clients (api/proto/clients.proto) ---
+
+message SearchClientsRequest {
+  uint64 offset = 1;
+  uint64 limit = 2;
+  string query = 3;
+}
+
+message SearchClientsResponse {
+  repeated ApiClient items = 1;
+  uint64 total = 3;
+}
+
+message GetClientRequest {
+  string client_id = 1;
+}
+
+message AgentInformation {
+  string version = 1;
+}
+
+message Uname {
+  string system = 1;
+  string hostname = 2;
+  repeated string mac_addresses = 11;
+}
+
+// ApiClient deliberately omits every field describing GUI/approval
+// state, VFS state, or in-flight flow bookkeeping: velo_search_clients
+// and velo_get_client_info return endpoint identity/metadata only.
+message ApiClient {
+  string client_id = 1;
+  AgentInformation agent_information = 2;
+  Uname os_info = 3;
+  uint64 last_seen_at = 7;
+  string last_ip = 16;
+  repeated string labels = 18;
+}
+
+// --- Artifacts (artifacts/proto/artifact.proto, api/proto/artifacts.proto) ---
+
+message ArtifactParameter {
+  string name = 1;
+  string default = 2;
+  string description = 3;
+  string type = 4;
+}
+
+// Artifact deliberately omits `sources` (field 4, repeated
+// ArtifactSource) and every other field carrying VQL text, tool
+// definitions, or precondition expressions: this project's artifact
+// catalog tools return name/description/parameter metadata only, never
+// a VQL body. See the file-level comment above.
+message Artifact {
+  string name = 1;
+  string description = 2;
+  repeated ArtifactParameter parameters = 3;
+}
+
+message GetArtifactsRequest {
+  string search_term = 3;
+  uint64 number_of_results = 4;
+  repeated string names = 6;
+}
+
+message ArtifactDescriptors {
+  repeated Artifact items = 1;
+}

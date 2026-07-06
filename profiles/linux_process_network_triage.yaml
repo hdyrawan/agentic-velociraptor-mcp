@@ -1,0 +1,19 @@
+# DFIR profile: linux_process_network_triage
+#
+# Provide a combined view of running processes and their associated network connections
+# for investigation on Linux systems where lateral movement or C2 activity is suspected.
+# Artifacts are marked as illustrative unless verified against the production server.
+name: linux_process_network_triage
+display_name: "Linux Process & Network Triage"
+description: >
+  Combined view of running processes and their active network connections on Linux systems.
+target_os: linux
+category: triage
+risk_level: medium
+requires_approval: false
+max_runtime_seconds: 300
+max_result_rows: 1000
+max_result_bytes: 5242880
+artifacts:
+  - name: Linux.System.Pslist
+  - name: Linux.Network.Netstat

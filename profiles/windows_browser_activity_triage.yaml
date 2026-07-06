@@ -1,0 +1,17 @@
+# DFIR profile: windows_browser_activity_triage
+#
+# Collect browser history, cookies, and other web artifacts from a Windows system.
+# Artifacts are marked as illustrative unless verified against the production server.
+name: windows_browser_activity_triage
+display_name: "Windows Browser Activity Triage"
+description: >
+  Gather browsing history and related artifacts on a Windows machine to track user activity.
+target_os: windows
+category: browser-activity
+risk_level: high
+requires_approval: true
+max_runtime_seconds: 300
+max_result_rows: 1000
+max_result_bytes: 5242880
+artifacts:
+  - name: Windows.Browser.History

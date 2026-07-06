@@ -1,0 +1,19 @@
+# DFIR profile: windows_process_network_triage
+#
+# Provide a combined view of running processes and their associated network connections
+# for investigation on Windows systems where lateral movement or C2 activity is suspected.
+# Artifacts are marked as illustrative unless verified against the production server.
+name: windows_process_network_triage
+display_name: "Windows Process & Network Triage"
+description: >
+  Combined view of running processes and their active network connections on Windows systems.
+target_os: windows
+category: triage
+risk_level: medium
+requires_approval: false
+max_runtime_seconds: 300
+max_result_rows: 1000
+max_result_bytes: 5242880
+artifacts:
+  - name: Windows.System.Pslist
+  - name: Windows.Network.Netstat

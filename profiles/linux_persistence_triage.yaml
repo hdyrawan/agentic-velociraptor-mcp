@@ -1,0 +1,18 @@
+# DFIR profile: linux_persistence_triage
+#
+# Identify and analyze mechanisms used for maintaining persistence on a Linux system, 
+# such as cron jobs or systemd units.
+# Artifacts are marked as illustrative unless verified against the production server.
+name: linux_persistence_triage
+display_name: "Linux Persistence Triage"
+description: >
+  Identify and analyze persistence mechanisms on a Linux system (cron, systemd).
+target_os: linux
+category: persistence
+risk_level: medium
+requires_approval: false
+max_runtime_seconds: 300
+max_result_rows: 1000
+max_result_bytes: 5242880
+artifacts:
+  - name: Linux.System.Persistence

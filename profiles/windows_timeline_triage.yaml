@@ -1,0 +1,18 @@
+# DFIR profile: windows_timeline_triage
+#
+# Construct a timeline of events on a Windows system useful for reconstructing 
+# the sequence of actions taken by an attacker.
+# Artifacts are marked as illustrative unless verified against the production server.
+name: windows_timeline_triage
+display_name: "Windows Timeline Triage"
+description: >
+  Create a chronological timeline of events on a Windows system for reconstruction of activities.
+target_os: windows
+category: timeline
+risk_level: high
+requires_approval: true
+max_runtime_sum: 300
+max_result_rows: 1000
+max_result_bytes: 5242880
+artifacts:
+  - name: Windows.System.Timeline

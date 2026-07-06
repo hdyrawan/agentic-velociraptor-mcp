@@ -1,0 +1,18 @@
+# DFIR profile: windows_lateral_movement_triage
+#
+# Detect indicators of lateral movement, such as pass-the-hash,
+# remote execution, or RDP sessions, on Windows systems.
+# Artifacts are marked as illustrative unless verified against the production server.
+name: windows_lateral_movement_triage
+display_name: "Windows Lateral Movement Triage"
+description: >
+  Identify indicators of lateral movement (e.g., pass-the-hash, remote execution) on Windows systems.
+target_os: windows
+category: lateral-movement
+risk_level: high
+requires_approval: false
+max_runtime_seconds: 300
+max_result_rows: 1000
+max_result_bytes: 5242880
+artifacts:
+  - name: Windows.System.LateralMovement

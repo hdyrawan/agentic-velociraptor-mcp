@@ -1,0 +1,18 @@
+# DFIR profile: ioc_diamond_hunt
+#
+# Hunt for specific domain names across all available endpoints.
+# IOC are results of fixed-target domain lookups and do not perform hunt logic.
+# Artifacts are marked as illustrative unless verified against the production server.
+name: ioc_domain_hunt
+display_name: "IOC Domain Hunt"
+description: >
+  Search for known malicious domains across all systems.
+target_os: any
+category: ioc
+risk_level: low
+requires_approval: false
+max_runtime_seconds: 300
+max_result_rows: 1000
+max_result_bytes: 5242880
+artifacts:
+  - name: System.Domain.Hunt

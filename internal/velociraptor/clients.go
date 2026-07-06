@@ -1,6 +1,18 @@
 package velociraptor
 
-import "context"
+import (
+	"context"
+	"errors"
+)
+
+// ErrClientNotFound is returned by GetClientInfo when Velociraptor has
+// no record of the requested client ID. Velociraptor's real GetClient
+// RPC does not error in this case — it returns a zero-value ApiClient —
+// so implementations must detect and translate that themselves (see
+// grpcClient.GetClientInfo); this sentinel gives callers (and their
+// audit/error-message handling) a distinguishable, honest outcome
+// instead of a client record with every field blank.
+var ErrClientNotFound = errors.New("velociraptor: client not found")
 
 // ClientSummary is the subset of Velociraptor client fields exposed by
 // velo_search_clients: enough to identify and triage-select an endpoint,

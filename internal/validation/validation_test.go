@@ -87,6 +87,30 @@ func TestDomain(t *testing.T) {
 	}
 }
 
+func TestSearchQuery(t *testing.T) {
+	valid := []string{"", "WIN-HOST", "10.0.0.5", "label:triage", makeRepeated("a", 256)}
+	for _, q := range valid {
+		if err := SearchQuery(q); err != nil {
+			t.Errorf("SearchQuery(%q) = %v, want nil", q, err)
+		}
+	}
+
+	invalid := []string{"bad\x00query", "bad\nquery", makeRepeated("a", 257)}
+	for _, q := range invalid {
+		if err := SearchQuery(q); err == nil {
+			t.Errorf("SearchQuery(%q) = nil, want error", q)
+		}
+	}
+}
+
+func makeRepeated(s string, n int) string {
+	out := make([]byte, 0, n)
+	for len(out) < n {
+		out = append(out, s...)
+	}
+	return string(out[:n])
+}
+
 func TestValidateHuntScope(t *testing.T) {
 	if err := ValidateHuntScope(HuntScope{ClientIDs: []string{"C.1234abcd5678ef90"}}); err != nil {
 		t.Errorf("valid client_ids scope: %v", err)

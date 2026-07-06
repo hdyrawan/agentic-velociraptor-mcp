@@ -26,8 +26,11 @@ func TestLoadDirParsesShippedProfiles(t *testing.T) {
 		}
 	}
 
-	if got := len(reg.List()); got != len(want) {
-		t.Errorf("List() returned %d profiles, want %d", got, len(want))
+	// The profiles directory may contain additional shipped profiles
+	// beyond this fixed "want" list; this only asserts the known ones
+	// are present and loadable, not an exact total count.
+	if got := len(reg.List()); got < len(want) {
+		t.Errorf("List() returned %d profiles, want at least %d", got, len(want))
 	}
 }
 

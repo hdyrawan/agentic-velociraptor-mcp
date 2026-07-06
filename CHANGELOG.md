@@ -7,6 +7,113 @@ releases begin.
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-07-06
+
+### Fixed — live lab validation of v0.1.0 read-only visibility (2026-07-06)
+
+- Validated the 8-tool read-only surface against a real disposable
+  Velociraptor lab (version 0.76.3) using its generated least-privilege
+  `reader` API identity, over a real stdio subprocess — not just unit
+  tests against fakes. See docs/lab-validation-plan.md's Phase 1/Phase 2
+  sections and PROJECT_STATE.md's "Live lab validation" section for full
+  results, including what remains unverified (the lab had zero enrolled
+  endpoint clients).
+- **Fixed a real bug found by this validation**:
+  `internal/velociraptor/grpcclient.go`'s `GetClientInfo` previously
+  treated Velociraptor's real `GetClient` response for an unknown client
+  ID (a zero-value `ApiClient`, not an error) as a successful lookup,
+  surfacing `velo_get_client_info` results with a hollow client object
+  (`client_id: ""`) instead of an honest not-found message — a violation
+  of this project's evidence-honesty principle. Added
+  `ErrClientNotFound` (`internal/velociraptor/clients.go`) and a check
+  for `resp.GetClientId() == ""` in `GetClientInfo`; the tool now
+  reports `mode: "real"`, no `client` field, and an explanatory message
+  instead. Covered by `TestGRPCClientGetClientInfoNotFound`.
+
+### Added — v0.1.0 read-only Velociraptor visibility
+
+- Implemented the four remaining read-only visibility tools:
+  `velo_search_clients`, `velo_get_client_info`,
+  `velo_list_artifact_names`, `velo_get_artifact_details`. The callable
+  tool inventory is now exactly 8 (up from 4): all five visibility
+  tools plus the three existing DFIR profile tools.
+- `internal/velociraptor/veloapi/`: added `visibility.proto` (message
+  definitions for `SearchClientsRequest`/`Response`, `ApiClient`,
+  `AgentInformation`, `Uname`, `GetClientRequest`,
+  `GetArtifactsRequest`, `ArtifactDescriptors`, `Artifact`,
+  `ArtifactParameter`) and `api.proto` (the `service API` definition,
+  moved out of `health.proto`, now declaring `Check`, `ListClients`,
+  `GetClient`, and `GetArtifacts`). Field names/numbers copied from
+  upstream Velociraptor's `api/proto/clients.proto`,
+  `api/proto/artifacts.proto`, and `artifacts/proto/artifact.proto`
+  (fetched directly from `Velocidex/velociraptor` on GitHub on
+  2026-07-05). `Artifact` and its `ArtifactParameter` deliberately omit
+  every field carrying VQL text (`sources`, `precondition`, etc.) — see
+  docs/security-model.md's updated "Dependency surface" section.
+  Regenerated with `buf generate` (same `protoc-gen-go`/`protoc-gen-go-grpc`
+  toolchain as `health.proto`).
+- Chose Velociraptor's purpose-built `ListClients`, `GetClient`, and
+  `GetArtifacts` gRPC RPCs over the generic `Query` (streaming VQL) RPC
+  for all four new tools: every caller-supplied value (search query,
+  client ID, artifact name) is bound as a plain protobuf field, never a
+  VQL string or parameter, so none of `internal/vql`'s
+  template/parameter-binding machinery was needed for this milestone.
+- `internal/velociraptor/grpcclient.go`: `grpcClient` gained
+  `SearchClients`, `GetClientInfo`, `ListArtifactNames`, and
+  `GetArtifactDetails`, each timeout-bounded via the existing
+  `c.timeout` and routed through the existing `sanitizeTLSError`.
+  `NewGRPCClient` gained a `maxRows` parameter
+  (`config.VelociraptorConfig.MaxRows`) used to bound
+  `SearchClients`/`ListArtifactNames` result counts server- and
+  client-side (`boundLimit`/`effectiveMaxRows`; a non-positive value
+  falls back to an internal `defaultMaxRows = 100` rather than being
+  unbounded). Three new narrow seam interfaces (`clientSearcher`,
+  `clientGetter`, `artifactCatalog`), mirroring the existing
+  `healthChecker` pattern, keep every new method testable against fakes
+  with no real TLS/network setup.
+- `internal/validation`: added `SearchQuery` (length cap, rejects
+  control characters) for `velo_search_clients`'s free-text filter —
+  defense in depth only, since the query is always bound as a plain
+  protobuf field, never concatenated into anything.
+- `internal/policy`: added `Engine.AllowListAllArtifacts()`, backing
+  `velo_list_artifact_names`'/`velo_get_artifact_details`' allowlist
+  gating (`policy.allow_list_all_artifacts`); `ArtifactAllowed` remains
+  the sole gate for actually *using* an artifact in a future
+  collection/hunt.
+- `internal/mcpserver/tools_visibility.go`: all four new handlers follow
+  `velo_health_check`'s existing evidence-honesty pattern — every
+  response carries a `mode` field (`"mock"`/`"real"`), connectivity or
+  lookup failures are reported as a normal structured result (empty/`nil`
+  data plus a `message`) rather than a Go-level tool error, and only
+  input-validation failures (malformed client ID/artifact name/search
+  query) or policy-allowlist blocks return a Go-level error with a
+  `blocked` audit outcome. Every call still produces exactly one audit
+  event.
+- `cmd/agentic-velociraptor-mcp`: `buildDeps` now passes
+  `cfg.Velociraptor.MaxRows` into `NewGRPCClient`.
+- Tests: `grpcclient_test.go` gained fakes (`fakeClientSearcher`,
+  `fakeClientGetter`, `fakeArtifactCatalog`) and success/error/timeout/
+  limit-bounding/no-secret-leakage tests for all four new methods.
+  `tools_visibility_test.go` gained mock-mode, real-mode
+  success/error, invalid-input, and allowlist-gating tests for all four
+  new handlers, plus a `fakeVisibilityClient`. `server_test.go`'s
+  exact-inventory test now expects 8 tools, and gained
+  `TestNewNeverRegistersUnsafeTools` (no collect/hunt/download/cancel/
+  vql-named tool is ever callable) and an MCP-session-level call test
+  for all four new tools. `internal/validation` gained `TestSearchQuery`.
+  De-brittled two pre-existing, out-of-scope test assertions
+  (`dfir.TestLoadDirParsesShippedProfiles`,
+  `mcpserver.TestListDFIRProfilesHandlerReturnsShippedProfiles`) that
+  hardcoded an exact profile count against `profiles/`'s contents, which
+  had already grown independently of this milestone; both now assert
+  "at least" the known profiles load, per this milestone's constraint
+  not to touch `profiles/` or `docs/dfir-profiles.md`.
+- Docs: README, PROJECT_STATE, docs/tool-reference.md,
+  docs/security-model.md (extended "Dependency surface" and "Evidence
+  honesty" sections), docs/lab-validation-plan.md (Phase 2 filled in),
+  docs/configuration.md (`read_api_config_path`/`max_rows` field notes
+  updated for the new tools).
+
 ### Added — v0.1.0-alpha.2 real Velociraptor health check
 
 - Added `google.golang.org/grpc` and `google.golang.org/protobuf` as

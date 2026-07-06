@@ -1,0 +1,46 @@
+// Copyright 2026 hdyrawan
+//
+// Minimal, hand-authored mirror of the subset of Velociraptor's
+// `service API` (package `proto`, see api/proto/api.proto upstream)
+// that this project calls: Check, ListClients, GetClient, and
+// GetArtifacts. Because gRPC dispatches by fully-qualified method name
+// (e.g. "/proto.API/ListClients"), this minimal service definition
+// reaches the same server-side handlers as the upstream client would,
+// without this project needing the other ~50 RPCs Velociraptor's API
+// service exposes (hunts, collections, VFS, users, notebooks, the
+// generic VQL Query RPC, ...), none of which this project's read-only
+// visibility tools need or are permitted to use.
+//
+// Every RPC below is read-only against Velociraptor server-side state
+// (it never launches a flow, hunt, or artifact collection). See
+// docs/security-model.md and PROJECT_PLAN.md's v0.1.0 scope.
+//
+// Regenerate with (from the repository root):
+//   buf generate internal/velociraptor/veloapi
+syntax = "proto3";
+
+package proto;
+
+option go_package = "github.com/hdyrawan/agentic-velociraptor-mcp/internal/velociraptor/veloapi";
+
+import "health.proto";
+import "visibility.proto";
+
+service API {
+  // Health check protocol as in
+  // https://github.com/grpc/grpc/blob/master/doc/health-checking.md
+  rpc Check(HealthCheckRequest) returns (HealthCheckResponse);
+
+  // Search for clients by hostname/IP/label substring (Velociraptor's
+  // own client search syntax, not VQL). Backs velo_search_clients.
+  rpc ListClients(SearchClientsRequest) returns (SearchClientsResponse);
+
+  // Fetch one client's endpoint metadata by ID. Backs
+  // velo_get_client_info.
+  rpc GetClient(GetClientRequest) returns (ApiClient);
+
+  // Fetch artifact catalog entries, optionally filtered by search term
+  // or exact name. Backs velo_list_artifact_names and
+  // velo_get_artifact_details.
+  rpc GetArtifacts(GetArtifactsRequest) returns (ArtifactDescriptors);
+}

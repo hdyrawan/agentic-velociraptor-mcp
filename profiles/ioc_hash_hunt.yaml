@@ -1,0 +1,18 @@
+# DFIR profile: ioc_hash_hunt
+#
+# Hunt for specific file hashes across all available endpoints.
+# IOC are results of fixed-target hash lookups and do not perform hunt logic.
+# Artifacts are marked as illustrative unless verified against the production server.
+name: ioc_hash_hunt
+display_name: "IOC Hash Hunt"
+description: >
+  Search for known malicious file hashes across all systems.
+target_os: any
+category: ioc
+risk_level: low
+requires_approval: false
+max_runtime_seconds: 300
+max_result_rows: 1000
+max_result_bytes: 5242880
+artifacts:
+  - name: System.Hash.Hunt

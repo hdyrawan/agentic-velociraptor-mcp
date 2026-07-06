@@ -1,26 +1,24 @@
 // Copyright 2026 hdyrawan
 //
-// Minimal, hand-authored mirror of the single gRPC method this project
-// calls on a Velociraptor server: API.Check (a health check, modeled on
-// the standard gRPC health-checking protocol). Field names, numbers,
-// and the package/service names below are copied from the upstream
-// Velociraptor project's own proto definitions so that this message
-// is wire-compatible with a real `www.velocidex.com/golang/velociraptor`
-// server:
+// Minimal, hand-authored mirror of the health-check messages Velociraptor
+// servers expose. Field names, numbers, and the package name below are
+// copied from the upstream Velociraptor project's own proto definitions
+// so that this message is wire-compatible with a real
+// `www.velocidex.com/golang/velociraptor` server:
 //
 //   - api/proto/health.proto (HealthCheckRequest, HealthCheckResponse)
-//   - api/proto/api.proto (`service API { rpc Check(...) ... }`)
 //   - api/health.go (server-side handler: ignores the request entirely
 //     and returns SERVING unconditionally once a call authenticates)
 //
 // This project deliberately does NOT import the upstream
 // Velocidex/velociraptor Go module (it is a full DFIR server, not a thin
 // client library, and pulls in a large, unrelated dependency tree). This
-// file instead defines only the one RPC this project actually calls, so
-// the generated client stub is small, auditable, and has no other
-// capability. No VQL execution, collection, hunt, or other RPC is
-// defined here — see docs/security-model.md and PROJECT_PLAN.md for why
-// those remain out of scope.
+// file (together with visibility.proto and api.proto) instead defines
+// only the messages/RPCs this project actually calls, so the generated
+// client stub is small, auditable, and has no other capability. No VQL
+// execution, collection, hunt, or other RPC is defined here — see
+// docs/security-model.md and PROJECT_PLAN.md for why those remain out of
+// scope.
 //
 // Regenerate with (from the repository root):
 //   buf generate internal/velociraptor/veloapi
@@ -197,9 +195,7 @@ const file_health_proto_rawDesc = "" +
 	"\rServingStatus\x12\v\n" +
 	"\aUNKNOWN\x10\x00\x12\v\n" +
 	"\aSERVING\x10\x01\x12\x0f\n" +
-	"\vNOT_SERVING\x10\x022E\n" +
-	"\x03API\x12>\n" +
-	"\x05Check\x12\x19.proto.HealthCheckRequest\x1a\x1a.proto.HealthCheckResponseBLZJgithub.com/hdyrawan/agentic-velociraptor-mcp/internal/velociraptor/veloapib\x06proto3"
+	"\vNOT_SERVING\x10\x02BLZJgithub.com/hdyrawan/agentic-velociraptor-mcp/internal/velociraptor/veloapib\x06proto3"
 
 var (
 	file_health_proto_rawDescOnce sync.Once
@@ -222,10 +218,8 @@ var file_health_proto_goTypes = []any{
 }
 var file_health_proto_depIdxs = []int32{
 	0, // 0: proto.HealthCheckResponse.status:type_name -> proto.HealthCheckResponse.ServingStatus
-	1, // 1: proto.API.Check:input_type -> proto.HealthCheckRequest
-	2, // 2: proto.API.Check:output_type -> proto.HealthCheckResponse
-	2, // [2:3] is the sub-list for method output_type
-	1, // [1:2] is the sub-list for method input_type
+	1, // [1:1] is the sub-list for method output_type
+	1, // [1:1] is the sub-list for method input_type
 	1, // [1:1] is the sub-list for extension type_name
 	1, // [1:1] is the sub-list for extension extendee
 	0, // [0:1] is the sub-list for field type_name
@@ -244,7 +238,7 @@ func file_health_proto_init() {
 			NumEnums:      1,
 			NumMessages:   2,
 			NumExtensions: 0,
-			NumServices:   1,
+			NumServices:   0,
 		},
 		GoTypes:           file_health_proto_goTypes,
 		DependencyIndexes: file_health_proto_depIdxs,

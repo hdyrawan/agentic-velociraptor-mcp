@@ -1,0 +1,18 @@
+# DFIR profile: windows_eventlog_triage
+#
+# Collect various Windows system, security, and application event logs 
+# to provide insight into system activities over time.
+# Artifacts are marked as illustrative unless verified against the production server.
+name: windows_eventlog_triage
+display_name: "Windows Event Log Triage"
+description: >
+  Collect critical Windows event logs (system, security, application) for analysis on a Windows system.
+target_os: windows
+category: eventlog
+risk_level: medium
+requires_approval: false
+max_runtime_seconds: 300
+max_result_rows: 1000
+max_result_bytes: 5242880
+artifacts:
+  - name: Windows.System.EventLogs
