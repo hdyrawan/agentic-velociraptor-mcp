@@ -1,0 +1,21 @@
+// Copyright 2026 hdyrawan
+//
+// Minimal mirror of actions/proto/vql.proto's VQLEnv message: a single
+// key/value pair used to bind one artifact parameter. This is the only
+// mechanism this project uses to pass a value into a collection or
+// hunt — the value always lands in VQLEnv.value, a plain protobuf
+// string field, never interpolated into a query string. See
+// docs/security-model.md.
+//
+// Regenerate with (from the repository root):
+//   buf generate internal/velociraptor/veloapi
+syntax = "proto3";
+
+package proto;
+
+option go_package = "github.com/hdyrawan/agentic-velociraptor-mcp/internal/velociraptor/veloapi";
+
+message VQLEnv {
+  string key = 1;
+  string value = 2;
+}

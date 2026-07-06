@@ -1,0 +1,58 @@
+// Copyright 2026 hdyrawan
+//
+// Minimal mirror of api/proto/csv.proto's GetTableRequest/Row/
+// GetTableResponse messages, wire-compatible with a real Velociraptor
+// server (field names/numbers copied from upstream). Velociraptor's
+// GetTable/GetClientFlows/GetHuntFlows/GetHuntResults RPCs all return
+// GetTableResponse: a fixed column-name list plus one JSON-encoded
+// array per row (Row.json). This project decodes those rows generically
+// by zipping GetTableResponse.columns against each row's JSON array —
+// never by parsing or constructing VQL text; the row shape is whatever
+// columns the artifact/RPC declares, and both flow/hunt results and
+// upload metadata reuse the same decoder (see
+// internal/velociraptor/table.go).
+//
+// GetTableRequest.type selects which table a request reads (Velociraptor
+// server-side concern, not this project's): "" for an artifact's own
+// collected rows, "uploads" for a flow's upload metadata, "clients"/
+// "hunt_status" for hunt tables. This project only ever sets Type to one
+// of these fixed literals, never a caller-supplied string.
+//
+// Regenerate with (from the repository root):
+//   buf generate internal/velociraptor/veloapi
+syntax = "proto3";
+
+package proto;
+
+option go_package = "github.com/hdyrawan/agentic-velociraptor-mcp/internal/velociraptor/veloapi";
+
+message GetTableRequest {
+  uint64 rows = 2;
+  uint64 start_row = 3;
+
+  string client_id = 4;
+  string flow_id = 5;
+  string artifact = 6;
+
+  // Can be "uploads" for a flow's upload metadata table; empty for the
+  // artifact's own collected rows.
+  string type = 7;
+
+  string hunt_id = 8;
+
+  string sort_column = 19;
+  bool sort_direction = 20;
+}
+
+message Row {
+  // The row encoded as a JSON array: the entire JSON []interface{}
+  // serialized into a single JSON string, positionally matching
+  // GetTableResponse.columns.
+  string json = 2;
+}
+
+message GetTableResponse {
+  repeated string columns = 1;
+  repeated Row rows = 2;
+  int64 total_rows = 3;
+}

@@ -643,7 +643,7 @@ func TestGetHuntStatusSuccessReal(t *testing.T) {
 	}
 
 	handler := newGetHuntStatusHandler(deps)
-	_, out, err := handler(context.Background(), nil, GetHuntStatusInput{HuntID: "H.1"})
+	_, out, err := handler(context.Background(), nil, GetHuntStatusInput{HuntID: "H.1111aaaa2222bbbb"})
 	if err != nil {
 		t.Fatalf("handler: %v", err)
 	}
@@ -693,7 +693,7 @@ func TestGetHuntStatusMock(t *testing.T) {
 	deps, sink, _ := testHuntDeps(t)
 	handler := newGetHuntStatusHandler(deps)
 
-	_, out, err := handler(context.Background(), nil, GetHuntStatusInput{HuntID: "H.1"})
+	_, out, err := handler(context.Background(), nil, GetHuntStatusInput{HuntID: "H.1111aaaa2222bbbb"})
 	if err != nil {
 		t.Fatalf("handler: %v", err)
 	}
@@ -728,7 +728,7 @@ func TestGetHuntResultsSuccessReal(t *testing.T) {
 	}
 
 	handler := newGetHuntResultsHandler(deps)
-	_, out, err := handler(context.Background(), nil, GetHuntResultsInput{HuntID: "H.1", Limit: 10})
+	_, out, err := handler(context.Background(), nil, GetHuntResultsInput{HuntID: "H.1111aaaa2222bbbb", Limit: 10})
 	if err != nil {
 		t.Fatalf("handler: %v", err)
 	}
@@ -763,7 +763,7 @@ func TestGetHuntResultsEmpty(t *testing.T) {
 	}
 
 	handler := newGetHuntResultsHandler(deps)
-	_, out, err := handler(context.Background(), nil, GetHuntResultsInput{HuntID: "H.1"})
+	_, out, err := handler(context.Background(), nil, GetHuntResultsInput{HuntID: "H.1111aaaa2222bbbb"})
 	if err != nil {
 		t.Fatalf("handler: %v", err)
 	}
@@ -820,7 +820,7 @@ func TestGetHuntResultsBoundLimit(t *testing.T) {
 	}
 
 	handler := newGetHuntResultsHandler(deps)
-	_, out, err := handler(context.Background(), nil, GetHuntResultsInput{HuntID: "H.1", Limit: 5})
+	_, out, err := handler(context.Background(), nil, GetHuntResultsInput{HuntID: "H.1111aaaa2222bbbb", Limit: 5})
 	if err != nil {
 		t.Fatalf("handler: %v", err)
 	}
@@ -850,7 +850,7 @@ func TestGetHuntResultsPaginationCursor(t *testing.T) {
 	}
 
 	handler := newGetHuntResultsHandler(deps)
-	_, out, err := handler(context.Background(), nil, GetHuntResultsInput{HuntID: "H.1", Limit: 10})
+	_, out, err := handler(context.Background(), nil, GetHuntResultsInput{HuntID: "H.1111aaaa2222bbbb", Limit: 10})
 	if err != nil {
 		t.Fatalf("handler: %v", err)
 	}

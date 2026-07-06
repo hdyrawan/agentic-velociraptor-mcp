@@ -2,18 +2,25 @@
 //
 // Minimal, hand-authored mirror of the subset of Velociraptor's
 // `service API` (package `proto`, see api/proto/api.proto upstream)
-// that this project calls: Check, ListClients, GetClient, and
-// GetArtifacts. Because gRPC dispatches by fully-qualified method name
+// that this project calls: Check, ListClients, GetClient, GetArtifacts,
+// plus (as of v0.9.0) the typed flow/collection, upload, and hunt RPCs
+// listed below. Because gRPC dispatches by fully-qualified method name
 // (e.g. "/proto.API/ListClients"), this minimal service definition
 // reaches the same server-side handlers as the upstream client would,
-// without this project needing the other ~50 RPCs Velociraptor's API
-// service exposes (hunts, collections, VFS, users, notebooks, the
-// generic VQL Query RPC, ...), none of which this project's read-only
-// visibility tools need or are permitted to use.
+// without this project needing the other RPCs Velociraptor's API
+// service exposes (VFS browsing beyond VFSGetBuffer, users, notebooks,
+// the generic free-form VQL Query RPC, ...), none of which this
+// project's tools need or are permitted to use.
 //
-// Every RPC below is read-only against Velociraptor server-side state
-// (it never launches a flow, hunt, or artifact collection). See
-// docs/security-model.md and PROJECT_PLAN.md's v0.1.0 scope.
+// None of the RPCs below accept or return caller-supplied VQL text: flow
+// results and hunt results are read via the fixed GetTable/GetHuntResults
+// RPCs (whatever server-side query backs them is Velociraptor's own,
+// internal, non-parameterized-by-us implementation detail — this
+// project only ever sends client_id/flow_id/artifact/hunt_id/type
+// values, never a query string), and collections/hunts are launched via
+// ArtifactCollectorArgs/Hunt, which reference artifacts by name and bind
+// parameters as VQLEnv key/value pairs, never raw VQL. See
+// docs/security-model.md.
 //
 // Regenerate with (from the repository root):
 //   buf generate internal/velociraptor/veloapi
@@ -29,6 +36,7 @@ package veloapi
 import (
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
+	emptypb "google.golang.org/protobuf/types/known/emptypb"
 	reflect "reflect"
 	unsafe "unsafe"
 )
@@ -44,37 +52,93 @@ var File_api_proto protoreflect.FileDescriptor
 
 const file_api_proto_rawDesc = "" +
 	"\n" +
-	"\tapi.proto\x12\x05proto\x1a\fhealth.proto\x1a\x10visibility.proto2\x8f\x02\n" +
+	"\tapi.proto\x12\x05proto\x1a\x1bgoogle/protobuf/empty.proto\x1a\fhealth.proto\x1a\x10visibility.proto\x1a\vflows.proto\x1a\vhunts.proto\x1a\vtable.proto\x1a\tvfs.proto2\x80\b\n" +
 	"\x03API\x12>\n" +
 	"\x05Check\x12\x19.proto.HealthCheckRequest\x1a\x1a.proto.HealthCheckResponse\x12H\n" +
 	"\vListClients\x12\x1b.proto.SearchClientsRequest\x1a\x1c.proto.SearchClientsResponse\x126\n" +
 	"\tGetClient\x12\x17.proto.GetClientRequest\x1a\x10.proto.ApiClient\x12F\n" +
-	"\fGetArtifacts\x12\x1a.proto.GetArtifactsRequest\x1a\x1a.proto.ArtifactDescriptorsBLZJgithub.com/hdyrawan/agentic-velociraptor-mcp/internal/velociraptor/veloapib\x06proto3"
+	"\fGetArtifacts\x12\x1a.proto.GetArtifactsRequest\x1a\x1a.proto.ArtifactDescriptors\x12A\n" +
+	"\x0eGetClientFlows\x12\x16.proto.GetTableRequest\x1a\x17.proto.GetTableResponse\x12;\n" +
+	"\x0eGetFlowDetails\x12\x15.proto.ApiFlowRequest\x1a\x12.proto.FlowDetails\x12;\n" +
+	"\bGetTable\x12\x16.proto.GetTableRequest\x1a\x17.proto.GetTableResponse\x12Q\n" +
+	"\x0fCollectArtifact\x12\x1c.proto.ArtifactCollectorArgs\x1a .proto.ArtifactCollectorResponse\x12=\n" +
+	"\n" +
+	"CancelFlow\x12\x15.proto.ApiFlowRequest\x1a\x18.proto.StartFlowResponse\x12:\n" +
+	"\fVFSGetBuffer\x12\x14.proto.VFSFileBuffer\x1a\x14.proto.VFSFileBuffer\x123\n" +
+	"\n" +
+	"CreateHunt\x12\v.proto.Hunt\x1a\x18.proto.StartFlowResponse\x129\n" +
+	"\n" +
+	"ModifyHunt\x12\x13.proto.HuntMutation\x1a\x16.google.protobuf.Empty\x12>\n" +
+	"\tListHunts\x12\x17.proto.ListHuntsRequest\x1a\x18.proto.ListHuntsResponse\x12-\n" +
+	"\aGetHunt\x12\x15.proto.GetHuntRequest\x1a\v.proto.Hunt\x12G\n" +
+	"\x0eGetHuntResults\x12\x1c.proto.GetHuntResultsRequest\x1a\x17.proto.GetTableResponse\x12<\n" +
+	"\fEstimateHunt\x12\x1a.proto.HuntEstimateRequest\x1a\x10.proto.HuntStatsBLZJgithub.com/hdyrawan/agentic-velociraptor-mcp/internal/velociraptor/veloapib\x06proto3"
 
 var file_api_proto_goTypes = []any{
-	(*HealthCheckRequest)(nil),    // 0: proto.HealthCheckRequest
-	(*SearchClientsRequest)(nil),  // 1: proto.SearchClientsRequest
-	(*GetClientRequest)(nil),      // 2: proto.GetClientRequest
-	(*GetArtifactsRequest)(nil),   // 3: proto.GetArtifactsRequest
-	(*HealthCheckResponse)(nil),   // 4: proto.HealthCheckResponse
-	(*SearchClientsResponse)(nil), // 5: proto.SearchClientsResponse
-	(*ApiClient)(nil),             // 6: proto.ApiClient
-	(*ArtifactDescriptors)(nil),   // 7: proto.ArtifactDescriptors
+	(*HealthCheckRequest)(nil),        // 0: proto.HealthCheckRequest
+	(*SearchClientsRequest)(nil),      // 1: proto.SearchClientsRequest
+	(*GetClientRequest)(nil),          // 2: proto.GetClientRequest
+	(*GetArtifactsRequest)(nil),       // 3: proto.GetArtifactsRequest
+	(*GetTableRequest)(nil),           // 4: proto.GetTableRequest
+	(*ApiFlowRequest)(nil),            // 5: proto.ApiFlowRequest
+	(*ArtifactCollectorArgs)(nil),     // 6: proto.ArtifactCollectorArgs
+	(*VFSFileBuffer)(nil),             // 7: proto.VFSFileBuffer
+	(*Hunt)(nil),                      // 8: proto.Hunt
+	(*HuntMutation)(nil),              // 9: proto.HuntMutation
+	(*ListHuntsRequest)(nil),          // 10: proto.ListHuntsRequest
+	(*GetHuntRequest)(nil),            // 11: proto.GetHuntRequest
+	(*GetHuntResultsRequest)(nil),     // 12: proto.GetHuntResultsRequest
+	(*HuntEstimateRequest)(nil),       // 13: proto.HuntEstimateRequest
+	(*HealthCheckResponse)(nil),       // 14: proto.HealthCheckResponse
+	(*SearchClientsResponse)(nil),     // 15: proto.SearchClientsResponse
+	(*ApiClient)(nil),                 // 16: proto.ApiClient
+	(*ArtifactDescriptors)(nil),       // 17: proto.ArtifactDescriptors
+	(*GetTableResponse)(nil),          // 18: proto.GetTableResponse
+	(*FlowDetails)(nil),               // 19: proto.FlowDetails
+	(*ArtifactCollectorResponse)(nil), // 20: proto.ArtifactCollectorResponse
+	(*StartFlowResponse)(nil),         // 21: proto.StartFlowResponse
+	(*emptypb.Empty)(nil),             // 22: google.protobuf.Empty
+	(*ListHuntsResponse)(nil),         // 23: proto.ListHuntsResponse
+	(*HuntStats)(nil),                 // 24: proto.HuntStats
 }
 var file_api_proto_depIdxs = []int32{
-	0, // 0: proto.API.Check:input_type -> proto.HealthCheckRequest
-	1, // 1: proto.API.ListClients:input_type -> proto.SearchClientsRequest
-	2, // 2: proto.API.GetClient:input_type -> proto.GetClientRequest
-	3, // 3: proto.API.GetArtifacts:input_type -> proto.GetArtifactsRequest
-	4, // 4: proto.API.Check:output_type -> proto.HealthCheckResponse
-	5, // 5: proto.API.ListClients:output_type -> proto.SearchClientsResponse
-	6, // 6: proto.API.GetClient:output_type -> proto.ApiClient
-	7, // 7: proto.API.GetArtifacts:output_type -> proto.ArtifactDescriptors
-	4, // [4:8] is the sub-list for method output_type
-	0, // [0:4] is the sub-list for method input_type
-	0, // [0:0] is the sub-list for extension type_name
-	0, // [0:0] is the sub-list for extension extendee
-	0, // [0:0] is the sub-list for field type_name
+	0,  // 0: proto.API.Check:input_type -> proto.HealthCheckRequest
+	1,  // 1: proto.API.ListClients:input_type -> proto.SearchClientsRequest
+	2,  // 2: proto.API.GetClient:input_type -> proto.GetClientRequest
+	3,  // 3: proto.API.GetArtifacts:input_type -> proto.GetArtifactsRequest
+	4,  // 4: proto.API.GetClientFlows:input_type -> proto.GetTableRequest
+	5,  // 5: proto.API.GetFlowDetails:input_type -> proto.ApiFlowRequest
+	4,  // 6: proto.API.GetTable:input_type -> proto.GetTableRequest
+	6,  // 7: proto.API.CollectArtifact:input_type -> proto.ArtifactCollectorArgs
+	5,  // 8: proto.API.CancelFlow:input_type -> proto.ApiFlowRequest
+	7,  // 9: proto.API.VFSGetBuffer:input_type -> proto.VFSFileBuffer
+	8,  // 10: proto.API.CreateHunt:input_type -> proto.Hunt
+	9,  // 11: proto.API.ModifyHunt:input_type -> proto.HuntMutation
+	10, // 12: proto.API.ListHunts:input_type -> proto.ListHuntsRequest
+	11, // 13: proto.API.GetHunt:input_type -> proto.GetHuntRequest
+	12, // 14: proto.API.GetHuntResults:input_type -> proto.GetHuntResultsRequest
+	13, // 15: proto.API.EstimateHunt:input_type -> proto.HuntEstimateRequest
+	14, // 16: proto.API.Check:output_type -> proto.HealthCheckResponse
+	15, // 17: proto.API.ListClients:output_type -> proto.SearchClientsResponse
+	16, // 18: proto.API.GetClient:output_type -> proto.ApiClient
+	17, // 19: proto.API.GetArtifacts:output_type -> proto.ArtifactDescriptors
+	18, // 20: proto.API.GetClientFlows:output_type -> proto.GetTableResponse
+	19, // 21: proto.API.GetFlowDetails:output_type -> proto.FlowDetails
+	18, // 22: proto.API.GetTable:output_type -> proto.GetTableResponse
+	20, // 23: proto.API.CollectArtifact:output_type -> proto.ArtifactCollectorResponse
+	21, // 24: proto.API.CancelFlow:output_type -> proto.StartFlowResponse
+	7,  // 25: proto.API.VFSGetBuffer:output_type -> proto.VFSFileBuffer
+	21, // 26: proto.API.CreateHunt:output_type -> proto.StartFlowResponse
+	22, // 27: proto.API.ModifyHunt:output_type -> google.protobuf.Empty
+	23, // 28: proto.API.ListHunts:output_type -> proto.ListHuntsResponse
+	8,  // 29: proto.API.GetHunt:output_type -> proto.Hunt
+	18, // 30: proto.API.GetHuntResults:output_type -> proto.GetTableResponse
+	24, // 31: proto.API.EstimateHunt:output_type -> proto.HuntStats
+	16, // [16:32] is the sub-list for method output_type
+	0,  // [0:16] is the sub-list for method input_type
+	0,  // [0:0] is the sub-list for extension type_name
+	0,  // [0:0] is the sub-list for extension extendee
+	0,  // [0:0] is the sub-list for field type_name
 }
 
 func init() { file_api_proto_init() }
@@ -84,6 +148,10 @@ func file_api_proto_init() {
 	}
 	file_health_proto_init()
 	file_visibility_proto_init()
+	file_flows_proto_init()
+	file_hunts_proto_init()
+	file_table_proto_init()
+	file_vfs_proto_init()
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{

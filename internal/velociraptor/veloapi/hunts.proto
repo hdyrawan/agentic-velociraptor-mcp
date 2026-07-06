@@ -1,0 +1,117 @@
+// Copyright 2026 hdyrawan
+//
+// Minimal mirror of api/proto/hunts.proto: the subset of Velociraptor's
+// hunt messages this project's hunt management tools need. Field names
+// and numbers are copied from upstream so these messages stay
+// wire-compatible with a real server.
+//
+// HuntCondition deliberately has only two real targeting modes: a set of
+// labels (HuntLabelCondition) or an operating system
+// (HuntOsCondition) — the same two modes upstream Velociraptor itself
+// supports for a hunt's condition. There is no field anywhere in
+// Velociraptor's hunt proto for "this explicit list of client IDs"; a
+// hunt can only be scoped by label, by OS, or left unset (all clients).
+// See docs/security-model.md's hunt-scope section for what this means
+// for this project's client_ids hunt-scope input.
+//
+// Regenerate with (from the repository root):
+//   buf generate internal/velociraptor/veloapi
+syntax = "proto3";
+
+package proto;
+
+option go_package = "github.com/hdyrawan/agentic-velociraptor-mcp/internal/velociraptor/veloapi";
+
+import "flows.proto";
+
+message HuntLabelCondition {
+  repeated string label = 1;
+}
+
+message HuntOsCondition {
+  enum OS {
+    ALL = 0;
+    WINDOWS = 1;
+    LINUX = 2;
+    OSX = 3;
+  }
+  OS os = 1;
+}
+
+message HuntCondition {
+  HuntLabelCondition excluded_labels = 4;
+
+  oneof union_field {
+    HuntLabelCondition labels = 2;
+    HuntOsCondition os = 3;
+  }
+}
+
+// HuntStats deliberately omits every stat this project doesn't surface
+// (upload/row counters, download links, ...); EstimateHunt only ever
+// populates total_clients_scheduled.
+message HuntStats {
+  uint64 total_clients_scheduled = 9;
+}
+
+message Hunt {
+  string hunt_id = 1;
+  uint64 create_time = 2;
+  string creator = 12;
+  uint64 start_time = 21;
+  string hunt_description = 11;
+
+  ArtifactCollectorArgs start_request = 16;
+  HuntCondition condition = 4;
+  uint64 client_limit = 6;
+  HuntStats stats = 18;
+  repeated string artifacts = 17;
+
+  enum State {
+    UNSET = 0;
+    PAUSED = 1;
+    RUNNING = 2;
+    STOPPED = 3;
+    ARCHIVED = 4;
+    DELETED = 5;
+  }
+  State state = 8;
+}
+
+message HuntEstimateRequest {
+  uint64 last_active = 1;
+  HuntCondition condition = 4;
+}
+
+message ListHuntsRequest {
+  uint64 offset = 1;
+  uint64 count = 2;
+  bool include_archived = 3;
+  bool summary = 4;
+}
+
+message ListHuntsResponse {
+  repeated Hunt items = 1;
+  int64 total = 2;
+}
+
+message GetHuntRequest {
+  string hunt_id = 1;
+}
+
+message GetHuntResultsRequest {
+  uint64 offset = 1;
+  uint64 count = 2;
+  string hunt_id = 3;
+  string artifact = 4;
+}
+
+// HuntMutation deliberately exposes only hunt_id/state/user: this
+// project only ever uses ModifyHunt to stop a hunt
+// (state = Hunt.State.STOPPED), never to change its description, tags,
+// expiry, or assign an existing flow to it.
+message HuntMutation {
+  string hunt_id = 1;
+  Hunt.State state = 4;
+  string user = 9;
+}

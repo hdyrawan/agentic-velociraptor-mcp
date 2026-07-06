@@ -480,9 +480,13 @@ type GetHuntStatusOutput struct {
 
 func newGetHuntStatusHandler(deps Deps) mcp.ToolHandlerFor[GetHuntStatusInput, GetHuntStatusOutput] {
 	return func(ctx context.Context, req *mcp.CallToolRequest, in GetHuntStatusInput) (*mcp.CallToolResult, GetHuntStatusOutput, error) {
-		if in.HuntID == "" {
-			recordAudit(deps, audit.Event{Tool: "velo_get_hunt_status", Outcome: audit.OutcomeBlocked, Reason: "missing hunt_id"})
-			return nil, GetHuntStatusOutput{}, fmt.Errorf("hunt_id is required")
+		if err := validation.HuntID(in.HuntID); err != nil {
+			reason := "invalid hunt id syntax"
+			if in.HuntID == "" {
+				reason = "missing hunt_id"
+			}
+			recordAudit(deps, audit.Event{Tool: "velo_get_hunt_status", Outcome: audit.OutcomeBlocked, HuntID: in.HuntID, Reason: reason})
+			return nil, GetHuntStatusOutput{}, err
 		}
 
 		if deps.VelociraptorReadMode != VelociraptorModeReal {
@@ -535,9 +539,13 @@ type GetHuntResultsOutput struct {
 
 func newGetHuntResultsHandler(deps Deps) mcp.ToolHandlerFor[GetHuntResultsInput, GetHuntResultsOutput] {
 	return func(ctx context.Context, req *mcp.CallToolRequest, in GetHuntResultsInput) (*mcp.CallToolResult, GetHuntResultsOutput, error) {
-		if in.HuntID == "" {
-			recordAudit(deps, audit.Event{Tool: "velo_get_hunt_results", Outcome: audit.OutcomeBlocked, Reason: "missing hunt_id"})
-			return nil, GetHuntResultsOutput{}, fmt.Errorf("hunt_id is required")
+		if err := validation.HuntID(in.HuntID); err != nil {
+			reason := "invalid hunt id syntax"
+			if in.HuntID == "" {
+				reason = "missing hunt_id"
+			}
+			recordAudit(deps, audit.Event{Tool: "velo_get_hunt_results", Outcome: audit.OutcomeBlocked, HuntID: in.HuntID, Reason: reason})
+			return nil, GetHuntResultsOutput{}, err
 		}
 
 		limit := boundToolLimit(in.Limit, configuredMaxRows(deps))
