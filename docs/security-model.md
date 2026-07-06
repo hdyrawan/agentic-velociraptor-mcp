@@ -193,6 +193,13 @@ Velociraptor data supports. Concretely:
   `velociraptor.ErrClientNotFound` / the new `velociraptor.ErrArtifactNotFound`
   sentinel), which was previously indistinguishable from any other
   real-mode connectivity/RPC failure.
+- **v0.3.0** extends the same response envelope to the three read-only
+  workflow helpers (`velo_plan_dfir_triage`,
+  `velo_compare_dfir_profiles`, `velo_find_profiles_by_artifact`). These
+  helpers report empty/no-match and not-found profile/artifact coverage
+  as structured `status` values, but they are planning metadata only:
+  they do not claim that any endpoint was examined and they do not
+  execute collections or hunts.
 - `velo_get_client_info` and `velo_search_clients` return exactly what
   Velociraptor's `ApiClient` record reports for a given endpoint
   (hostname, OS, last-seen time, labels, ...) with no independent
@@ -305,12 +312,12 @@ attacker-controlled URL.
 ### Unimplemented tools are never registered
 
 `internal/mcpserver` only calls `mcp.AddTool` for tools that are fully
-implemented and reviewed for the current milestone —
-`registerVisibilityTools` and `registerProfileTools` as of
-v0.1.0-alpha.1. The other 20 planned tools exist only as `ToolSpec`
-metadata in `tools_flows.go`, `tools_collection.go`, `tools_hunts.go`,
-and `tools_ioc.go` (used for `docs/tool-reference.md` generation) and
-are not reachable by any MCP client — confirmed in
+implemented and reviewed for the current milestone — visibility,
+profile, and local workflow helpers as of v0.3.0. Flow, collection,
+hunt-execution, download, cancel, and IOC execution tools exist only as
+`ToolSpec` metadata in `tools_flows.go`, `tools_collection.go`,
+`tools_hunts.go`, and `tools_ioc.go` (used for
+`docs/tool-reference.md` generation) and are not reachable by any MCP client — confirmed in
 `internal/mcpserver/server_test.go`'s exact-tool-inventory test. A
 planned tool becomes callable only when its milestone lands with real
 validation, policy, and (where required) approval wiring, not when its
@@ -318,8 +325,8 @@ metadata is added.
 
 ### Confused-deputy mitigation for future approval-gated tools
 
-None of the 4 tools registered in this milestone require approval. For
-the approval-gated tools coming in v0.2.0+ (collection, hunt
+None of the 11 tools registered as of v0.3.0 require approval because all
+are read-only. For future approval-gated tools (collection, hunt
 start/cancel, flow cancel, upload download), `internal/approval`'s
 design already anticipates this: `approval.RequestFingerprint` hashes
 the security-relevant fields of a `Request` (operation, case ID,
@@ -332,10 +339,10 @@ a standing grant of "this operation category is now approved." See
 
 ### Tool and scope minimization is intentional
 
-The stable core deliberately exposes 24 narrow tools rather than a small
+The stable core deliberately exposes 27 narrow tools rather than a small
 number of broad, parameterizable ones (and no raw-VQL escape hatch at
-all). This milestone goes further: only 4 of those 24 are registered at
-all. Minimizing the callable surface at every point in time — not just
+all). v0.3.0 still goes further: only 11 of those 27 are registered, and
+all 11 are read-only. Minimizing the callable surface at every point in time — not just
 in the final v1.0.0 design — reduces both the attack surface and the
 chance an agent misuses a capability it didn't need for the task at
 hand. When a future HTTP/remote transport is added, this same principle

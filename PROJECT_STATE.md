@@ -1,42 +1,28 @@
 # Project state
 
-Last updated: 2026-07-06 (v0.2.0, core response validation).
+Last updated: 2026-07-06 (v0.3.0, read-only DFIR workflow expansion).
 
 ## Current milestone
 
-**v0.2.0 — Core response validation and consistent response contracts.**
-Complete. Re-scoped by explicit user direction from PROJECT_PLAN.md's
-original v0.2.0 plan ("controlled single-client collection" — no
-write-capable action was added this milestone; that scope is now
-unassigned to a specific version, see PROJECT_PLAN.md's v0.2.0 section).
-This milestone instead:
+**v0.3.0 — Read-only DFIR workflow expansion.** Complete. Re-scoped by
+explicit user direction from PROJECT_PLAN.md's original v0.3.0 hunt
+management plan. This milestone adds analyst planning/comparison helpers
+around the existing Velociraptor visibility, DFIR profile, and artifact
+catalog capabilities without adding collection execution, hunt start or
+cancel, client-side mutation, downloads, write identity use, or raw VQL.
 
-- Added a shared `internal/response` envelope (`Status`: `success` /
-  `empty` / `not_found` / `error`), embedded into the four visibility
-  tools' response types that previously had no machine-readable status
-  field of their own (`velo_search_clients`'s `SearchClientsOutput`,
-  `velo_get_client_info`'s `GetClientInfoOutput`,
-  `velo_list_artifact_names`'s `ListArtifactNamesOutput`,
-  `velo_get_artifact_details`'s `GetArtifactDetailsOutput`). Additive to
-  the wire shape (new top-level `status` key); no existing field
-  renamed or removed. `velo_health_check`'s own pre-existing `status`
-  field (`"ok"`/`"error"`, from v0.1.0-alpha.2) was deliberately left
-  untouched — migrating it to the new vocabulary would have been a
-  breaking wire-value change for no functional gain.
-- Fixed a real gap: `velo_get_client_info` and
-  `velo_get_artifact_details` previously reported a genuine "no such
-  client"/"no such artifact" lookup exactly the same way as a generic
-  connectivity/RPC failure (same `mode`, only a free-text `message`
-  differed). Both now report a distinct `status: "not_found"`. Added
-  `velociraptor.ErrArtifactNotFound` (mirroring the existing
-  `velociraptor.ErrClientNotFound` from v0.1.0's live lab pass) so
-  `grpcClient.GetArtifactDetails` can signal this the same way
-  `GetClientInfo` already did.
-- Callable tool inventory unchanged: still exactly the same 8 read-only
-  tools as v0.1.0 (`TestNewRegistersExactlyEightSafeTools` unchanged).
-- `velo_list_flows`/`velo_get_flow_status`/`velo_get_flow_results`
-  (originally scoped to v0.1.0) remain deferred — no RPC exists yet for
-  them; still an open follow-up, see "What does not exist yet" below.
+- Added three local read-only workflow tools:
+  `velo_plan_dfir_triage`, `velo_compare_dfir_profiles`, and
+  `velo_find_profiles_by_artifact`.
+- All three new tools operate only on `internal/dfir.Registry` and
+  `internal/policy.Engine`; they do not call `Deps.ReadClient` or
+  `Deps.WriteClient`, and therefore make no Velociraptor RPC at all.
+- All new tool responses embed the v0.2.0 `internal/response.Result`
+  envelope (`success` / `empty` / `not_found` / `error`) while leaving
+  existing visibility/profile tool wire fields backward-compatible.
+- Callable tool inventory is now exactly 11, all read-only. The earlier
+  hunt-management ToolSpec entries remain metadata only and are not
+  registered with MCP.
 
 ## Live lab validation (2026-07-06)
 
@@ -105,6 +91,13 @@ binary), not just unit tests against fakes.
 
 ## What exists
 
+- **New in v0.3.0**: `internal/mcpserver/tools_workflow.go`, registering
+  three read-only local workflow helpers: `velo_plan_dfir_triage`,
+  `velo_compare_dfir_profiles`, and `velo_find_profiles_by_artifact`.
+  These tools return profile recommendations, profile artifact overlap,
+  and artifact-to-profile coverage using only the loaded profile registry
+  and policy allowlists. They do not call Velociraptor or use the write
+  client.
 - **New in v0.2.0**: `internal/response` (the `Result`/`Status` envelope
   described under "Current milestone" above) and
   `velociraptor.ErrArtifactNotFound`. Everything else below predates
@@ -127,11 +120,13 @@ binary), not just unit tests against fakes.
   if it's empty), and runs a real MCP server over stdio. A missing
   config file, or a *configured-but-broken* `read_api_config_path`,
   both fail closed (exit 1) without ever starting the transport.
-- `internal/mcpserver`: 8 registered tools (up from 4):
+- `internal/mcpserver`: 11 registered tools (up from 8):
   `velo_health_check`, `velo_search_clients`, `velo_get_client_info`,
   `velo_list_artifact_names`, `velo_get_artifact_details`,
   `velo_list_dfir_profiles`, `velo_get_dfir_profile`,
-  `velo_validate_dfir_profile`. All five visibility tools share
+  `velo_validate_dfir_profile`, `velo_plan_dfir_triage`,
+  `velo_compare_dfir_profiles`, `velo_find_profiles_by_artifact`. All
+  five visibility tools share
   `velo_health_check`'s existing mock/real branching and
   evidence-honesty pattern:
   - `"mock"` (default, `read_api_config_path` empty): no Velociraptor
@@ -147,8 +142,8 @@ binary), not just unit tests against fakes.
     `policy.ArtifactAllowed`) happen before any mode branching, and
     *do* produce a Go-level error with a `blocked` audit outcome — these
     are static request defects, not Velociraptor connectivity data.
-  The other 16 planned tools remain unregistered `ToolSpec` metadata;
-  the exact-tool-inventory test now expects 8, and a new
+  The flow/collection/hunt/IOC execution tools remain unregistered
+  `ToolSpec` metadata; the exact-tool-inventory test now expects 11, and a
   `TestNewNeverRegistersUnsafeTools` test guards against a
   collect/hunt/download/cancel/vql-named tool ever becoming callable.
 - `internal/velociraptor`: gained four more real methods this milestone,
@@ -183,7 +178,11 @@ binary), not just unit tests against fakes.
 - `internal/config`: unchanged this milestone (no new config fields —
   `max_rows` already existed and is now actually consumed by
   `NewGRPCClient`).
-- Tests: `internal/velociraptor/grpcclient_test.go` gained
+- Tests: `internal/mcpserver/tools_workflow_test.go` covers v0.3.0
+  success, empty, not_found, and validation-error paths for the three
+  workflow tools; `server_test.go` now verifies exactly 11 callable
+  read-only tools and exercises the new tools over an MCP session. Older
+  tests: `internal/velociraptor/grpcclient_test.go` gained
   `fakeClientSearcher`/`fakeClientGetter`/`fakeArtifactCatalog` and
   success/error/timeout/limit-bounding/no-secret-leakage tests for all
   four new methods. `internal/mcpserver/tools_visibility_test.go`

@@ -7,6 +7,32 @@ releases begin.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-06
+
+### Added — v0.3.0 read-only DFIR workflow expansion
+
+Re-scoped by explicit user direction from the original v0.3.0 hunt
+management plan. This release remains strictly read-only: it does not
+execute collections, start or cancel hunts, download evidence, mutate
+clients, use the write API identity, or expose raw VQL.
+
+- Added three callable MCP workflow tools, all local/read-only over the
+  loaded DFIR profile registry and policy allowlists:
+  `velo_plan_dfir_triage`, `velo_compare_dfir_profiles`, and
+  `velo_find_profiles_by_artifact`.
+- All three new tool outputs embed `internal/response.Result`, preserving
+  the v0.2.0 status vocabulary (`success`, `empty`, `not_found`,
+  `error`). Existing visibility/profile tool fields were not removed or
+  renamed.
+- Callable tool inventory is now exactly 11, all read-only. The planned
+  flow, collection, hunt execution, cancel, download, and IOC execution
+  ToolSpec entries remain unregistered metadata only.
+- Tests added for workflow success, empty, not_found, and blocked invalid
+  input paths, plus MCP-session coverage for the three new tools and an
+  exact 11-tool inventory assertion.
+- Docs updated: README, PROJECT_PLAN, PROJECT_STATE, tool reference,
+  security model, and CLI help/version text.
+
 ## [0.2.0] - 2026-07-06
 
 ### Added — v0.2.0 core response validation and consistent response contracts

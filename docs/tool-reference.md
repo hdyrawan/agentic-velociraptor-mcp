@@ -1,15 +1,17 @@
 # Tool reference
 
-Status: this describes the **planned** stable core of 24 tools. As of
-v0.1.0, exactly 8 are implemented and registered as callable MCP tools:
+Status: this describes the **planned** stable core of 27 tools. As of
+v0.3.0, exactly 11 are implemented and registered as callable MCP tools:
 `velo_health_check`, `velo_search_clients`, `velo_get_client_info`,
 `velo_list_artifact_names`, `velo_get_artifact_details`,
 `velo_list_dfir_profiles`, `velo_get_dfir_profile`, and
-`velo_validate_dfir_profile`. See `internal/mcpserver/server.go`'s `New`
-function — only `registerVisibilityTools` and `registerProfileTools` are
-called; the other tool groups' `ToolSpec` metadata exists for this
-document but is not wired to `mcp.AddTool` yet, and is therefore not
-callable by any MCP client (confirmed by
+`velo_validate_dfir_profile`, plus `velo_plan_dfir_triage`,
+`velo_compare_dfir_profiles`, and `velo_find_profiles_by_artifact`. See
+`internal/mcpserver/server.go`'s `New` function — only the visibility,
+profile, and workflow registration functions are called; the flow,
+collection, hunt, and IOC execution groups' `ToolSpec` metadata exists
+for this document but is not wired to `mcp.AddTool` yet, and is therefore
+not callable by any MCP client (confirmed by
 `internal/mcpserver/server_test.go`'s exact-tool-inventory and
 never-registers-unsafe-tools tests). Update the "Implemented" column as
 each remaining tool actually lands.
@@ -18,14 +20,16 @@ Legend: RO = read-only, no approval. Approval = requires a matching
 `approval.Decision` (see [approval-flow.md](approval-flow.md)) before any
 Velociraptor call is made.
 
-**Response envelope (v0.2.0):** `velo_search_clients`,
+**Response envelope (v0.2.0+):** `velo_search_clients`,
 `velo_get_client_info`, `velo_list_artifact_names`, and
 `velo_get_artifact_details` each embed `internal/response.Result`, adding
 a top-level `status` field (`"success"` / `"empty"` / `"not_found"` /
 `"error"`) alongside their existing `mode`/data/`message` fields — see
 docs/security-model.md's "Evidence honesty" section for the full
 contract, including why `velo_health_check`'s own pre-existing `status`
-field (`"ok"`/`"error"`) was left as-is rather than migrated.
+field (`"ok"`/`"error"`) was left as-is rather than migrated. v0.3.0's
+three workflow tools also embed the same `internal/response.Result`
+envelope.
 
 ## Visibility tools (`tools_visibility.go`)
 
@@ -86,6 +90,79 @@ profile is actually *used* (`velo_collect_dfir_profile_with_approval` /
 `velo_validate_dfir_profile` currently cross-checks against
 `policy.allowed_artifacts` (not `allowed_profiles`), since validating
 artifact allowlist membership is exactly what that tool is for.
+
+## DFIR workflow tools (`tools_workflow.go`)
+
+These v0.3.0 tools are read-only planning aids. They inspect only the
+already-loaded local DFIR profile registry and local policy allowlists;
+they do not make Velociraptor RPCs, do not execute collections, do not
+start/cancel hunts, do not download evidence, and do not mutate endpoint
+or server state.
+
+| Tool | Kind | Description | Target milestone | Implemented |
+|------|------|-------------|-------------------|-------------|
+| `velo_plan_dfir_triage` | RO | Recommend profiles and read-only next steps for a `case_type`, optional `target_os`, and optional syntactically validated `client_id`. | v0.3.0 | **yes** |
+| `velo_compare_dfir_profiles` | RO | Compare two to five loaded profiles by metadata, policy allowlist status, common artifacts, and per-profile unique artifacts. | v0.3.0 | **yes** |
+| `velo_find_profiles_by_artifact` | RO | Return loaded profiles that reference an exact artifact name and whether that artifact is currently in `policy.allowed_artifacts`. | v0.3.0 | **yes** |
+
+### `velo_plan_dfir_triage`
+
+Input:
+
+- `case_type` (optional): one of `basic`, `triage`, `process_network`,
+  `persistence`, `lateral_movement`, `ransomware`, `credential_theft`,
+  `eventlog`, `browser_activity`, `timeline`, or `ioc`.
+- `target_os` (optional): `windows`, `linux`, or `any`.
+- `client_id` (optional): validated as a Velociraptor client ID but never
+  contacted.
+
+Output embeds `status`/`message` and returns `recommendations`,
+`read_only_next_steps`, and `safety_notes`. Recommendation entries include
+profile metadata plus `allowed_by_policy`, `artifacts_allowlisted`, and an
+optional `validation_error`. `status` is `empty` when no loaded profile
+matches the filters. Invalid `case_type`, `target_os`, or `client_id`
+returns a blocked tool error before any lookup.
+
+Example:
+
+```json
+{"case_type":"ransomware","target_os":"windows","client_id":"C.1234abcd5678ef90"}
+```
+
+### `velo_compare_dfir_profiles`
+
+Input:
+
+- `names`: two to five DFIR profile names.
+
+Output embeds `status`/`message` and returns `profiles`,
+`common_artifacts`, `unique_artifacts`, and, for structured lookup
+failures, `missing_profiles`. Unknown names return `status: "not_found"`
+as a normal structured result; malformed names, duplicates, or too few /
+too many names are blocked tool errors.
+
+Example:
+
+```json
+{"names":["windows_basic_triage","windows_process_network_triage"]}
+```
+
+### `velo_find_profiles_by_artifact`
+
+Input:
+
+- `artifact`: exact Velociraptor artifact name.
+
+Output embeds `status`/`message` and returns `artifact`,
+`artifact_allowed`, and matching `profiles`. No match returns
+`status: "not_found"`; malformed artifact syntax is a blocked tool
+error.
+
+Example:
+
+```json
+{"artifact":"Generic.Client.Info"}
+```
 
 ## IOC helper tool (`tools_ioc.go`)
 
