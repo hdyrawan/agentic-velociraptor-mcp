@@ -1,6 +1,7 @@
 package dfir
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -41,12 +42,17 @@ func LoadDir(dir string) (*Registry, error) {
 		if err != nil {
 			return nil, fmt.Errorf("dfir: read %s: %w", path, err)
 		}
-		var p Profile
-		if err := yaml.Unmarshal(data, &p); err != nil {
+		if err := validateProfileYAMLKeys(data); err != nil {
 			return nil, fmt.Errorf("dfir: parse %s: %w", path, err)
 		}
-		if p.Name == "" {
-			return nil, fmt.Errorf("dfir: %s: profile name is required", path)
+		var p Profile
+		dec := yaml.NewDecoder(bytes.NewReader(data))
+		dec.KnownFields(true)
+		if err := dec.Decode(&p); err != nil {
+			return nil, fmt.Errorf("dfir: parse %s: %w", path, err)
+		}
+		if err := validateProfileMetadata(p); err != nil {
+			return nil, fmt.Errorf("dfir: %s: %w", path, err)
 		}
 		if _, dup := profiles[p.Name]; dup {
 			return nil, fmt.Errorf("dfir: duplicate profile name %q", p.Name)
@@ -55,6 +61,59 @@ func LoadDir(dir string) (*Registry, error) {
 	}
 
 	return &Registry{profiles: profiles}, nil
+}
+
+func validateProfileYAMLKeys(data []byte) error {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return err
+	}
+	if len(doc.Content) != 1 || doc.Content[0].Kind != yaml.MappingNode {
+		return fmt.Errorf("profile YAML must be a mapping")
+	}
+
+	seen := make(map[string]bool)
+	for i := 0; i < len(doc.Content[0].Content); i += 2 {
+		seen[doc.Content[0].Content[i].Value] = true
+	}
+
+	for _, required := range []string{
+		"name",
+		"description",
+		"target_os",
+		"artifacts",
+		"risk_level",
+		"requires_approval",
+		"max_runtime_seconds",
+		"max_result_rows",
+		"max_result_bytes",
+	} {
+		if !seen[required] {
+			return fmt.Errorf("%s is required", required)
+		}
+	}
+	return nil
+}
+
+func validateProfileMetadata(p Profile) error {
+	if p.Name == "" {
+		return fmt.Errorf("profile name is required")
+	}
+	switch p.RiskLevel {
+	case "low", "medium", "high":
+	default:
+		return fmt.Errorf("profile %q risk_level must be one of low, medium, high", p.Name)
+	}
+	if p.MaxRuntimeSeconds <= 0 || p.MaxRuntimeSeconds > 86400 {
+		return fmt.Errorf("profile %q max_runtime_seconds must be between 1 and 86400", p.Name)
+	}
+	if p.MaxResultRows <= 0 || p.MaxResultRows > 1000000 {
+		return fmt.Errorf("profile %q max_result_rows must be between 1 and 1000000", p.Name)
+	}
+	if p.MaxResultBytes <= 0 || p.MaxResultBytes > 1073741824 {
+		return fmt.Errorf("profile %q max_result_bytes must be between 1 and 1073741824", p.Name)
+	}
+	return nil
 }
 
 // Get returns the named profile, if loaded.

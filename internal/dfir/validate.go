@@ -13,11 +13,10 @@ type ArtifactAllowlister interface {
 // in the given allowlist. A DFIR profile must never grant access to an
 // artifact that individual artifact-level policy would refuse; profiles
 // are a convenience grouping, not an escalation path.
-//
-// TODO(v0.4.0): extend with schema checks (known TargetOS values,
-// non-empty Artifacts, parameter key sanity) once
-// velo_validate_dfir_profile is implemented.
 func ValidateProfile(p Profile, allow ArtifactAllowlister) error {
+	if err := validateProfileMetadata(p); err != nil {
+		return err
+	}
 	if len(p.Artifacts) == 0 {
 		return fmt.Errorf("dfir: profile %q defines no artifacts", p.Name)
 	}

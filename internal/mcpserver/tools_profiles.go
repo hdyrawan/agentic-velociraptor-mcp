@@ -47,12 +47,17 @@ type ProfileArtifactOutput struct {
 // yaml tags for on-disk parsing) so the MCP-facing shape can evolve
 // independently of the on-disk format.
 type DFIRProfileOutput struct {
-	Name        string                  `json:"name"`
-	DisplayName string                  `json:"display_name"`
-	Description string                  `json:"description"`
-	TargetOS    string                  `json:"target_os"`
-	Category    string                  `json:"category"`
-	Artifacts   []ProfileArtifactOutput `json:"artifacts"`
+	Name              string                  `json:"name"`
+	DisplayName       string                  `json:"display_name"`
+	Description       string                  `json:"description"`
+	TargetOS          string                  `json:"target_os"`
+	Category          string                  `json:"category"`
+	RiskLevel         string                  `json:"risk_level"`
+	RequiresApproval  bool                    `json:"requires_approval"`
+	MaxRuntimeSeconds int                     `json:"max_runtime_seconds"`
+	MaxResultRows     int                     `json:"max_result_rows"`
+	MaxResultBytes    int64                   `json:"max_result_bytes"`
+	Artifacts         []ProfileArtifactOutput `json:"artifacts"`
 }
 
 func toProfileOutput(p dfir.Profile) DFIRProfileOutput {
@@ -61,12 +66,17 @@ func toProfileOutput(p dfir.Profile) DFIRProfileOutput {
 		artifacts = append(artifacts, ProfileArtifactOutput{Name: a.Name, Parameters: a.Parameters})
 	}
 	return DFIRProfileOutput{
-		Name:        p.Name,
-		DisplayName: p.DisplayName,
-		Description: p.Description,
-		TargetOS:    p.TargetOS,
-		Category:    p.Category,
-		Artifacts:   artifacts,
+		Name:              p.Name,
+		DisplayName:       p.DisplayName,
+		Description:       p.Description,
+		TargetOS:          p.TargetOS,
+		Category:          p.Category,
+		RiskLevel:         p.RiskLevel,
+		RequiresApproval:  p.RequiresApproval,
+		MaxRuntimeSeconds: p.MaxRuntimeSeconds,
+		MaxResultRows:     p.MaxResultRows,
+		MaxResultBytes:    p.MaxResultBytes,
+		Artifacts:         artifacts,
 	}
 }
 
@@ -74,12 +84,14 @@ func toProfileOutput(p dfir.Profile) DFIRProfileOutput {
 // velo_list_dfir_profiles: enough to pick a profile without transferring
 // every artifact list.
 type DFIRProfileSummary struct {
-	Name          string `json:"name"`
-	DisplayName   string `json:"display_name"`
-	Description   string `json:"description"`
-	TargetOS      string `json:"target_os"`
-	Category      string `json:"category"`
-	ArtifactCount int    `json:"artifact_count"`
+	Name             string `json:"name"`
+	DisplayName      string `json:"display_name"`
+	Description      string `json:"description"`
+	TargetOS         string `json:"target_os"`
+	Category         string `json:"category"`
+	RiskLevel        string `json:"risk_level"`
+	RequiresApproval bool   `json:"requires_approval"`
+	ArtifactCount    int    `json:"artifact_count"`
 }
 
 // ListDFIRProfilesInput is empty: velo_list_dfir_profiles takes no
@@ -155,12 +167,14 @@ func newListDFIRProfilesHandler(deps Deps) mcp.ToolHandlerFor[ListDFIRProfilesIn
 		summaries := make([]DFIRProfileSummary, 0, len(loaded))
 		for _, p := range loaded {
 			summaries = append(summaries, DFIRProfileSummary{
-				Name:          p.Name,
-				DisplayName:   p.DisplayName,
-				Description:   p.Description,
-				TargetOS:      p.TargetOS,
-				Category:      p.Category,
-				ArtifactCount: len(p.Artifacts),
+				Name:             p.Name,
+				DisplayName:      p.DisplayName,
+				Description:      p.Description,
+				TargetOS:         p.TargetOS,
+				Category:         p.Category,
+				RiskLevel:        p.RiskLevel,
+				RequiresApproval: p.RequiresApproval,
+				ArtifactCount:    len(p.Artifacts),
 			})
 		}
 

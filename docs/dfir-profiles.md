@@ -1,6 +1,10 @@
 # DFIR profiles
 
-Status: 15 of 15 planned profile definitions exist under `profiles/`. All are defined, though some require specific approval for high-sensitivity cases (e.g., credential_theft, browser_activity).
+Status: 15 of 15 planned profile definitions exist under `profiles/`.
+All are definition-only profile catalog entries. Adding these YAML files
+does not add collection, hunt, download, raw VQL, shell, or endpoint-changing
+logic. Some profiles require specific approval for high-sensitivity cases
+(for example credential theft, browser activity, and timeline reconstruction).
 See PROJECT_PLAN.md v0.4.0.
 
 ## What a profile is
@@ -33,31 +37,33 @@ of naming individual artifacts or, worse, writing VQL.
 | Timeline generation | `windows_timeline_triage` |
 | Hunt across endpoints (approval) | any profile via `velo_start_dfir_hunt_with_approval` |
 
-## Planned profile catalog (15)
+## Defined profile catalog (15)
 
-| Name | Status | Target OS | Category |
-|------|--------|-----------|----------|
-| `windows_basic_triage` | defined | windows | triage |
-| `windows_process_network_triage` | planned | windows | triage |
-| `windows_persistence_triage` | planned | windows | persistence |
-| `windows_lateral_movement_triage` | planned | windows | lateral-movement |
-| `windows_ransomware_triage` | defined | windows | ransomware |
-| `windows_credential_theft_triage` | planned | windows | credential-theft |
-| `windows_eventlog_triage` | planned | windows | eventlog |
-| `windows_browser_activity_triage` | planned | windows | browser-activity |
-| `windows_timeline_triage` | planned | windows | timeline |
-| `linux_basic_triage` | defined | linux | triage |
-| `linux_process_network_triage` | planned | linux | triage |
-| `linux_persistence_triage` | planned | linux | persistence |
-| `ioc_hash_hunt` | planned | any | ioc |
-| `ioc_ip_hunt` | planned | any | ioc |
-| `ioc_domain_hunt` | planned | any | ioc |
+| Name | Status | Target OS | Category | Risk | Requires approval |
+|------|--------|-----------|----------|------|-------------------|
+| `windows_basic_triage` | defined | windows | triage | low | no |
+| `windows_process_network_triage` | defined | windows | triage | medium | no |
+| `windows_persistence_triage` | defined | windows | persistence | medium | no |
+| `windows_lateral_movement_triage` | defined | windows | lateral-movement | high | no |
+| `windows_ransomware_triage` | defined | windows | ransomware | high | yes |
+| `windows_credential_theft_triage` | defined | windows | credential-theft | high | yes |
+| `windows_eventlog_triage` | defined | windows | eventlog | medium | no |
+| `windows_browser_activity_triage` | defined | windows | browser-activity | high | yes |
+| `windows_timeline_triage` | defined | windows | timeline | high | yes |
+| `linux_basic_triage` | defined | linux | triage | low | no |
+| `linux_process_network_triage` | defined | linux | triage | medium | no |
+| `linux_persistence_triage` | defined | linux | persistence | medium | no |
+| `ioc_hash_hunt` | defined | any | ioc | low | no |
+| `ioc_ip_hunt` | defined | any | ioc | low | no |
+| `ioc_domain_hunt` | defined | any | ioc | low | no |
 
 ## Authoring a new profile
 
-1. Add `profiles/<name>.yaml` matching `internal/dfir.Profile`'s YAML
-   shape (`name`, `display_name`, `description`, `target_os`, `category`,
-   `artifacts`).
+1. Add `profiles/<name>.yaml` matching `internal/dfir.Profile`'s strict
+   YAML shape (`name`, `display_name`, `description`, `target_os`,
+   `category`, `risk_level`, `requires_approval`, `max_runtime_seconds`,
+   `max_result_rows`, `max_result_bytes`, `artifacts`). Unknown fields are
+   rejected so typos such as `max_runtime_sum` fail during profile loading.
 2. Verify every artifact name against the actual artifact catalog of the
    target Velociraptor server/version — do not guess names for a
    profile that will really be used.
@@ -69,9 +75,9 @@ of naming individual artifacts or, worse, writing VQL.
 
 ## IOC profiles specifically
 
-`ioc_hash_hunt`, `ioc_ip_hunt`, and `ioc_domain_hunt` back
-`velo_hunt_ioc_with_approval` together with `internal/vql`'s fixed
-templates (`TemplateIOCHashHunt`, `TemplateIOCIPHunt`,
-`TemplateIOCDomainHunt`). The indicator value itself is validated by
-`internal/validation` (`Hash`, `IP`, `Domain`) and passed as a bound
-parameter — never concatenated into a query.
+`ioc_hash_hunt`, `ioc_ip_hunt`, and `ioc_domain_hunt` are definition-only
+profile catalog entries in this commit. They do not implement IOC hunt
+logic by themselves, do not add raw VQL, and do not add endpoint-changing
+behavior. Any future IOC hunt tool must keep using fixed, reviewed templates
+with validated indicator values passed as bound parameters — never string-
+concatenated into a query.

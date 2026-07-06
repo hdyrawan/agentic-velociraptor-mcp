@@ -17,6 +17,11 @@ description: >
   processes, and active network connections.
 target_os: linux
 category: triage
+risk_level: low
+requires_approval: false
+max_runtime_seconds: 300
+max_result_rows: 1000
+max_result_bytes: 5242880
 artifacts:
   - name: Generic.Client.Info
   - name: Linux.Sys.Pslist

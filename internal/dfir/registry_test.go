@@ -1,6 +1,11 @@
 package dfir
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
 
 // fakeAllowlist allows every artifact; used to isolate registry/parsing
 // tests from policy allowlist content.
@@ -8,14 +13,73 @@ type fakeAllowlist struct{ allow map[string]bool }
 
 func (f fakeAllowlist) ArtifactAllowed(name string) bool { return f.allow[name] }
 
+var expectedShippedProfileNames = []string{
+	"windows_basic_triage",
+	"windows_process_network_triage",
+	"windows_persistence_triage",
+	"windows_lateral_movement_triage",
+	"windows_ransomware_triage",
+	"windows_credential_theft_triage",
+	"windows_eventlog_triage",
+	"windows_browser_activity_triage",
+	"windows_timeline_triage",
+	"linux_basic_triage",
+	"linux_process_network_triage",
+	"linux_persistence_triage",
+	"ioc_hash_hunt",
+	"ioc_ip_hunt",
+	"ioc_domain_hunt",
+}
+
+var disallowedProfileNameSubstrings = []string{
+	"CmdShell",
+	"execve",
+	"Shell",
+	"PowershellExec",
+	"Command",
+}
+
 func TestLoadDirParsesShippedProfiles(t *testing.T) {
 	reg, err := LoadDir("../../profiles")
 	if err != nil {
 		t.Fatalf("LoadDir: %v", err)
 	}
 
-	want := []string{"windows_basic_triage", "windows_ransomware_triage", "linux_basic_triage"}
-	for _, name := range want {
+	profiles := reg.List()
+	if got, want := len(profiles), len(expectedShippedProfileNames); got != want {
+		t.Fatalf("List() returned %d profiles, want %d", got, want)
+	}
+
+	seen := make(map[string]bool, len(profiles))
+	for _, p := range profiles {
+		if seen[p.Name] {
+			t.Errorf("duplicate profile name %q", p.Name)
+		}
+		seen[p.Name] = true
+
+		if len(p.Artifacts) == 0 {
+			t.Errorf("profile %q has no artifacts", p.Name)
+		}
+		if p.RiskLevel == "" {
+			t.Errorf("profile %q has empty risk_level", p.Name)
+		}
+		if p.MaxRuntimeSeconds <= 0 {
+			t.Errorf("profile %q has non-positive max_runtime_seconds", p.Name)
+		}
+		if p.MaxResultRows <= 0 {
+			t.Errorf("profile %q has non-positive max_result_rows", p.Name)
+		}
+		if p.MaxResultBytes <= 0 {
+			t.Errorf("profile %q has non-positive max_result_bytes", p.Name)
+		}
+
+		assertNoDisallowedProfileSubstrings(t, "profile name", p.Name)
+		for _, artifact := range p.Artifacts {
+			assertNoDisallowedProfileSubstrings(t, "artifact name", artifact.Name)
+		}
+	}
+
+	for _, name := range expectedShippedProfileNames {
 		p, ok := reg.Get(name)
 		if !ok {
 			t.Errorf("profile %q not loaded", name)
@@ -25,22 +89,76 @@ func TestLoadDirParsesShippedProfiles(t *testing.T) {
 			t.Errorf("profile %q has no artifacts", name)
 		}
 	}
+}
 
-	// The profiles directory may contain additional shipped profiles
-	// beyond this fixed "want" list; this only asserts the known ones
-	// are present and loadable, not an exact total count.
-	if got := len(reg.List()); got < len(want) {
-		t.Errorf("List() returned %d profiles, want at least %d", got, len(want))
+func TestLoadDirRejectsMissingRequiredMetadata(t *testing.T) {
+	dir := t.TempDir()
+	writeProfileFile(t, dir, "missing_approval.yaml", `
+name: missing_approval
+display_name: Missing Approval
+description: Missing explicit approval metadata.
+target_os: windows
+category: triage
+risk_level: low
+max_runtime_seconds: 300
+max_result_rows: 1000
+max_result_bytes: 5242880
+artifacts:
+  - name: Generic.Client.Info
+`)
+
+	if _, err := LoadDir(dir); err == nil || !strings.Contains(err.Error(), "requires_approval is required") {
+		t.Fatalf("LoadDir error = %v, want requires_approval is required", err)
+	}
+}
+
+func TestLoadDirRejectsUnknownProfileFields(t *testing.T) {
+	dir := t.TempDir()
+	writeProfileFile(t, dir, "unknown_field.yaml", `
+name: unknown_field
+display_name: Unknown Field
+description: Has an unknown metadata key.
+target_os: windows
+category: triage
+risk_level: low
+requires_approval: false
+max_runtime_sum: 300
+max_runtime_seconds: 300
+max_result_rows: 1000
+max_result_bytes: 5242880
+artifacts:
+  - name: Generic.Client.Info
+`)
+
+	if _, err := LoadDir(dir); err == nil || !strings.Contains(err.Error(), "field max_runtime_sum not found") {
+		t.Fatalf("LoadDir error = %v, want unknown max_runtime_sum field", err)
+	}
+}
+
+func TestValidateProfileRejectsInvalidMetadata(t *testing.T) {
+	p := validTestProfile()
+	p.RiskLevel = "critical"
+	allow := fakeAllowlist{allow: map[string]bool{"Generic.Client.Info": true}}
+
+	if err := ValidateProfile(p, allow); err == nil || !strings.Contains(err.Error(), "risk_level") {
+		t.Fatalf("ValidateProfile error = %v, want risk_level error", err)
+	}
+}
+
+func assertNoDisallowedProfileSubstrings(t *testing.T, field, value string) {
+	t.Helper()
+	for _, forbidden := range disallowedProfileNameSubstrings {
+		if strings.Contains(value, forbidden) {
+			t.Errorf("%s %q contains disallowed substring %q", field, value, forbidden)
+		}
 	}
 }
 
 func TestValidateProfileRejectsNonAllowlistedArtifact(t *testing.T) {
-	p := Profile{
-		Name: "test_profile",
-		Artifacts: []ProfileArtifact{
-			{Name: "Generic.Client.Info"},
-			{Name: "Not.Allowed.Artifact"},
-		},
+	p := validTestProfile()
+	p.Artifacts = []ProfileArtifact{
+		{Name: "Generic.Client.Info"},
+		{Name: "Not.Allowed.Artifact"},
 	}
 	allow := fakeAllowlist{allow: map[string]bool{"Generic.Client.Info": true}}
 
@@ -50,15 +168,35 @@ func TestValidateProfileRejectsNonAllowlistedArtifact(t *testing.T) {
 }
 
 func TestValidateProfileAcceptsFullyAllowlistedProfile(t *testing.T) {
-	p := Profile{
-		Name: "test_profile",
-		Artifacts: []ProfileArtifact{
-			{Name: "Generic.Client.Info"},
-		},
-	}
+	p := validTestProfile()
 	allow := fakeAllowlist{allow: map[string]bool{"Generic.Client.Info": true}}
 
 	if err := ValidateProfile(p, allow); err != nil {
 		t.Fatalf("ValidateProfile: %v", err)
+	}
+}
+
+func validTestProfile() Profile {
+	return Profile{
+		Name:              "test_profile",
+		Description:       "Test profile.",
+		TargetOS:          "windows",
+		Category:          "triage",
+		RiskLevel:         "low",
+		RequiresApproval:  false,
+		MaxRuntimeSeconds: 300,
+		MaxResultRows:     1000,
+		MaxResultBytes:    5242880,
+		Artifacts: []ProfileArtifact{
+			{Name: "Generic.Client.Info"},
+		},
+	}
+}
+
+func writeProfileFile(t *testing.T, dir, name, content string) {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, []byte(strings.TrimSpace(content)+"\n"), 0o600); err != nil {
+		t.Fatalf("write profile fixture: %v", err)
 	}
 }

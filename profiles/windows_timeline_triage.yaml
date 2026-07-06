@@ -11,7 +11,7 @@ target_os: windows
 category: timeline
 risk_level: high
 requires_approval: true
-max_runtime_sum: 300
+max_runtime_seconds: 300
 max_result_rows: 1000
 max_result_bytes: 5242880
 artifacts:
