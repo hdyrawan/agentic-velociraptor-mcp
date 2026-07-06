@@ -360,7 +360,7 @@ func (c *grpcClient) GetArtifactDetails(ctx context.Context, name string) (Artif
 
 	items := resp.GetItems()
 	if len(items) == 0 {
-		return ArtifactDetail{}, fmt.Errorf("velociraptor: artifact %q not found", name)
+		return ArtifactDetail{}, fmt.Errorf("velociraptor: artifact %q not found: %w", name, ErrArtifactNotFound)
 	}
 
 	a := items[0]

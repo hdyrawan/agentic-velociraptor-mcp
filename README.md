@@ -6,16 +6,22 @@ endpoint DFIR capabilities to MCP-compatible agents: endpoint visibility,
 artifact collection, hunt management, evidence retrieval, IOC hunting,
 and approved DFIR investigation profiles.
 
-**Status: v0.1.0.** A real MCP stdio server is running, exposing 8
-read-only tools: `velo_health_check`, `velo_search_clients`,
-`velo_get_client_info`, `velo_list_artifact_names`,
-`velo_get_artifact_details`, `velo_list_dfir_profiles`,
-`velo_get_dfir_profile`, `velo_validate_dfir_profile`. The five
-visibility tools make real Velociraptor gRPC calls (mTLS, via
-`velociraptor.read_api_config_path`) — `Check`, `ListClients`,
-`GetClient`, and `GetArtifacts`, never the generic VQL `Query` RPC — or
-run in mock mode if that path is left unset. No tool can collect, hunt,
-download, cancel, or run raw VQL. **Requires Go 1.25+ to build.** See
+**Status: v0.2.0.** A real MCP stdio server is running, exposing the
+same 8 read-only tools as v0.1.0: `velo_health_check`,
+`velo_search_clients`, `velo_get_client_info`,
+`velo_list_artifact_names`, `velo_get_artifact_details`,
+`velo_list_dfir_profiles`, `velo_get_dfir_profile`,
+`velo_validate_dfir_profile`. The five visibility tools make real
+Velociraptor gRPC calls (mTLS, via `velociraptor.read_api_config_path`)
+— `Check`, `ListClients`, `GetClient`, and `GetArtifacts`, never the
+generic VQL `Query` RPC — or run in mock mode if that path is left
+unset. `velo_search_clients`, `velo_get_client_info`,
+`velo_list_artifact_names`, and `velo_get_artifact_details` now also
+return a shared `status` field (`success`/`empty`/`not_found`/`error`,
+via the new `internal/response` package) instead of only a free-text
+`message` — see docs/security-model.md's "Evidence honesty" section.
+No tool can collect, hunt, download, cancel, or run raw VQL.
+**Requires Go 1.25+ to build.** See
 [PROJECT_STATE.md](PROJECT_STATE.md) for exactly what exists today and
 [PROJECT_PLAN.md](PROJECT_PLAN.md) for the roadmap. Do not point this at
 a production Velociraptor deployment.

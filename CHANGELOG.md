@@ -7,6 +7,61 @@ releases begin.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-06
+
+### Added — v0.2.0 core response validation and consistent response contracts
+
+Re-scoped by explicit user direction from PROJECT_PLAN.md's original
+v0.2.0 plan ("controlled single-client collection" — deferred,
+unimplemented, no longer assigned to a specific version). This
+milestone added no write-capable Velociraptor action; the callable tool
+inventory is unchanged (still the same 8 read-only tools as v0.1.0).
+
+- New `internal/response` package: a small `Result` type (`Status` +
+  `Message`) with a normalized status vocabulary (`success`, `empty`,
+  `not_found`, `error`) and a `StatusForCount` helper, meant to be
+  embedded into tool response types instead of each handler inventing
+  its own ad-hoc combination of `mode`/`message` fields.
+- Embedded `response.Result` into `SearchClientsOutput`,
+  `GetClientInfoOutput`, `ListArtifactNamesOutput`, and
+  `GetArtifactDetailsOutput` (`internal/mcpserver/tools_visibility.go`),
+  adding a top-level `status` field to all four visibility tools'
+  responses. Additive to the wire shape only — no existing field was
+  renamed or removed, and mock-mode/real-mode/allowlist behavior is
+  unchanged. `velo_health_check`'s own pre-existing `status` field
+  (`"ok"`/`"error"`, from v0.1.0-alpha.2) was deliberately left as-is:
+  migrating it to the new vocabulary would have been a breaking
+  wire-value change for no functional gain.
+- Fixed a real gap: `velo_get_client_info` and
+  `velo_get_artifact_details` previously reported a genuine "no such
+  client"/"no such artifact" lookup exactly the same way as a generic
+  connectivity/RPC failure — same `mode: "real"`, only the free-text
+  `message` differed, with nothing machine-readable to branch on. Both
+  now report a distinct `status: "not_found"`. Added
+  `velociraptor.ErrArtifactNotFound` (`internal/velociraptor/artifacts.go`),
+  mirroring the existing `velociraptor.ErrClientNotFound` sentinel from
+  v0.1.0's live lab pass, and wrapped it into
+  `grpcClient.GetArtifactDetails`'s not-found return
+  (`internal/velociraptor/grpcclient.go`).
+- Tests: `internal/response` gained `response_test.go` (every
+  constructor sets its documented status; `StatusForCount`'s 0/1
+  boundary). `internal/mcpserver/tools_visibility_test.go` gained
+  `Status` assertions on existing success/mock/error cases plus new
+  tests: empty-result status for `velo_search_clients` and
+  `velo_list_artifact_names`, a misconfigured-`ReadClient` status-error
+  case for both, and not-found tests for `velo_get_client_info` and
+  `velo_get_artifact_details` (previously untested at the handler
+  level). `internal/velociraptor/grpcclient_test.go`'s existing
+  `TestGRPCClientGetArtifactDetailsNotFound` now asserts
+  `errors.Is(err, ErrArtifactNotFound)`, matching the equivalent
+  client-not-found test.
+- Docs: PROJECT_PLAN.md (v0.2.0 section re-scoped, with a note on where
+  the original collection scope went), PROJECT_STATE.md ("Current
+  milestone" and "What exists" updated), docs/tool-reference.md (new
+  response-envelope note; collection/upload tool rows marked
+  "unscheduled"), docs/security-model.md ("Evidence honesty" section
+  extended with the v0.2.0 envelope and not-found details).
+
 ## [0.1.0] - 2026-07-06
 
 ### Fixed — live lab validation of v0.1.0 read-only visibility (2026-07-06)

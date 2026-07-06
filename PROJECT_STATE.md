@@ -1,18 +1,42 @@
 # Project state
 
-Last updated: 2026-07-06 (v0.1.0, live lab validation pass).
+Last updated: 2026-07-06 (v0.2.0, core response validation).
 
 ## Current milestone
 
-**v0.1.0 — Read-only Velociraptor visibility.** Complete for the client
-and artifact catalog tools, and now live-validated against a real
-disposable Velociraptor lab (see "Live lab validation" below and
-docs/lab-validation-plan.md's Phase 1/Phase 2 sections for exact
-results). `velo_list_flows`/`velo_get_flow_status`/`velo_get_flow_results`
-(also originally scoped to v0.1.0 in PROJECT_PLAN.md) are deferred — no
-RPC exists yet for them. Next: either add those three flow-visibility
-tools, or move on to v0.2.0 (controlled single-client collection), per
-user direction.
+**v0.2.0 — Core response validation and consistent response contracts.**
+Complete. Re-scoped by explicit user direction from PROJECT_PLAN.md's
+original v0.2.0 plan ("controlled single-client collection" — no
+write-capable action was added this milestone; that scope is now
+unassigned to a specific version, see PROJECT_PLAN.md's v0.2.0 section).
+This milestone instead:
+
+- Added a shared `internal/response` envelope (`Status`: `success` /
+  `empty` / `not_found` / `error`), embedded into the four visibility
+  tools' response types that previously had no machine-readable status
+  field of their own (`velo_search_clients`'s `SearchClientsOutput`,
+  `velo_get_client_info`'s `GetClientInfoOutput`,
+  `velo_list_artifact_names`'s `ListArtifactNamesOutput`,
+  `velo_get_artifact_details`'s `GetArtifactDetailsOutput`). Additive to
+  the wire shape (new top-level `status` key); no existing field
+  renamed or removed. `velo_health_check`'s own pre-existing `status`
+  field (`"ok"`/`"error"`, from v0.1.0-alpha.2) was deliberately left
+  untouched — migrating it to the new vocabulary would have been a
+  breaking wire-value change for no functional gain.
+- Fixed a real gap: `velo_get_client_info` and
+  `velo_get_artifact_details` previously reported a genuine "no such
+  client"/"no such artifact" lookup exactly the same way as a generic
+  connectivity/RPC failure (same `mode`, only a free-text `message`
+  differed). Both now report a distinct `status: "not_found"`. Added
+  `velociraptor.ErrArtifactNotFound` (mirroring the existing
+  `velociraptor.ErrClientNotFound` from v0.1.0's live lab pass) so
+  `grpcClient.GetArtifactDetails` can signal this the same way
+  `GetClientInfo` already did.
+- Callable tool inventory unchanged: still exactly the same 8 read-only
+  tools as v0.1.0 (`TestNewRegistersExactlyEightSafeTools` unchanged).
+- `velo_list_flows`/`velo_get_flow_status`/`velo_get_flow_results`
+  (originally scoped to v0.1.0) remain deferred — no RPC exists yet for
+  them; still an open follow-up, see "What does not exist yet" below.
 
 ## Live lab validation (2026-07-06)
 
@@ -81,6 +105,12 @@ binary), not just unit tests against fakes.
 
 ## What exists
 
+- **New in v0.2.0**: `internal/response` (the `Result`/`Status` envelope
+  described under "Current milestone" above) and
+  `velociraptor.ErrArtifactNotFound`. Everything else below predates
+  v0.2.0; only `internal/mcpserver/tools_visibility.go`'s four output
+  types and `internal/velociraptor/grpcclient.go`'s
+  `GetArtifactDetails` changed to use them (see "Current milestone").
 - Go module `github.com/hdyrawan/agentic-velociraptor-mcp` (go 1.25).
 - Dependencies: `gopkg.in/yaml.v3`, `github.com/modelcontextprotocol/go-sdk`
   v1.6.1 (MCP protocol), `google.golang.org/grpc` v1.82.0 and
@@ -269,9 +299,14 @@ inventory).
 Otherwise, either (a) implement the three flow-visibility tools left
 over from the original v0.1.0 scope (`velo_list_flows`,
 `velo_get_flow_status`, `velo_get_flow_results` — each needs its own
-minimal `veloapi` RPC addition following the same pattern as this
-milestone's `ListClients`/`GetClient`/`GetArtifacts`: fetch the exact
+minimal `veloapi` RPC addition following the same pattern as the
+`ListClients`/`GetClient`/`GetArtifacts` milestone: fetch the exact
 upstream message/service shape first, add only the fields actually
-used, generate with `buf`), or (b) move on to v0.2.0 (controlled
-single-client collection) and explicitly re-scope the flow tools into
-it in PROJECT_PLAN.md.
+used, generate with `buf`), or (b) pick up controlled single-client
+collection (`velo_collect_artifact_with_approval`,
+`velo_collect_dfir_profile_with_approval`,
+`velo_cancel_flow_with_approval`, and the upload tools) — this was
+v0.2.0's original scope before v0.2.0 was re-scoped to core response
+validation (see "Current milestone" above and PROJECT_PLAN.md's v0.2.0
+section); it is unimplemented and unassigned to a version number as of
+this update.

@@ -106,16 +106,35 @@ from investigation case to profile.
 - No collection, no hunts, no raw VQL.
 - Audit every call; enforce result limits.
 
-### v0.2.0 — Controlled single-client collection
+### v0.2.0 — Core response validation and consistent response contracts (complete, re-scoped)
 
-- Implement: `velo_collect_artifact_with_approval`,
+Re-scoped by explicit user direction from this section's original
+"Controlled single-client collection" plan (still shown further down as
+the deferred goal, now unassigned to a specific version — revisit when
+scheduling the next milestone). v0.2.0 as actually implemented:
+
+- Added a shared `internal/response` envelope (`Status`: `success` /
+  `empty` / `not_found` / `error`) embedded into the four visibility
+  tools' response types (`velo_search_clients`, `velo_get_client_info`,
+  `velo_list_artifact_names`, `velo_get_artifact_details`), replacing
+  their previously ad-hoc `mode`+`message`-only shape with a
+  machine-readable, documented status field. Additive to the wire
+  format; no existing field was renamed or removed.
+- Added a distinct `not_found` status for `velo_get_client_info` and
+  `velo_get_artifact_details` (via `velociraptor.ErrClientNotFound` and
+  the new `velociraptor.ErrArtifactNotFound`), previously indistinguishable
+  from a generic connectivity/RPC failure.
+- No write-capable Velociraptor action was added. The original
+  single-client-collection scope
+  (`velo_collect_artifact_with_approval`,
   `velo_collect_dfir_profile_with_approval`,
   `velo_cancel_flow_with_approval`, `velo_list_flow_uploads`,
   `velo_get_flow_upload_metadata`,
-  `velo_download_flow_upload_with_approval`.
-- Require approval, case ID, and reason on every write-capable call.
-- Enforce artifact/profile allowlists.
-- Use the write API config only after approval.
+  `velo_download_flow_upload_with_approval`) remains unimplemented and
+  unscheduled; see docs/tool-reference.md's "Flow and result tools" /
+  "Collection tools" sections.
+- Callable tool inventory unchanged: still exactly the same 8 read-only
+  tools as v0.1.0.
 
 ### v0.3.0 — Hunt management
 
