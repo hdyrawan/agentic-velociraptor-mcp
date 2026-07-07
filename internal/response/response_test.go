@@ -12,6 +12,7 @@ func TestHelpersSetExpectedStatuses(t *testing.T) {
 		{"empty", Empty("none"), StatusEmpty},
 		{"not_found", NotFound("missing"), StatusNotFound},
 		{"error", Error("failed"), StatusError},
+		{"source_required", SourceRequired("pick a source"), StatusSourceRequired},
 	}
 
 	for _, tc := range cases {

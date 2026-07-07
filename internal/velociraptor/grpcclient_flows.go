@@ -182,11 +182,27 @@ func (c *grpcClient) GetFlowStatus(ctx context.Context, clientID, flowID string)
 // GetFlowResults first calls GetFlowDetails to discover the one
 // artifact this flow collected (this project only ever starts
 // single-artifact flows; see CollectArtifact), then calls Velociraptor's
-// GetTable RPC for that artifact's result rows. Two RPCs, but both
-// typed and parameterized only by already-validated client_id/flow_id
-// values and a server-reported artifact name — never a caller-supplied
-// or constructed query.
-func (c *grpcClient) GetFlowResults(ctx context.Context, clientID, flowID string, maxRows int, maxBytes int64, cursor string) (FlowResultPage, error) {
+// GetTable RPC for that artifact's result rows. All RPCs here are typed
+// and parameterized only by already-validated client_id/flow_id values,
+// a server-reported artifact name, and (v0.10.3+) a source name either
+// supplied by the caller or discovered from the server's own artifact
+// catalog — never a caller-supplied or constructed query.
+//
+// Named sources (v0.10.3): Velociraptor's GetTable RPC identifies a
+// flow's result table by `Artifact`, which must be source-qualified
+// ("ArtifactName/SourceName") for any artifact whose source has an
+// explicit name — confirmed against upstream's
+// paths.SplitFullSourceName and ArtifactPathManager.GetPathForWriting
+// (paths/artifacts/paths.go), which split/join on exactly one "/" and
+// write results under .../artifacts/<ArtifactName>/<FlowId>/<SourceName>
+// when a source name is present, or .../artifacts/<ArtifactName>/<FlowId>
+// when it is not. Before v0.10.3, this method always queried the bare
+// artifact name, so any artifact compiling to a named source (e.g.
+// Generic.Client.Info's BasicInformation/DetailedInfo/LinuxInfo — used
+// by nearly every DFIR profile) silently returned zero rows even though
+// the collection succeeded and real data existed server-side. See
+// docs/live-validation-report-v0.10.2.md finding 2.
+func (c *grpcClient) GetFlowResults(ctx context.Context, clientID, flowID, source string, maxRows int, maxBytes int64, cursor string) (FlowResultPage, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 
@@ -210,13 +226,25 @@ func (c *grpcClient) GetFlowResults(ctx context.Context, clientID, flowID string
 		return FlowResultPage{}, nil
 	}
 
+	// Source discovery is best-effort: a failure here (e.g. the artifact
+	// was removed from the catalog since the flow ran) falls back to the
+	// bare artifact name rather than failing the whole call.
+	sources, _ := c.resolveArtifactSourceNames(ctx, artifact)
+	tableArtifact, sourceRequired, availableSources, err := resolveResultArtifact(artifact, source, sources)
+	if err != nil {
+		return FlowResultPage{}, fmt.Errorf("velociraptor: get flow results: %w", err)
+	}
+	if sourceRequired {
+		return FlowResultPage{SourceRequired: true, AvailableSources: availableSources}, nil
+	}
+
 	bounded := boundLimit(maxRows, c.effectiveMaxRows())
 	startRow := parseOffsetCursor(cursor)
 
 	resp, err := c.tables.GetTable(ctx, &veloapi.GetTableRequest{
 		ClientId: clientID,
 		FlowId:   flowID,
-		Artifact: artifact,
+		Artifact: tableArtifact,
 		Rows:     uint64(bounded),
 		StartRow: uint64(startRow),
 	})

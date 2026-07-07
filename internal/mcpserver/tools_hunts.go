@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -531,18 +532,20 @@ type GetHuntResultsInput struct {
 	HuntID string `json:"hunt_id" jsonschema:"Velociraptor hunt ID, e.g. H.1234abcd5678ef90"`
 	Limit  int    `json:"limit,omitempty" jsonschema:"maximum result rows to return; server-side max_rows ceiling applies"`
 	Cursor string `json:"cursor,omitempty" jsonschema:"opaque pagination cursor returned by a previous call"`
+	Source string `json:"source,omitempty" jsonschema:"optional result source name, for artifacts that compile to more than one named source (e.g. Generic.Client.Info); if omitted and the artifact has multiple named sources, the response reports status \"source_required\" with the real available_sources instead of guessing"`
 }
 
 type GetHuntResultsOutput struct {
 	response.Result
-	Mode         string           `json:"mode"`
-	HuntID       string           `json:"hunt_id"`
-	Rows         []map[string]any `json:"rows"`
-	ReturnedRows int              `json:"returned_rows"`
-	TotalRows    int              `json:"total_rows,omitempty"`
-	ByteCount    int64            `json:"byte_count"`
-	NextCursor   string           `json:"next_cursor,omitempty"`
-	Truncated    bool             `json:"truncated"`
+	Mode             string           `json:"mode"`
+	HuntID           string           `json:"hunt_id"`
+	Rows             []map[string]any `json:"rows"`
+	ReturnedRows     int              `json:"returned_rows"`
+	TotalRows        int              `json:"total_rows,omitempty"`
+	ByteCount        int64            `json:"byte_count"`
+	NextCursor       string           `json:"next_cursor,omitempty"`
+	Truncated        bool             `json:"truncated"`
+	AvailableSources []string         `json:"available_sources,omitempty"`
 }
 
 func newGetHuntResultsHandler(deps Deps) mcp.ToolHandlerFor[GetHuntResultsInput, GetHuntResultsOutput] {
@@ -554,6 +557,12 @@ func newGetHuntResultsHandler(deps Deps) mcp.ToolHandlerFor[GetHuntResultsInput,
 			}
 			recordAudit(deps, audit.Event{Tool: "velo_get_hunt_results", Outcome: audit.OutcomeBlocked, HuntID: in.HuntID, Reason: reason})
 			return nil, GetHuntResultsOutput{}, err
+		}
+		if in.Source != "" {
+			if err := validation.ResultSourceName(in.Source); err != nil {
+				recordAudit(deps, audit.Event{Tool: "velo_get_hunt_results", Outcome: audit.OutcomeBlocked, HuntID: in.HuntID, Reason: err.Error()})
+				return nil, GetHuntResultsOutput{}, err
+			}
 		}
 
 		limit := boundToolLimit(in.Limit, configuredMaxRows(deps))
@@ -569,7 +578,7 @@ func newGetHuntResultsHandler(deps Deps) mcp.ToolHandlerFor[GetHuntResultsInput,
 			return nil, GetHuntResultsOutput{Result: response.Error("real mode is configured but no Velociraptor client is available"), Mode: VelociraptorModeReal, HuntID: in.HuntID, Rows: []map[string]any{}}, nil
 		}
 
-		page, err := deps.ReadClient.GetHuntResults(ctx, in.HuntID, limit, maxBytes)
+		page, err := deps.ReadClient.GetHuntResults(ctx, in.HuntID, in.Source, limit, maxBytes)
 		if err != nil {
 			recordAudit(deps, audit.Event{Tool: "velo_get_hunt_results", Outcome: audit.OutcomeError, HuntID: in.HuntID, Reason: err.Error()})
 			result := response.Error(err.Error())
@@ -577,6 +586,17 @@ func newGetHuntResultsHandler(deps Deps) mcp.ToolHandlerFor[GetHuntResultsInput,
 				result = response.NotFound(err.Error())
 			}
 			return nil, GetHuntResultsOutput{Result: result, Mode: VelociraptorModeReal, HuntID: in.HuntID, Rows: []map[string]any{}}, nil
+		}
+
+		if page.SourceRequired {
+			recordAudit(deps, audit.Event{Tool: "velo_get_hunt_results", Outcome: audit.OutcomeSuccess, HuntID: in.HuntID, Reason: "artifact has multiple named result sources; source input required"})
+			return nil, GetHuntResultsOutput{
+				Result:           response.SourceRequired(fmt.Sprintf("this artifact has multiple result sources; retry with `source` set to one of: %s", strings.Join(page.AvailableSources, ", "))),
+				Mode:             VelociraptorModeReal,
+				HuntID:           in.HuntID,
+				Rows:             []map[string]any{},
+				AvailableSources: page.AvailableSources,
+			}, nil
 		}
 
 		rows, byteCount, truncatedByHandler := boundRowsByLimitAndBytes(page.Rows, limit, maxBytes)

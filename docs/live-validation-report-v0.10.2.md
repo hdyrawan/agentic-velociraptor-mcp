@@ -7,6 +7,14 @@ was weakened. One real bug was found and fixed (see "Bugs found and
 fixed" below); everything else in this report is validation findings
 and documentation.
 
+> **v0.10.3 update**: the two bugs documented below as "found — not
+> fixed" (named-source result retrieval; the IOC-hunt artifact mapping)
+> were fixed in v0.10.3. See CHANGELOG.md's v0.10.3 entry and
+> [docs/tool-reference.md](tool-reference.md)'s "Named result sources"
+> and "IOC kind support status" sections for the current, fixed
+> behavior. The findings below are left unchanged as the historical
+> record of what this pass actually observed.
+
 - **Commit tested**: `f7479b916cd066c8f17c001490f6c809cd90f770` (`f7479b9`,
   the tip of `master` at the start of this validation pass — v0.10.1
   stabilization).

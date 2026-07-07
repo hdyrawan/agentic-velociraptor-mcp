@@ -15,16 +15,18 @@ import (
 	"github.com/hdyrawan/agentic-velociraptor-mcp/internal/velociraptor"
 )
 
-// iocAllowedArtifacts lists every illustrative artifact vql.Bind resolves
-// an IOC kind to, so tests can allowlist them all without needing to
-// import internal/vql (this package doesn't otherwise depend on it).
-var iocAllowedArtifacts = []string{
-	"System.Hash.Hunt",
-	"System.IP.Hunt",
-	"System.Domain.Hunt",
-	"System.Process.Hunt",
-	"System.Path.Hunt",
-}
+// iocHashHunterArtifact mirrors internal/vql's hashHunterArtifact
+// constant (this package doesn't otherwise depend on internal/vql, so
+// tests hardcode the same real, catalog-verified artifact name rather
+// than importing it). As of v0.10.3 this is the only IOC kind
+// (TemplateIOCHashHunt) vql.Bind resolves to a real artifact; ip/domain/
+// process/path all fail closed with vql.ErrTemplateUnsupported — see
+// docs/live-validation-report-v0.10.2.md finding 3.
+const iocHashHunterArtifact = "Generic.Detection.HashHunter"
+
+// iocAllowedArtifacts is the artifact allowlist IOC-hunt tests need:
+// just the one real hash-hunt artifact.
+var iocAllowedArtifacts = []string{iocHashHunterArtifact}
 
 // testIOCDeps builds a Deps with the write pilot enabled by default
 // (PolicyModeControlled + a real approval.FileStore) and every
@@ -57,6 +59,14 @@ func testIOCDeps(t *testing.T) (Deps, *fakeAuditSink, approval.Store) {
 // IOC kind/value validation
 // ---------------------------------------------------------------------------
 
+// TestHuntIOCValidatesEachKind covers input-syntax validation
+// (validation.ValidateIOC), which happens before vql.Bind and rejects
+// malformed indicators identically for all 5 kinds regardless of which
+// ones have a real artifact behind them. The one syntactically valid
+// case exercised all the way through is "hash" (the only kind with a
+// real artifact as of v0.10.3); see
+// TestHuntIOCUnsupportedKindsFailBeforeApprovalLookup for the other 4
+// kinds' valid-input behavior.
 func TestHuntIOCValidatesEachKind(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -66,13 +76,9 @@ func TestHuntIOCValidatesEachKind(t *testing.T) {
 	}{
 		{"valid hash", "hash", "d41d8cd98f00b204e9800998ecf8427e", false},
 		{"invalid hash", "hash", "not-a-hash", true},
-		{"valid ip", "ip", "192.0.2.1", false},
 		{"invalid ip", "ip", "not-an-ip", true},
-		{"valid domain", "domain", "evil.example.com", false},
 		{"invalid domain", "domain", "not a domain", true},
-		{"valid process", "process", "svchost.exe", false},
 		{"invalid process", "process", "/usr/bin/bash", true},
-		{"valid path", "path", "/usr/bin/bash", false},
 		{"invalid path", "path", "../etc/passwd", true},
 		{"unknown kind", "bogus", "whatever", true},
 	}
@@ -106,6 +112,54 @@ func TestHuntIOCValidatesEachKind(t *testing.T) {
 				if out.Status != response.StatusNotFound {
 					t.Errorf("out = %+v, want not_found (validation passed, approval missing)", out)
 				}
+			}
+			evt, ok := sink.last()
+			if !ok || evt.Outcome != audit.OutcomeBlocked {
+				t.Errorf("audit event outcome = %q, want blocked", evt.Outcome)
+			}
+		})
+	}
+}
+
+// TestHuntIOCUnsupportedKindsFailBeforeApprovalLookup covers the v0.10.3
+// fix: a syntactically valid ip/domain/process/path indicator must fail
+// with a clear error from vql.Bind (via BuildHuntIOCApprovalRequest)
+// before the handler ever looks up an approval reference — so an
+// existing, otherwise-valid approval for one of these kinds is left
+// completely untouched (not even inspected), and no artifact allowlist
+// or backend call is reached. This replaces the pre-v0.10.3 behavior
+// where these kinds silently resolved to a nonexistent artifact and only
+// failed once a real CreateHunt call was attempted.
+func TestHuntIOCUnsupportedKindsFailBeforeApprovalLookup(t *testing.T) {
+	cases := []struct {
+		kind  string
+		value string
+	}{
+		{"ip", "192.0.2.1"},
+		{"domain", "evil.example.com"},
+		{"process", "svchost.exe"},
+		{"path", "/usr/bin/bash"},
+	}
+
+	for _, c := range cases {
+		t.Run(c.kind, func(t *testing.T) {
+			deps, sink, _ := testIOCDeps(t)
+			handler := newHuntIOCHandler(deps)
+
+			_, _, err := handler(context.Background(), nil, HuntIOCInput{
+				CaseID:     "CASE-IOC-UNSUPPORTED",
+				Reason:     "test unsupported ioc kind",
+				Requester:  "tester",
+				ApprovalID: "approval-nonexistent",
+				Kind:       c.kind,
+				Value:      c.value,
+				Label:      "linux",
+			})
+			if err == nil {
+				t.Fatalf("expected error for unsupported kind %q, got nil", c.kind)
+			}
+			if !strings.Contains(err.Error(), "unsupported until curated IOC artifacts are installed") {
+				t.Errorf("error = %q, want it to name the curated-artifacts limitation", err.Error())
 			}
 			evt, ok := sink.last()
 			if !ok || evt.Outcome != audit.OutcomeBlocked {
@@ -156,8 +210,8 @@ func TestHuntIOCBlockedWithoutApproval(t *testing.T) {
 		Reason:     "test no approval",
 		Requester:  "tester",
 		ApprovalID: "approval-nonexistent",
-		Kind:       "ip",
-		Value:      "192.0.2.1",
+		Kind:       "hash",
+		Value:      "d41d8cd98f00b204e9800998ecf8427e",
 		Label:      "linux",
 	})
 	if err != nil {
@@ -181,9 +235,9 @@ func TestHuntIOCTargetAllBlockedByDefault(t *testing.T) {
 		CaseID:    "CASE-IOC-4",
 		Reason:    "test target_all",
 		Requester: "tester",
-		Artifact:  "System.IP.Hunt",
+		Artifact:  iocHashHunterArtifact,
 		Parameters: map[string]string{
-			"IPAddress": "192.0.2.1",
+			"MD5List": "d41d8cd98f00b204e9800998ecf8427e",
 		},
 		TargetAll: true,
 	})
@@ -194,8 +248,8 @@ func TestHuntIOCTargetAllBlockedByDefault(t *testing.T) {
 		Reason:     "test target_all",
 		Requester:  "tester",
 		ApprovalID: ref,
-		Kind:       "ip",
-		Value:      "192.0.2.1",
+		Kind:       "hash",
+		Value:      "d41d8cd98f00b204e9800998ecf8427e",
 		All:        true,
 	})
 	if err == nil {
@@ -244,9 +298,9 @@ func TestHuntIOCEnforcesMaxHuntClients(t *testing.T) {
 		CaseID:    "CASE-IOC-5",
 		Reason:    "test max clients",
 		Requester: "tester",
-		Artifact:  "System.Hash.Hunt",
+		Artifact:  iocHashHunterArtifact,
 		Parameters: map[string]string{
-			"HashValue": "d41d8cd98f00b204e9800998ecf8427e",
+			"MD5List": "d41d8cd98f00b204e9800998ecf8427e",
 		},
 		Label: "linux",
 	})
@@ -289,9 +343,9 @@ func TestHuntIOCRejectsMismatchedApproval(t *testing.T) {
 		CaseID:    "CASE-IOC-6",
 		Reason:    "test ioc mismatch",
 		Requester: "tester",
-		Artifact:  "System.Hash.Hunt",
+		Artifact:  iocHashHunterArtifact,
 		Parameters: map[string]string{
-			"HashValue": "d41d8cd98f00b204e9800998ecf8427e",
+			"MD5List": "d41d8cd98f00b204e9800998ecf8427e",
 		},
 		Label: "linux",
 	})
@@ -338,7 +392,7 @@ func TestApprovalForIOCHuntCannotAuthorizeRegularHuntStart(t *testing.T) {
 	deps.Policy = policy.NewEngine(config.PolicyConfig{
 		Mode:             config.PolicyModeControlled,
 		MaxHuntClients:   50,
-		AllowedArtifacts: append(append([]string{}, iocAllowedArtifacts...), "System.Hash.Hunt"),
+		AllowedArtifacts: append([]string{}, iocAllowedArtifacts...),
 	})
 	deps.WriteClient = velociraptor.NewClient()
 	deps.VelociraptorWriteMode = VelociraptorModeReal
@@ -349,9 +403,9 @@ func TestApprovalForIOCHuntCannotAuthorizeRegularHuntStart(t *testing.T) {
 		CaseID:    "CASE-IOC-7",
 		Reason:    "ioc hunt for a hash",
 		Requester: "tester",
-		Artifact:  "System.Hash.Hunt",
+		Artifact:  iocHashHunterArtifact,
 		Parameters: map[string]string{
-			"HashValue": "d41d8cd98f00b204e9800998ecf8427e",
+			"MD5List": "d41d8cd98f00b204e9800998ecf8427e",
 		},
 		Label: "linux",
 	})
@@ -362,7 +416,7 @@ func TestApprovalForIOCHuntCannotAuthorizeRegularHuntStart(t *testing.T) {
 		Reason:     "ioc hunt for a hash",
 		Requester:  "tester",
 		ApprovalID: ref,
-		Artifact:   "System.Hash.Hunt",
+		Artifact:   iocHashHunterArtifact,
 		Label:      "linux",
 	})
 	if err != nil {
@@ -403,9 +457,9 @@ func TestHuntIOCApprovedFakePath(t *testing.T) {
 		CaseID:    "CASE-IOC-8",
 		Reason:    "approved ioc hunt test",
 		Requester: "tester",
-		Artifact:  "System.Domain.Hunt",
+		Artifact:  iocHashHunterArtifact,
 		Parameters: map[string]string{
-			"Domain": "evil.example.com",
+			"MD5List": "d41d8cd98f00b204e9800998ecf8427e",
 		},
 		Label: "linux",
 	})
@@ -416,8 +470,8 @@ func TestHuntIOCApprovedFakePath(t *testing.T) {
 		Reason:     "approved ioc hunt test",
 		Requester:  "tester",
 		ApprovalID: ref,
-		Kind:       "domain",
-		Value:      "evil.example.com",
+		Kind:       "hash",
+		Value:      "d41d8cd98f00b204e9800998ecf8427e",
 		Label:      "linux",
 	})
 	if err != nil {
@@ -429,8 +483,8 @@ func TestHuntIOCApprovedFakePath(t *testing.T) {
 	if out.HuntID != "H.ioc-hash" {
 		t.Errorf("HuntID = %q, want H.ioc-hash", out.HuntID)
 	}
-	if out.Artifact != "System.Domain.Hunt" {
-		t.Errorf("Artifact = %q, want System.Domain.Hunt", out.Artifact)
+	if out.Artifact != iocHashHunterArtifact {
+		t.Errorf("Artifact = %q, want %q", out.Artifact, iocHashHunterArtifact)
 	}
 
 	status, err := store.Get(context.Background(), ref)
@@ -469,9 +523,9 @@ func TestHuntIOCRealModeExplicitClientIDsPreservesApproval(t *testing.T) {
 		CaseID:    "CASE-IOC-CLIENTIDS",
 		Reason:    "explicit client ids regression",
 		Requester: "tester",
-		Artifact:  "System.Domain.Hunt",
+		Artifact:  iocHashHunterArtifact,
 		Parameters: map[string]string{
-			"Domain": "evil.example.com",
+			"MD5List": "d41d8cd98f00b204e9800998ecf8427e",
 		},
 		ClientIDs: []string{"C.1234abcd5678ef90"},
 	})
@@ -482,8 +536,8 @@ func TestHuntIOCRealModeExplicitClientIDsPreservesApproval(t *testing.T) {
 		Reason:     "explicit client ids regression",
 		Requester:  "tester",
 		ApprovalID: ref,
-		Kind:       "domain",
-		Value:      "evil.example.com",
+		Kind:       "hash",
+		Value:      "d41d8cd98f00b204e9800998ecf8427e",
 		ClientIDs:  []string{"C.1234abcd5678ef90"},
 	})
 	if err != nil {
@@ -523,9 +577,9 @@ func TestHuntIOCScaffoldedRealModeReturnsHonestError(t *testing.T) {
 		CaseID:    "CASE-IOC-9",
 		Reason:    "scaffolded real mode",
 		Requester: "tester",
-		Artifact:  "System.Path.Hunt",
+		Artifact:  iocHashHunterArtifact,
 		Parameters: map[string]string{
-			"Path": "/usr/bin/bash",
+			"MD5List": "d41d8cd98f00b204e9800998ecf8427e",
 		},
 		Label: "linux",
 	})
@@ -536,8 +590,8 @@ func TestHuntIOCScaffoldedRealModeReturnsHonestError(t *testing.T) {
 		Reason:     "scaffolded real mode",
 		Requester:  "tester",
 		ApprovalID: ref,
-		Kind:       "path",
-		Value:      "/usr/bin/bash",
+		Kind:       "hash",
+		Value:      "d41d8cd98f00b204e9800998ecf8427e",
 		Label:      "linux",
 	})
 	if err != nil {

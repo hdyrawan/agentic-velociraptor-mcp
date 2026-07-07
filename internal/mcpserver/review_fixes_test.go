@@ -81,11 +81,11 @@ func TestCLIBuiltHuntIOCApprovalVerifiesThroughHandler(t *testing.T) {
 	if out.Status != response.StatusSuccess {
 		t.Fatalf("Status = %q (%s), want success: CLI-built approval must fingerprint-match the handler candidate", out.Status, out.Message)
 	}
-	if startedArtifact != "System.Hash.Hunt" {
-		t.Errorf("StartHunt artifact = %q, want System.Hash.Hunt", startedArtifact)
+	if startedArtifact != iocHashHunterArtifact {
+		t.Errorf("StartHunt artifact = %q, want %q", startedArtifact, iocHashHunterArtifact)
 	}
-	if startedParams["HashValue"] != "d41d8cd98f00b204e9800998ecf8427e" {
-		t.Errorf("StartHunt params = %v, want HashValue bound to the approved hash", startedParams)
+	if startedParams["MD5List"] != "d41d8cd98f00b204e9800998ecf8427e" {
+		t.Errorf("StartHunt params = %v, want MD5List bound to the approved hash", startedParams)
 	}
 
 	status, err := store.Get(context.Background(), built.ID)
@@ -256,9 +256,9 @@ func TestAuditWriteFailureBlocksApprovedIOCHunt(t *testing.T) {
 		CaseID:    "CASE-AF-1",
 		Reason:    "audit failure test",
 		Requester: "tester",
-		Artifact:  "System.IP.Hunt",
+		Artifact:  iocHashHunterArtifact,
 		Parameters: map[string]string{
-			"IPAddress": "192.0.2.1",
+			"MD5List": "d41d8cd98f00b204e9800998ecf8427e",
 		},
 		Label: "linux",
 	})
@@ -273,8 +273,8 @@ func TestAuditWriteFailureBlocksApprovedIOCHunt(t *testing.T) {
 		Reason:     "audit failure test",
 		Requester:  "tester",
 		ApprovalID: ref,
-		Kind:       "ip",
-		Value:      "192.0.2.1",
+		Kind:       "hash",
+		Value:      "d41d8cd98f00b204e9800998ecf8427e",
 		Label:      "linux",
 	})
 	if err != nil {

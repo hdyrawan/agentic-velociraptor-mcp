@@ -11,18 +11,24 @@
 //   - api/proto/clients.proto (SearchClientsRequest,
 //     SearchClientsResponse, GetClientRequest, ApiClient,
 //     AgentInformation, Uname)
-//   - artifacts/proto/artifact.proto (Artifact, ArtifactParameter)
+//   - artifacts/proto/artifact.proto (Artifact, ArtifactParameter,
+//     ArtifactSource)
 //   - api/proto/artifacts.proto (GetArtifactsRequest, ArtifactDescriptors)
 //
 // Each message here is intentionally a narrow subset of its upstream
-// counterpart: only the fields these four tools actually read are
-// declared. Fields are omitted by field number, not renumbered, so the
-// wire format still matches upstream exactly; a server populating a
-// field this project doesn't declare (e.g. Artifact.sources, which
-// carries the artifact's raw VQL body) simply arrives as an ignored
-// unknown field — this project's generated Go types have no field to
-// decode it into, so artifact VQL text can never reach a tool response
-// even by accident. See docs/security-model.md.
+// counterpart: only the fields these tools actually read are declared.
+// Fields are omitted by field number, not renumbered, so the wire
+// format still matches upstream exactly. As of v0.10.3, `Artifact`
+// declares `sources` (field 4) as a minimal `ArtifactSource` carrying
+// only `name` (field 3) — needed to resolve a multi-source artifact's
+// result table (internal/velociraptor/grpcclient_flows.go's
+// GetFlowResults) — but every field carrying an actual VQL query body
+// (`ArtifactSource.query`/`queries`/`precondition`) remains
+// permanently undeclared: a server populating those fields simply
+// arrives as an ignored unknown field — this project's generated Go
+// types have no field to decode them into, so artifact VQL text can
+// never reach a tool response even by accident. See
+// docs/security-model.md.
 //
 // Regenerate with (from the repository root):
 //   buf generate internal/velociraptor/veloapi
@@ -80,15 +86,30 @@ message ArtifactParameter {
   string type = 4;
 }
 
-// Artifact deliberately omits `sources` (field 4, repeated
-// ArtifactSource) and every other field carrying VQL text, tool
-// definitions, or precondition expressions: this project's artifact
-// catalog tools return name/description/parameter metadata only, never
-// a VQL body. See the file-level comment above.
+// ArtifactSource mirrors upstream's artifacts/proto/artifact.proto
+// ArtifactSource message, declaring only `name` (field 3) — the field
+// this project needs to resolve a named-source artifact's per-source
+// result table (see internal/velociraptor/grpcclient_flows.go's
+// GetFlowResults doc comment). Every other field on the real message
+// (`precondition`, `queries`, `query` — the actual VQL body — and
+// `notebook`) is deliberately omitted so this project's generated Go
+// types have no field to decode VQL text into, even if a real server's
+// response carries it.
+message ArtifactSource {
+  string name = 3;
+}
+
+// Artifact declares `sources` (field 4, matching upstream's field
+// number exactly) as `ArtifactSource` — source *names* only, never a
+// query body (see ArtifactSource above). Every other field carrying VQL
+// text, tool definitions, or precondition expressions remains omitted:
+// this project's artifact catalog tools return name/description/
+// parameter/source-name metadata only, never a VQL body.
 message Artifact {
   string name = 1;
   string description = 2;
   repeated ArtifactParameter parameters = 3;
+  repeated ArtifactSource sources = 4;
 }
 
 message GetArtifactsRequest {

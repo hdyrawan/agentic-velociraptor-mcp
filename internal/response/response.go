@@ -16,10 +16,18 @@ package response
 type Status string
 
 const (
-	StatusSuccess  Status = "success"
-	StatusEmpty    Status = "empty"
-	StatusNotFound Status = "not_found"
-	StatusError    Status = "error"
+	StatusSuccess Status = "success"
+	StatusEmpty   Status = "empty"
+	// StatusSourceRequired is returned by velo_get_flow_results and
+	// velo_get_hunt_results when the target artifact compiled to more
+	// than one named Velociraptor result source (e.g. Generic.Client.Info's
+	// BasicInformation/DetailedInfo/LinuxInfo) and the caller did not
+	// specify which one to read via the optional `source` input. This is
+	// a normal, actionable structured response, not an error — it carries
+	// the real available source names so the caller can retry with one.
+	StatusSourceRequired Status = "source_required"
+	StatusNotFound       Status = "not_found"
+	StatusError          Status = "error"
 )
 
 // Result is a minimal reusable status/message block. Tool handlers with
@@ -40,6 +48,10 @@ func Empty(message string) Result {
 
 func NotFound(message string) Result {
 	return Result{Status: StatusNotFound, Message: message}
+}
+
+func SourceRequired(message string) Result {
+	return Result{Status: StatusSourceRequired, Message: message}
 }
 
 func Error(message string) Result {

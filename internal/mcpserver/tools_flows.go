@@ -106,19 +106,21 @@ type GetFlowResultsInput struct {
 	FlowID   string `json:"flow_id" jsonschema:"Velociraptor flow ID, e.g. F.BN2HJC4N4T6KG"`
 	Limit    int    `json:"limit,omitempty" jsonschema:"maximum result rows to return; server-side max_rows ceiling applies"`
 	Cursor   string `json:"cursor,omitempty" jsonschema:"opaque pagination cursor returned by a previous call"`
+	Source   string `json:"source,omitempty" jsonschema:"optional result source name, for artifacts that compile to more than one named source (e.g. Generic.Client.Info); if omitted and the artifact has multiple named sources, the response reports status \"source_required\" with the real available_sources instead of guessing"`
 }
 
 type GetFlowResultsOutput struct {
 	response.Result
-	Mode         string           `json:"mode"`
-	ClientID     string           `json:"client_id"`
-	FlowID       string           `json:"flow_id"`
-	Rows         []map[string]any `json:"rows"`
-	ReturnedRows int              `json:"returned_rows"`
-	TotalRows    int              `json:"total_rows,omitempty"`
-	ByteCount    int64            `json:"byte_count"`
-	NextCursor   string           `json:"next_cursor,omitempty"`
-	Truncated    bool             `json:"truncated"`
+	Mode             string           `json:"mode"`
+	ClientID         string           `json:"client_id"`
+	FlowID           string           `json:"flow_id"`
+	Rows             []map[string]any `json:"rows"`
+	ReturnedRows     int              `json:"returned_rows"`
+	TotalRows        int              `json:"total_rows,omitempty"`
+	ByteCount        int64            `json:"byte_count"`
+	NextCursor       string           `json:"next_cursor,omitempty"`
+	Truncated        bool             `json:"truncated"`
+	AvailableSources []string         `json:"available_sources,omitempty"`
 }
 
 // registerFlowTools registers all six FlowTools entries: the three
@@ -241,6 +243,12 @@ func newGetFlowResultsHandler(deps Deps) mcp.ToolHandlerFor[GetFlowResultsInput,
 			recordAudit(deps, audit.Event{Tool: "velo_get_flow_results", Outcome: audit.OutcomeBlocked, ClientID: in.ClientID, FlowID: in.FlowID, Reason: err.Error()})
 			return nil, GetFlowResultsOutput{}, err
 		}
+		if in.Source != "" {
+			if err := validation.ResultSourceName(in.Source); err != nil {
+				recordAudit(deps, audit.Event{Tool: "velo_get_flow_results", Outcome: audit.OutcomeBlocked, ClientID: in.ClientID, FlowID: in.FlowID, Reason: err.Error()})
+				return nil, GetFlowResultsOutput{}, err
+			}
+		}
 		limit := boundToolLimit(in.Limit, configuredMaxRows(deps))
 		maxBytes := configuredMaxResultBytes(deps)
 
@@ -253,7 +261,7 @@ func newGetFlowResultsHandler(deps Deps) mcp.ToolHandlerFor[GetFlowResultsInput,
 			return nil, GetFlowResultsOutput{Result: response.Error("real mode is configured but no Velociraptor client is available"), Mode: VelociraptorModeReal, ClientID: in.ClientID, FlowID: in.FlowID, Rows: []map[string]any{}}, nil
 		}
 
-		page, err := deps.ReadClient.GetFlowResults(ctx, in.ClientID, in.FlowID, limit, maxBytes, in.Cursor)
+		page, err := deps.ReadClient.GetFlowResults(ctx, in.ClientID, in.FlowID, in.Source, limit, maxBytes, in.Cursor)
 		if err != nil {
 			recordAudit(deps, audit.Event{Tool: "velo_get_flow_results", Outcome: audit.OutcomeError, ClientID: in.ClientID, FlowID: in.FlowID, Reason: err.Error()})
 			result := response.Error(err.Error())
@@ -261,6 +269,18 @@ func newGetFlowResultsHandler(deps Deps) mcp.ToolHandlerFor[GetFlowResultsInput,
 				result = response.NotFound(err.Error())
 			}
 			return nil, GetFlowResultsOutput{Result: result, Mode: VelociraptorModeReal, ClientID: in.ClientID, FlowID: in.FlowID, Rows: []map[string]any{}}, nil
+		}
+
+		if page.SourceRequired {
+			recordAudit(deps, audit.Event{Tool: "velo_get_flow_results", Outcome: audit.OutcomeSuccess, ClientID: in.ClientID, FlowID: in.FlowID, Reason: "artifact has multiple named result sources; source input required"})
+			return nil, GetFlowResultsOutput{
+				Result:           response.SourceRequired(fmt.Sprintf("this artifact has multiple result sources; retry with `source` set to one of: %s", strings.Join(page.AvailableSources, ", "))),
+				Mode:             VelociraptorModeReal,
+				ClientID:         in.ClientID,
+				FlowID:           in.FlowID,
+				Rows:             []map[string]any{},
+				AvailableSources: page.AvailableSources,
+			}, nil
 		}
 
 		rows, byteCount, truncatedByHandler := boundRowsByLimitAndBytes(page.Rows, limit, maxBytes)

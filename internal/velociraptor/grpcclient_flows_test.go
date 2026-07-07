@@ -256,7 +256,7 @@ func TestGRPCClientGetFlowResultsSuccess(t *testing.T) {
 	}
 	c := &grpcClient{flows: flows, tables: tables, timeout: time.Second, maxRows: 100}
 
-	page, err := c.GetFlowResults(context.Background(), "C.1234abcd5678ef90", "F.ABC123", 10, 1<<20, "")
+	page, err := c.GetFlowResults(context.Background(), "C.1234abcd5678ef90", "F.ABC123", "", 10, 1<<20, "")
 	if err != nil {
 		t.Fatalf("GetFlowResults: %v", err)
 	}
@@ -273,7 +273,7 @@ func TestGRPCClientGetFlowResultsNotFound(t *testing.T) {
 	}
 	c := &grpcClient{flows: flows, timeout: time.Second, maxRows: 100}
 
-	_, err := c.GetFlowResults(context.Background(), "C.1234abcd5678ef90", "F.NOPE", 10, 1<<20, "")
+	_, err := c.GetFlowResults(context.Background(), "C.1234abcd5678ef90", "F.NOPE", "", 10, 1<<20, "")
 	if !errors.Is(err, ErrFlowNotFound) {
 		t.Errorf("err = %v, want ErrFlowNotFound", err)
 	}
@@ -304,7 +304,7 @@ func TestGRPCClientGetFlowResultsPaginationTruncation(t *testing.T) {
 	}
 	c := &grpcClient{flows: flows, tables: tables, timeout: time.Second, maxRows: 100}
 
-	page, err := c.GetFlowResults(context.Background(), "C.1234abcd5678ef90", "F.ABC123", 2, 1<<20, "")
+	page, err := c.GetFlowResults(context.Background(), "C.1234abcd5678ef90", "F.ABC123", "", 2, 1<<20, "")
 	if err != nil {
 		t.Fatalf("GetFlowResults: %v", err)
 	}
@@ -313,6 +313,197 @@ func TestGRPCClientGetFlowResultsPaginationTruncation(t *testing.T) {
 	}
 	if page.NextCursor != "offset:2" {
 		t.Errorf("NextCursor = %q, want offset:2", page.NextCursor)
+	}
+}
+
+// TestGRPCClientGetFlowResultsNamedSourceRequiresSelection fixes the
+// v0.10.3 named-source bug: a flow whose artifact
+// (Generic.Client.Info-shaped fixture) compiles to more than one named
+// Velociraptor result source must not silently return zero rows; it
+// must report SourceRequired with the real source names instead. See
+// docs/live-validation-report-v0.10.2.md finding 2.
+func TestGRPCClientGetFlowResultsNamedSourceRequiresSelection(t *testing.T) {
+	flows := &fakeFlowService{
+		getFlowDetails: func(ctx context.Context, in *veloapi.ApiFlowRequest) (*veloapi.FlowDetails, error) {
+			return &veloapi.FlowDetails{
+				Context: &veloapi.ArtifactCollectorContext{
+					SessionId: "F.ABC123",
+					Request:   &veloapi.ArtifactCollectorArgs{Artifacts: []string{"Generic.Client.Info"}},
+				},
+			}, nil
+		},
+	}
+	artifacts := &fakeArtifactCatalog{
+		resp: &veloapi.ArtifactDescriptors{
+			Items: []*veloapi.Artifact{{
+				Name: "Generic.Client.Info",
+				Sources: []*veloapi.ArtifactSource{
+					{Name: "BasicInformation"},
+					{Name: "DetailedInfo"},
+					{Name: "LinuxInfo"},
+				},
+			}},
+		},
+	}
+	tables := &fakeTableService{
+		getTable: func(ctx context.Context, in *veloapi.GetTableRequest) (*veloapi.GetTableResponse, error) {
+			t.Fatal("GetTable should not be called when a source must first be selected")
+			return nil, nil
+		},
+	}
+	c := &grpcClient{flows: flows, tables: tables, artifacts: artifacts, timeout: time.Second, maxRows: 100}
+
+	page, err := c.GetFlowResults(context.Background(), "C.1234abcd5678ef90", "F.ABC123", "", 10, 1<<20, "")
+	if err != nil {
+		t.Fatalf("GetFlowResults: %v", err)
+	}
+	if !page.SourceRequired {
+		t.Fatal("SourceRequired = false, want true for a multi-source artifact with no source selected")
+	}
+	want := []string{"BasicInformation", "DetailedInfo", "LinuxInfo"}
+	if len(page.AvailableSources) != len(want) {
+		t.Fatalf("AvailableSources = %v, want %v", page.AvailableSources, want)
+	}
+	if len(page.Rows) != 0 {
+		t.Errorf("Rows = %+v, want none when source selection is required", page.Rows)
+	}
+}
+
+// TestGRPCClientGetFlowResultsNamedSourceSelected proves the actual fix:
+// with an explicit source, GetTable is called with the source-qualified
+// "Artifact/Source" name (confirmed against real Velociraptor's
+// paths.SplitFullSourceName convention) and real rows come back —
+// this is the exact case that previously silently returned zero rows.
+func TestGRPCClientGetFlowResultsNamedSourceSelected(t *testing.T) {
+	flows := &fakeFlowService{
+		getFlowDetails: func(ctx context.Context, in *veloapi.ApiFlowRequest) (*veloapi.FlowDetails, error) {
+			return &veloapi.FlowDetails{
+				Context: &veloapi.ArtifactCollectorContext{
+					SessionId: "F.ABC123",
+					Request:   &veloapi.ArtifactCollectorArgs{Artifacts: []string{"Generic.Client.Info"}},
+				},
+			}, nil
+		},
+	}
+	artifacts := &fakeArtifactCatalog{
+		resp: &veloapi.ArtifactDescriptors{
+			Items: []*veloapi.Artifact{{
+				Name: "Generic.Client.Info",
+				Sources: []*veloapi.ArtifactSource{
+					{Name: "BasicInformation"},
+					{Name: "DetailedInfo"},
+				},
+			}},
+		},
+	}
+	tables := &fakeTableService{
+		getTable: func(ctx context.Context, in *veloapi.GetTableRequest) (*veloapi.GetTableResponse, error) {
+			if in.Artifact != "Generic.Client.Info/BasicInformation" {
+				t.Errorf("Artifact = %q, want source-qualified %q", in.Artifact, "Generic.Client.Info/BasicInformation")
+			}
+			return &veloapi.GetTableResponse{
+				Columns:   []string{"Hostname"},
+				Rows:      []*veloapi.Row{jsonRow(t, "mcp-lab-linux-01")},
+				TotalRows: 1,
+			}, nil
+		},
+	}
+	c := &grpcClient{flows: flows, tables: tables, artifacts: artifacts, timeout: time.Second, maxRows: 100}
+
+	page, err := c.GetFlowResults(context.Background(), "C.1234abcd5678ef90", "F.ABC123", "BasicInformation", 10, 1<<20, "")
+	if err != nil {
+		t.Fatalf("GetFlowResults: %v", err)
+	}
+	if page.SourceRequired {
+		t.Fatal("SourceRequired = true, want false when an explicit source was given")
+	}
+	if len(page.Rows) != 1 || page.Rows[0]["Hostname"] != "mcp-lab-linux-01" {
+		t.Errorf("Rows = %+v", page.Rows)
+	}
+}
+
+// TestGRPCClientGetFlowResultsUnknownSourceRejected confirms an invalid
+// caller-supplied source is rejected with ErrUnknownResultSource rather
+// than silently querying a nonexistent table.
+func TestGRPCClientGetFlowResultsUnknownSourceRejected(t *testing.T) {
+	flows := &fakeFlowService{
+		getFlowDetails: func(ctx context.Context, in *veloapi.ApiFlowRequest) (*veloapi.FlowDetails, error) {
+			return &veloapi.FlowDetails{
+				Context: &veloapi.ArtifactCollectorContext{
+					SessionId: "F.ABC123",
+					Request:   &veloapi.ArtifactCollectorArgs{Artifacts: []string{"Generic.Client.Info"}},
+				},
+			}, nil
+		},
+	}
+	artifacts := &fakeArtifactCatalog{
+		resp: &veloapi.ArtifactDescriptors{
+			Items: []*veloapi.Artifact{{
+				Name:    "Generic.Client.Info",
+				Sources: []*veloapi.ArtifactSource{{Name: "BasicInformation"}},
+			}},
+		},
+	}
+	tables := &fakeTableService{
+		getTable: func(ctx context.Context, in *veloapi.GetTableRequest) (*veloapi.GetTableResponse, error) {
+			t.Fatal("GetTable should not be called for an unknown source")
+			return nil, nil
+		},
+	}
+	c := &grpcClient{flows: flows, tables: tables, artifacts: artifacts, timeout: time.Second, maxRows: 100}
+
+	_, err := c.GetFlowResults(context.Background(), "C.1234abcd5678ef90", "F.ABC123", "NotARealSource", 10, 1<<20, "")
+	if !errors.Is(err, ErrUnknownResultSource) {
+		t.Errorf("err = %v, want wrapping ErrUnknownResultSource", err)
+	}
+}
+
+// TestGRPCClientGetFlowResultsDefaultSourceUnaffected is a regression
+// guard: a single-unnamed-source artifact (the pre-v0.10.3 common case,
+// e.g. Linux.Sys.Pslist/Windows.System.Pslist) must keep querying the
+// bare artifact name, unaffected by source resolution.
+func TestGRPCClientGetFlowResultsDefaultSourceUnaffected(t *testing.T) {
+	flows := &fakeFlowService{
+		getFlowDetails: func(ctx context.Context, in *veloapi.ApiFlowRequest) (*veloapi.FlowDetails, error) {
+			return &veloapi.FlowDetails{
+				Context: &veloapi.ArtifactCollectorContext{
+					SessionId: "F.ABC123",
+					Request:   &veloapi.ArtifactCollectorArgs{Artifacts: []string{"Linux.Sys.Pslist"}},
+				},
+			}, nil
+		},
+	}
+	artifacts := &fakeArtifactCatalog{
+		resp: &veloapi.ArtifactDescriptors{
+			Items: []*veloapi.Artifact{{
+				Name:    "Linux.Sys.Pslist",
+				Sources: []*veloapi.ArtifactSource{{Name: ""}},
+			}},
+		},
+	}
+	tables := &fakeTableService{
+		getTable: func(ctx context.Context, in *veloapi.GetTableRequest) (*veloapi.GetTableResponse, error) {
+			if in.Artifact != "Linux.Sys.Pslist" {
+				t.Errorf("Artifact = %q, want bare %q (unnamed source)", in.Artifact, "Linux.Sys.Pslist")
+			}
+			return &veloapi.GetTableResponse{
+				Columns:   []string{"Pid"},
+				Rows:      []*veloapi.Row{jsonRow(t, 1)},
+				TotalRows: 1,
+			}, nil
+		},
+	}
+	c := &grpcClient{flows: flows, tables: tables, artifacts: artifacts, timeout: time.Second, maxRows: 100}
+
+	page, err := c.GetFlowResults(context.Background(), "C.1234abcd5678ef90", "F.ABC123", "", 10, 1<<20, "")
+	if err != nil {
+		t.Fatalf("GetFlowResults: %v", err)
+	}
+	if page.SourceRequired {
+		t.Fatal("SourceRequired = true, want false for a single-unnamed-source artifact")
+	}
+	if len(page.Rows) != 1 {
+		t.Errorf("Rows = %+v, want 1 row", page.Rows)
 	}
 }
 

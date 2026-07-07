@@ -148,7 +148,17 @@ func (c *grpcClient) GetHuntStatus(ctx context.Context, huntID string) (HuntSumm
 // RunVQL(... "LIMIT 100")); Offset/Count are still sent per the proto
 // contract, but a real server may cap results at 100 rows independent of
 // what this project asks for.
-func (c *grpcClient) GetHuntResults(ctx context.Context, huntID string, maxRows int, maxBytes int64) (FlowResultPage, error) {
+//
+// Named sources (v0.10.3): the real GetHuntResults RPC resolves
+// `Artifact` through the same "ArtifactName/SourceName" convention as
+// GetTable (confirmed against upstream's
+// vql/server/hunts.HuntResultsPlugin.GetAvailableArtifacts, which builds
+// its own valid-artifact list the identical way:
+// `name := artifact.Name; if source.Name != "" { name += "/" + source.Name }`),
+// so this method resolves/validates a source exactly like
+// GetFlowResults — see that method's doc comment and
+// docs/live-validation-report-v0.10.2.md finding 2.
+func (c *grpcClient) GetHuntResults(ctx context.Context, huntID, source string, maxRows int, maxBytes int64) (FlowResultPage, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 
@@ -168,10 +178,19 @@ func (c *grpcClient) GetHuntResults(ctx context.Context, huntID string, maxRows 
 		return FlowResultPage{}, nil
 	}
 
+	sources, _ := c.resolveArtifactSourceNames(ctx, artifact)
+	tableArtifact, sourceRequired, availableSources, err := resolveResultArtifact(artifact, source, sources)
+	if err != nil {
+		return FlowResultPage{}, fmt.Errorf("velociraptor: get hunt results: %w", err)
+	}
+	if sourceRequired {
+		return FlowResultPage{SourceRequired: true, AvailableSources: availableSources}, nil
+	}
+
 	bounded := boundLimit(maxRows, c.effectiveMaxRows())
 	resp, err := c.hunts.GetHuntResults(ctx, &veloapi.GetHuntResultsRequest{
 		HuntId:   huntID,
-		Artifact: artifact,
+		Artifact: tableArtifact,
 		Count:    uint64(bounded),
 	})
 	if err != nil {

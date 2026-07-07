@@ -449,3 +449,168 @@ func TestGRPCClientGetArtifactDetailsErrorDoesNotLeakSecrets(t *testing.T) {
 		t.Errorf("error leaks key material: %v", err)
 	}
 }
+
+// TestGRPCClientResolveArtifactSourceNames covers the v0.10.3 helper
+// that discovers a real artifact's named result sources (fixture data
+// modeled on Generic.Client.Info's real 2026-07-07 live-lab-observed
+// sources: BasicInformation, DetailedInfo, LinuxInfo) — see
+// docs/live-validation-report-v0.10.2.md finding 2.
+func TestGRPCClientResolveArtifactSourceNames(t *testing.T) {
+	t.Run("multiple named sources", func(t *testing.T) {
+		fake := &fakeArtifactCatalog{
+			resp: &veloapi.ArtifactDescriptors{
+				Items: []*veloapi.Artifact{{
+					Name: "Generic.Client.Info",
+					Sources: []*veloapi.ArtifactSource{
+						{Name: "BasicInformation"},
+						{Name: "DetailedInfo"},
+						{Name: "LinuxInfo"},
+					},
+				}},
+			},
+		}
+		c := &grpcClient{artifacts: fake, timeout: time.Second}
+
+		names, err := c.resolveArtifactSourceNames(context.Background(), "Generic.Client.Info")
+		if err != nil {
+			t.Fatalf("resolveArtifactSourceNames: %v", err)
+		}
+		want := []string{"BasicInformation", "DetailedInfo", "LinuxInfo"}
+		if len(names) != len(want) {
+			t.Fatalf("names = %v, want %v", names, want)
+		}
+		for i, n := range want {
+			if names[i] != n {
+				t.Errorf("names[%d] = %q, want %q", i, names[i], n)
+			}
+		}
+	})
+
+	t.Run("single unnamed source returns no names", func(t *testing.T) {
+		fake := &fakeArtifactCatalog{
+			resp: &veloapi.ArtifactDescriptors{
+				Items: []*veloapi.Artifact{{
+					Name:    "Linux.Sys.Pslist",
+					Sources: []*veloapi.ArtifactSource{{Name: ""}},
+				}},
+			},
+		}
+		c := &grpcClient{artifacts: fake, timeout: time.Second}
+
+		names, err := c.resolveArtifactSourceNames(context.Background(), "Linux.Sys.Pslist")
+		if err != nil {
+			t.Fatalf("resolveArtifactSourceNames: %v", err)
+		}
+		if len(names) != 0 {
+			t.Errorf("names = %v, want none (unnamed source is never listed)", names)
+		}
+	})
+
+	t.Run("artifact not found returns no names, no error", func(t *testing.T) {
+		fake := &fakeArtifactCatalog{resp: &veloapi.ArtifactDescriptors{}}
+		c := &grpcClient{artifacts: fake, timeout: time.Second}
+
+		names, err := c.resolveArtifactSourceNames(context.Background(), "Does.Not.Exist")
+		if err != nil {
+			t.Fatalf("resolveArtifactSourceNames: %v", err)
+		}
+		if names != nil {
+			t.Errorf("names = %v, want nil", names)
+		}
+	})
+
+	t.Run("nil artifacts client is a safe no-op", func(t *testing.T) {
+		c := &grpcClient{timeout: time.Second}
+
+		names, err := c.resolveArtifactSourceNames(context.Background(), "Generic.Client.Info")
+		if err != nil {
+			t.Fatalf("resolveArtifactSourceNames: %v", err)
+		}
+		if names != nil {
+			t.Errorf("names = %v, want nil", names)
+		}
+	})
+}
+
+func TestResolveResultArtifact(t *testing.T) {
+	cases := []struct {
+		name             string
+		artifact         string
+		requestedSource  string
+		sources          []string
+		wantQualified    string
+		wantSourceReq    bool
+		wantAvailSources []string
+		wantErr          bool
+	}{
+		{
+			name:          "no named sources uses bare artifact name",
+			artifact:      "Linux.Sys.Pslist",
+			sources:       nil,
+			wantQualified: "Linux.Sys.Pslist",
+		},
+		{
+			name:          "single named source auto-selected",
+			artifact:      "Windows.Registry.NTUser",
+			sources:       []string{"NTUser"},
+			wantQualified: "Windows.Registry.NTUser/NTUser",
+		},
+		{
+			name:             "multiple named sources with no request requires selection",
+			artifact:         "Generic.Client.Info",
+			sources:          []string{"BasicInformation", "DetailedInfo", "LinuxInfo"},
+			wantSourceReq:    true,
+			wantAvailSources: []string{"BasicInformation", "DetailedInfo", "LinuxInfo"},
+		},
+		{
+			name:            "explicit valid source is honored",
+			artifact:        "Generic.Client.Info",
+			requestedSource: "DetailedInfo",
+			sources:         []string{"BasicInformation", "DetailedInfo", "LinuxInfo"},
+			wantQualified:   "Generic.Client.Info/DetailedInfo",
+		},
+		{
+			name:            "explicit invalid source is rejected",
+			artifact:        "Generic.Client.Info",
+			requestedSource: "NotARealSource",
+			sources:         []string{"BasicInformation", "DetailedInfo", "LinuxInfo"},
+			wantErr:         true,
+		},
+		{
+			name:            "explicit source with unknown sources list passes through",
+			artifact:        "Some.Artifact",
+			requestedSource: "Whatever",
+			sources:         nil,
+			wantQualified:   "Some.Artifact/Whatever",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			qualified, sourceRequired, availableSources, err := resolveResultArtifact(tc.artifact, tc.requestedSource, tc.sources)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				if !errors.Is(err, ErrUnknownResultSource) {
+					t.Errorf("err = %v, want wrapping ErrUnknownResultSource", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("resolveResultArtifact: %v", err)
+			}
+			if sourceRequired != tc.wantSourceReq {
+				t.Errorf("sourceRequired = %v, want %v", sourceRequired, tc.wantSourceReq)
+			}
+			if qualified != tc.wantQualified {
+				t.Errorf("qualified = %q, want %q", qualified, tc.wantQualified)
+			}
+			if tc.wantSourceReq {
+				if len(availableSources) != len(tc.wantAvailSources) {
+					t.Errorf("availableSources = %v, want %v", availableSources, tc.wantAvailSources)
+				}
+			}
+		})
+	}
+}

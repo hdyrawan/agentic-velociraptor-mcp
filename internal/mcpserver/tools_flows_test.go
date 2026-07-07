@@ -22,7 +22,7 @@ type fakeFlowClient struct {
 	velociraptor.Client
 	listFlows      func(ctx context.Context, clientID string, limit int, cursor string) ([]velociraptor.FlowSummary, error)
 	getFlowStatus  func(ctx context.Context, clientID, flowID string) (velociraptor.FlowSummary, error)
-	getFlowResults func(ctx context.Context, clientID, flowID string, maxRows int, maxBytes int64, cursor string) (velociraptor.FlowResultPage, error)
+	getFlowResults func(ctx context.Context, clientID, flowID, source string, maxRows int, maxBytes int64, cursor string) (velociraptor.FlowResultPage, error)
 	collectCalls   int
 	cancelCalls    int
 }
@@ -35,8 +35,8 @@ func (f *fakeFlowClient) GetFlowStatus(ctx context.Context, clientID, flowID str
 	return f.getFlowStatus(ctx, clientID, flowID)
 }
 
-func (f *fakeFlowClient) GetFlowResults(ctx context.Context, clientID, flowID string, maxRows int, maxBytes int64, cursor string) (velociraptor.FlowResultPage, error) {
-	return f.getFlowResults(ctx, clientID, flowID, maxRows, maxBytes, cursor)
+func (f *fakeFlowClient) GetFlowResults(ctx context.Context, clientID, flowID, source string, maxRows int, maxBytes int64, cursor string) (velociraptor.FlowResultPage, error) {
+	return f.getFlowResults(ctx, clientID, flowID, source, maxRows, maxBytes, cursor)
 }
 
 func (f *fakeFlowClient) CollectArtifact(ctx context.Context, req velociraptor.CollectionRequest) (velociraptor.FlowSummary, error) {
@@ -141,7 +141,7 @@ func TestGetFlowStatusHandlerNotFound(t *testing.T) {
 func TestGetFlowResultsHandlerRealModeSuccess(t *testing.T) {
 	deps, sink := testDeps(t)
 	deps.VelociraptorReadMode = VelociraptorModeReal
-	deps.ReadClient = &fakeFlowClient{Client: velociraptor.NewClient(), getFlowResults: func(ctx context.Context, clientID, flowID string, maxRows int, maxBytes int64, cursor string) (velociraptor.FlowResultPage, error) {
+	deps.ReadClient = &fakeFlowClient{Client: velociraptor.NewClient(), getFlowResults: func(ctx context.Context, clientID, flowID, source string, maxRows int, maxBytes int64, cursor string) (velociraptor.FlowResultPage, error) {
 		if maxRows != 2 {
 			t.Fatalf("maxRows = %d, want 2", maxRows)
 		}
@@ -167,7 +167,7 @@ func TestGetFlowResultsHandlerRealModeSuccess(t *testing.T) {
 func TestGetFlowResultsHandlerEmpty(t *testing.T) {
 	deps, _ := testDeps(t)
 	deps.VelociraptorReadMode = VelociraptorModeReal
-	deps.ReadClient = &fakeFlowClient{Client: velociraptor.NewClient(), getFlowResults: func(ctx context.Context, clientID, flowID string, maxRows int, maxBytes int64, cursor string) (velociraptor.FlowResultPage, error) {
+	deps.ReadClient = &fakeFlowClient{Client: velociraptor.NewClient(), getFlowResults: func(ctx context.Context, clientID, flowID, source string, maxRows int, maxBytes int64, cursor string) (velociraptor.FlowResultPage, error) {
 		return velociraptor.FlowResultPage{}, nil
 	}}
 
@@ -183,7 +183,7 @@ func TestGetFlowResultsHandlerEmpty(t *testing.T) {
 func TestGetFlowResultsHandlerNotFound(t *testing.T) {
 	deps, _ := testDeps(t)
 	deps.VelociraptorReadMode = VelociraptorModeReal
-	deps.ReadClient = &fakeFlowClient{Client: velociraptor.NewClient(), getFlowResults: func(ctx context.Context, clientID, flowID string, maxRows int, maxBytes int64, cursor string) (velociraptor.FlowResultPage, error) {
+	deps.ReadClient = &fakeFlowClient{Client: velociraptor.NewClient(), getFlowResults: func(ctx context.Context, clientID, flowID, source string, maxRows int, maxBytes int64, cursor string) (velociraptor.FlowResultPage, error) {
 		return velociraptor.FlowResultPage{}, velociraptor.ErrFlowNotFound
 	}}
 
@@ -201,7 +201,7 @@ func TestGetFlowResultsHandlerEnforcesLimitAndBytes(t *testing.T) {
 	deps.Config.Velociraptor.MaxRows = 2
 	deps.Config.Velociraptor.MaxResultBytes = 20
 	deps.VelociraptorReadMode = VelociraptorModeReal
-	deps.ReadClient = &fakeFlowClient{Client: velociraptor.NewClient(), getFlowResults: func(ctx context.Context, clientID, flowID string, maxRows int, maxBytes int64, cursor string) (velociraptor.FlowResultPage, error) {
+	deps.ReadClient = &fakeFlowClient{Client: velociraptor.NewClient(), getFlowResults: func(ctx context.Context, clientID, flowID, source string, maxRows int, maxBytes int64, cursor string) (velociraptor.FlowResultPage, error) {
 		if maxRows != 2 || maxBytes != 20 {
 			t.Fatalf("limits passed to client = rows %d bytes %d, want 2/20", maxRows, maxBytes)
 		}
@@ -220,6 +220,81 @@ func TestGetFlowResultsHandlerEnforcesLimitAndBytes(t *testing.T) {
 	}
 	if !out.Truncated || out.NextCursor == "" {
 		t.Fatalf("out = %+v, want truncated with next_cursor", out)
+	}
+}
+
+// TestGetFlowResultsHandlerSourceRequired covers the v0.10.3 fix at the
+// MCP tool layer: a named-source artifact reports status
+// "source_required" with the real available_sources, instead of the
+// pre-v0.10.3 silent "empty" for artifacts like Generic.Client.Info.
+func TestGetFlowResultsHandlerSourceRequired(t *testing.T) {
+	deps, sink := testDeps(t)
+	deps.VelociraptorReadMode = VelociraptorModeReal
+	deps.ReadClient = &fakeFlowClient{Client: velociraptor.NewClient(), getFlowResults: func(ctx context.Context, clientID, flowID, source string, maxRows int, maxBytes int64, cursor string) (velociraptor.FlowResultPage, error) {
+		if source != "" {
+			t.Fatalf("source = %q, want empty (caller did not specify one)", source)
+		}
+		return velociraptor.FlowResultPage{SourceRequired: true, AvailableSources: []string{"BasicInformation", "DetailedInfo", "LinuxInfo"}}, nil
+	}}
+
+	_, out, err := newGetFlowResultsHandler(deps)(context.Background(), nil, GetFlowResultsInput{ClientID: testClientID, FlowID: testFlowID})
+	if err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	if out.Status != response.StatusSourceRequired {
+		t.Fatalf("Status = %q, want %q", out.Status, response.StatusSourceRequired)
+	}
+	if len(out.AvailableSources) != 3 {
+		t.Fatalf("AvailableSources = %v, want 3 entries", out.AvailableSources)
+	}
+	if out.Message == "" {
+		t.Fatal("Message is empty, want an actionable message naming the available sources")
+	}
+	evt, ok := sink.last()
+	if !ok || evt.Outcome != audit.OutcomeSuccess {
+		t.Errorf("audit event = %+v, ok=%v, want success (this is not an error condition)", evt, ok)
+	}
+}
+
+// TestGetFlowResultsHandlerPassesThroughExplicitSource confirms the
+// optional `source` input reaches the read client unchanged.
+func TestGetFlowResultsHandlerPassesThroughExplicitSource(t *testing.T) {
+	deps, _ := testDeps(t)
+	deps.VelociraptorReadMode = VelociraptorModeReal
+	var sawSource string
+	deps.ReadClient = &fakeFlowClient{Client: velociraptor.NewClient(), getFlowResults: func(ctx context.Context, clientID, flowID, source string, maxRows int, maxBytes int64, cursor string) (velociraptor.FlowResultPage, error) {
+		sawSource = source
+		return velociraptor.FlowResultPage{Rows: []map[string]any{{"Hostname": "mcp-lab-linux-01"}}, TotalRows: 1}, nil
+	}}
+
+	_, out, err := newGetFlowResultsHandler(deps)(context.Background(), nil, GetFlowResultsInput{ClientID: testClientID, FlowID: testFlowID, Source: "BasicInformation"})
+	if err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	if sawSource != "BasicInformation" {
+		t.Fatalf("source seen by read client = %q, want %q", sawSource, "BasicInformation")
+	}
+	if out.Status != response.StatusSuccess || len(out.Rows) != 1 {
+		t.Fatalf("out = %+v", out)
+	}
+}
+
+// TestGetFlowResultsHandlerRejectsMalformedSource confirms a
+// syntactically invalid source is blocked before any Velociraptor call.
+func TestGetFlowResultsHandlerRejectsMalformedSource(t *testing.T) {
+	deps, sink := testDeps(t)
+	deps.VelociraptorReadMode = VelociraptorModeReal
+	deps.ReadClient = &fakeFlowClient{Client: velociraptor.NewClient(), getFlowResults: func(ctx context.Context, clientID, flowID, source string, maxRows int, maxBytes int64, cursor string) (velociraptor.FlowResultPage, error) {
+		t.Fatal("read client should not be called for a malformed source")
+		return velociraptor.FlowResultPage{}, nil
+	}}
+
+	_, _, err := newGetFlowResultsHandler(deps)(context.Background(), nil, GetFlowResultsInput{ClientID: testClientID, FlowID: testFlowID, Source: "not/a/valid/source"})
+	if err == nil {
+		t.Fatal("expected error for malformed source, got nil")
+	}
+	if evt, ok := sink.last(); !ok || evt.Outcome != audit.OutcomeBlocked {
+		t.Fatalf("audit event = %+v, ok=%v, want blocked", evt, ok)
 	}
 }
 
@@ -255,7 +330,7 @@ func TestFlowHandlersDoNotCallWriteMethods(t *testing.T) {
 	fake.getFlowStatus = func(ctx context.Context, clientID, flowID string) (velociraptor.FlowSummary, error) {
 		return velociraptor.FlowSummary{FlowID: flowID, ClientID: clientID}, nil
 	}
-	fake.getFlowResults = func(ctx context.Context, clientID, flowID string, maxRows int, maxBytes int64, cursor string) (velociraptor.FlowResultPage, error) {
+	fake.getFlowResults = func(ctx context.Context, clientID, flowID, source string, maxRows int, maxBytes int64, cursor string) (velociraptor.FlowResultPage, error) {
 		return velociraptor.FlowResultPage{}, nil
 	}
 	deps.ReadClient = fake
