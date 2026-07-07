@@ -1,0 +1,108 @@
+# agentic-velociraptor-mcp
+
+> Secure-by-design Go MCP server for controlled Velociraptor DFIR operations: stdio-only, read-only by default, approval-gated for write/evidence operations, auditable, and intentionally closed-world.
+
+## Project overview
+
+`agentic-velociraptor-mcp` exposes a narrow, reviewed Velociraptor DFIR capability set to MCP-compatible agents. It is a Go server using the official MCP Go SDK, Velociraptor typed gRPC bindings, local DFIR profile/catalog files, policy gates, human approval records, and JSONL audit logging.
+
+Current repository docs describe v1.0.0 as the first production release for strict controlled deployment. The callable MCP surface is intentionally fixed and tested: 28 registered tools covering visibility, DFIR profiles/workflow planning, flow/result access, controlled collection/download operations, hunt management, and a fixed-template IOC hunt helper.
+
+## What this project is not
+
+- Not a generic Velociraptor remote administration shell.
+- Not a raw VQL or arbitrary query executor; the stable core has no `run_vql`/generic-query tool.
+- Not a way for an LLM or MCP client to approve its own write/evidence request.
+- Not a replacement for Velociraptor server-side ACLs; Velociraptor least-privilege identities remain the primary boundary.
+- Not an HTTP/SSE network service in the current stable core; the server speaks MCP over stdio.
+- Not a Velociraptor deployment manager, server installer, or SIEM/SOAR platform.
+
+## Safety and security boundaries
+
+Assume every agent/tool caller is untrusted and every endpoint result is evidence-like but not ground truth. Do not weaken these controls without explicit security review:
+
+- Read-only is the default posture. Write/evidence operations require `policy.mode: controlled` and an approval store.
+- Approval-gated tools require a human-created, fingerprint-matched, unconsumed approval from the separate `approve` CLI. No MCP tool can create or decide approvals.
+- Every collection, hunt start/cancel, IOC hunt, flow cancel, and evidence download is allowlist- and approval-gated.
+- Audit logging is expected for tool outcomes. Write-capable operations fail closed if the audit sink cannot record the attempt.
+- Tool inventory is closed-world: only implemented/reviewed tools are registered with `mcp.AddTool`; tests pin the exact inventory and guard against unsafe tool names.
+- Raw VQL is out of scope. Capabilities map to reviewed artifacts, DFIR profiles, fixed templates, and typed Velociraptor gRPC RPCs.
+- Do not pass credentials through tool arguments. Velociraptor API configs are server-side files, loaded from configured paths, and must stay outside version control.
+- Respect row, byte, upload, hunt-scope, artifact/profile, and target-all limits; do not silently broaden scope.
+- Real-mode explicit `client_ids` hunt scope is unsupported by the typed Velociraptor RPCs and is refused before approval consumption; use label or all-clients scoping where policy permits.
+- IOC hunting currently has cautious support: hash maps to `Generic.Detection.HashHunter`; `ip`, `domain`, `process`, and `path` fail closed until curated artifacts exist.
+
+## Read first
+
+- [README.md](README.md) — top-level status, quick start, design principles, repository layout, and documentation index.
+- [PROJECT_STATE.md](PROJECT_STATE.md) — current milestone, known limitations, backend wiring status, and release history notes.
+- [docs/release/v1.0.0-production-checklist.md](docs/release/v1.0.0-production-checklist.md) — required production deployment gate and accepted limitations.
+- [docs/security-model.md](docs/security-model.md) — threat model, trust boundaries, no-raw-VQL rationale, MCP security practices.
+- [docs/approval-flow.md](docs/approval-flow.md) — human approval lifecycle and fingerprinting model.
+- [docs/tool-reference.md](docs/tool-reference.md) — current callable tool inventory and per-tool behavior.
+
+## Important files and directories
+
+- [cmd/agentic-velociraptor-mcp/](cmd/agentic-velociraptor-mcp/) — CLI entrypoint, stdio MCP server startup, and human-only `approve` subcommand.
+- [internal/mcpserver/](internal/mcpserver/) — MCP server construction, tool registration, handlers, approval/audit integration, inventory tests.
+- [internal/policy/](internal/policy/) — policy mode, allowlists, and routing decisions.
+- [internal/approval/](internal/approval/) — approval store, one-shot consumption, and request fingerprinting.
+- [internal/audit/](internal/audit/) — JSONL audit sink and secret redaction.
+- [internal/validation/](internal/validation/) — syntactic validation for client IDs, flows, hunts, artifacts, IOCs, scopes, and request fields.
+- [internal/velociraptor/](internal/velociraptor/) — typed Velociraptor gRPC client and domain interfaces.
+- [internal/velociraptor/veloapi/](internal/velociraptor/veloapi/) — hand-scoped generated bindings for the RPCs this project permits.
+- [internal/vql/](internal/vql/) — fixed IOC template binding only; not raw caller-supplied VQL execution.
+- [internal/dfir/](internal/dfir/) — DFIR profile and artifact-catalog loading/validation.
+- [catalog/artifacts.yaml](catalog/artifacts.yaml) — reviewed artifact catalog used by profiles and tests.
+- [profiles/](profiles/) — curated DFIR profile YAML definitions.
+- [examples/config/](examples/config/) and [examples/client-configs/](examples/client-configs/) — safe example configurations.
+- [Dockerfile](Dockerfile) — distroless, non-root, stdio-oriented container build.
+- [.github/workflows/ci.yml](.github/workflows/ci.yml) — canonical CI checks.
+
+## Architecture map
+
+High-level request flow:
+
+1. MCP client launches the server over stdio and calls a typed tool.
+2. `internal/mcpserver` validates request shape and routes to a narrow handler.
+3. `internal/validation` and `internal/policy` enforce syntax, mode, allowlists, and scope limits.
+4. Approval-gated handlers require a matching human approval before calling write-capable backend paths.
+5. `internal/velociraptor` calls the configured typed gRPC RPC using least-privilege read/write identities.
+6. `internal/audit` records exactly one outcome (`success`, `blocked`, or `error`) with redaction.
+
+For detailed diagrams and package responsibilities, read [docs/architecture.md](docs/architecture.md), but prefer [PROJECT_STATE.md](PROJECT_STATE.md) when older architecture prose conflicts with current implementation status.
+
+## Verification commands
+
+Use the repository's existing Go/CI checks; do not add new tooling for a docs-only change unless requested.
+
+```sh
+git diff --check
+gofmt -l .
+go vet ./...
+go build -buildvcs=false ./...
+go test ./...
+```
+
+For targeted safety checks, the existing tests include exact tool inventory and unsafe-tool guards in `internal/mcpserver`, safe example-config checks in `internal/config`, approval fingerprinting tests in `internal/approval`, and profile/catalog validation tests in `internal/dfir`.
+
+## Contributor guidance for LLMs and coding agents
+
+- Preserve runtime behavior, tool behavior, approval gates, audit behavior, permissions, release tags, and documented security posture unless the task explicitly says otherwise.
+- Inspect docs and tests before changing code; several docs intentionally distinguish current implementation from historical milestones.
+- If adding/changing a tool, update exact inventory tests, tool reference docs, security docs, and validation docs together.
+- Do not invent Velociraptor RPC behavior. If a typed RPC path is absent or unvalidated, report it honestly and fail closed.
+- Do not read, print, or commit real Velociraptor `api.config.yaml` contents, private keys, approval stores, audit logs, or evidence downloads.
+- For documentation-only changes, prefer `git diff --check` plus available lightweight checks. Full Go tests are still safe and useful when dependencies are available.
+
+## Optional
+
+- [docs/live-validation-report-v0.10.2.md](docs/live-validation-report-v0.10.2.md) — historical live-lab validation findings that informed later fixes.
+- [docs/lab-validation-plan.md](docs/lab-validation-plan.md) — disposable-lab validation plan and remaining validation areas.
+- [docs/production-deployment.md](docs/production-deployment.md) — hardening guidance for container/non-container deployment.
+- [docs/runbooks/approval-and-audit.md](docs/runbooks/approval-and-audit.md) — day-to-day approval and audit operation.
+- [docs/runbooks/rollback.md](docs/runbooks/rollback.md) — emergency read-only/disable/rollback procedures.
+- [docs/runbooks/controlled-pilot.md](docs/runbooks/controlled-pilot.md) — staged first-deployment procedure.
+- [docs/mcp-client-integration.md](docs/mcp-client-integration.md) — MCP client and Inspector integration notes.
+- [docs/velociraptor-permissions.md](docs/velociraptor-permissions.md) — recommended least-privilege Velociraptor API identities.
+- [docs/dfir-profiles.md](docs/dfir-profiles.md) — profile catalog details and authoring constraints.

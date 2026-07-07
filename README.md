@@ -504,6 +504,7 @@ for the 46 available DFIR profiles.
 
 ## Documentation
 
+- [llms.txt](llms.txt) — LLM-friendly repository context, safety boundaries, and verification map.
 - [docs/architecture.md](docs/architecture.md)
 - [docs/security-model.md](docs/security-model.md)
 - [docs/approval-flow.md](docs/approval-flow.md)
