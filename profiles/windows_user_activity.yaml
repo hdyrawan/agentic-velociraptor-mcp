@@ -1,0 +1,21 @@
+# DFIR profile: windows_user_activity
+#
+# Curated bundle of reviewed, catalog-verified Velociraptor artifacts.
+# Every artifact below is present in catalog/artifacts.yaml and must also
+# be added to policy.allowed_artifacts before this profile can be used.
+# Definition only: adding this file adds no collection/hunt/VQL logic.
+name: windows_user_activity
+display_name: "Windows User Activity"
+description: >
+  Per-user activity evidence (User Access Logs, UserAssist, RecentApps). Privacy-sensitive, so approval-gated.
+target_os: windows
+category: user-activity
+risk_level: high
+requires_approval: true
+max_runtime_seconds: 600
+max_result_rows: 5000
+max_result_bytes: 10485760
+artifacts:
+  - name: Windows.Forensics.UserAccessLogs
+  - name: Windows.Registry.UserAssist
+  - name: Windows.Forensics.RecentApps

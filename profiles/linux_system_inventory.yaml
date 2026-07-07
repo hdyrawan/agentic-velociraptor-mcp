@@ -1,0 +1,23 @@
+# DFIR profile: linux_system_inventory
+#
+# Curated bundle of reviewed, catalog-verified Velociraptor artifacts.
+# Every artifact below is present in catalog/artifacts.yaml and must also
+# be added to policy.allowed_artifacts before this profile can be used.
+# Definition only: adding this file adds no collection/hunt/VQL logic.
+name: linux_system_inventory
+display_name: "Linux System Inventory"
+description: >
+  Baseline Linux host inventory: identity, local users and groups, services, and mounted filesystems.
+target_os: linux
+category: inventory
+risk_level: low
+requires_approval: false
+max_runtime_seconds: 600
+max_result_rows: 5000
+max_result_bytes: 10485760
+artifacts:
+  - name: Generic.Client.Info
+  - name: Linux.Sys.Users
+  - name: Linux.Sys.Groups
+  - name: Linux.Sys.Services
+  - name: Linux.Mounts

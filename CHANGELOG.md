@@ -7,6 +7,47 @@ releases begin.
 
 ## [Unreleased]
 
+### Added — v0.10.0 curated artifact catalog and DFIR profile expansion
+
+Expands curated DFIR coverage without touching the runtime execution
+model: no new MCP tools (still exactly 28), no raw VQL, no
+arbitrary/agent-supplied artifact names, no wildcard/prefix matching, and
+no change to `allow_raw_vql`/`allow_list_all_artifacts` (both stay
+false).
+
+- Added `catalog/artifacts.yaml`, a curated artifact catalog: the single
+  reviewed registry of every artifact name any profile may reference,
+  with metadata (`name`, `target_os`, `category`, `risk_level`,
+  `requires_approval`, `sensitivity`, `verified`, `notes`). It is an
+  authoring/test-time control only — runtime collection is still gated
+  solely by `policy.allowed_artifacts`; the catalog never widens or
+  bypasses that allowlist.
+- Added `internal/dfir/catalog.go` (`LoadCatalog`, `Catalog`,
+  `ValidateProfileAgainstCatalog`) and `internal/dfir/catalog_test.go`.
+  New tests enforce, at `go test` time, that every profile artifact
+  exists in the catalog and that any profile bundling a
+  `requires_approval: true` artifact is itself `requires_approval: true`.
+- Added 31 curated, catalog-verified DFIR profiles (46 total): Windows
+  inventory/PowerShell/scheduled-task/WMI/service persistence, execution
+  evidence, authentication events, user activity, network connections,
+  filesystem timeline; five Windows browser sub-profiles
+  (history/downloads/extensions/cookies/cache); Linux
+  inventory/process/network/auth/SSH-trust/privilege/shell-history/cron/
+  systemd/packages/containers; and cross-platform
+  identity/process/network/IOC-context/local-hashes. Every new profile
+  references only artifacts confirmed present in a real Velociraptor lab
+  catalog (433 artifacts, 2026-07-07). High-risk/privacy-sensitive
+  profiles are `requires_approval: true`; SSH private keys are
+  deliberately never collected.
+- Pre-existing illustrative artifact names (e.g. `System.Hash.Hunt`,
+  `Windows.Browser.History`) are catalogued as `verified: false` with a
+  note pointing at the nearest real artifact; no new profile is built on
+  them.
+- Docs (`docs/dfir-profiles.md`) updated with the 46-profile catalog,
+  the artifact-catalog model, approval rationale, and verified-vs-candidate
+  status. The example config gains commented-out optional allowlist
+  blocks only — no enabled-by-default artifacts or profiles.
+
 ## [0.8.0] - 2026-07-06
 
 ### Security — code review (Fable 5) fixes

@@ -1,0 +1,19 @@
+# DFIR profile: cross_platform_process
+#
+# Curated bundle of reviewed, catalog-verified Velociraptor artifacts.
+# Every artifact below is present in catalog/artifacts.yaml and must also
+# be added to policy.allowed_artifacts before this profile can be used.
+# Definition only: adding this file adds no collection/hunt/VQL logic.
+name: cross_platform_process
+display_name: "Cross-Platform Process Tree"
+description: >
+  Process tree (parent/child relationships) on any OS.
+target_os: any
+category: process
+risk_level: low
+requires_approval: false
+max_runtime_seconds: 600
+max_result_rows: 5000
+max_result_bytes: 10485760
+artifacts:
+  - name: Generic.System.Pstree

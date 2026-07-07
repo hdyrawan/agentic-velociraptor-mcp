@@ -54,6 +54,82 @@ policy:
     - windows_basic_triage
     - linux_basic_triage
 
+  # ---------------------------------------------------------------------
+  # OPTIONAL: expanded curated coverage (v0.10.0). All commented out by
+  # default — nothing below is enabled unless you deliberately uncomment
+  # it. Enabling a profile requires BOTH adding the profile name to
+  # allowed_profiles AND every one of its artifacts to allowed_artifacts;
+  # the catalog/artifacts.yaml entry alone grants nothing at runtime.
+  # High-risk / privacy-sensitive profiles (browser data, shell/console
+  # history, user activity, SSH trust, full-filesystem timelines) are
+  # requires_approval: true and additionally need policy.mode: controlled
+  # plus an approval store. Verify each artifact name against YOUR
+  # Velociraptor server's catalog before enabling in production.
+  #
+  # Example: low-risk Windows + Linux inventory/process/network coverage.
+  #
+  # allowed_artifacts:
+  #   - Generic.Client.Info
+  #   - Generic.System.Pstree
+  #   - Generic.Network.InterfaceAddresses
+  #   # Windows inventory / process / network / persistence (low/medium)
+  #   - Windows.System.Pslist
+  #   - Windows.Network.Netstat
+  #   - Windows.Sys.Users
+  #   - Windows.Sys.Programs
+  #   - Windows.Sys.Drivers
+  #   - Windows.Sys.Interfaces
+  #   - Windows.System.Services
+  #   - Windows.Network.ListeningPorts
+  #   - Windows.Network.ArpCache
+  #   - Windows.System.DNSCache
+  #   - Windows.System.TaskScheduler
+  #   # Linux inventory / process / network (low/medium)
+  #   - Linux.Sys.Pslist
+  #   - Linux.Sys.Users
+  #   - Linux.Sys.Groups
+  #   - Linux.Sys.Services
+  #   - Linux.Mounts
+  #   - Linux.Network.Netstat
+  #   - Linux.Proc.Arp
+  #   - Linux.Proc.Modules
+  #   - Linux.Sys.Crontab
+  #   - Linux.Debian.Packages
+  #
+  # allowed_profiles:
+  #   - windows_system_inventory
+  #   - windows_network_connections
+  #   - windows_scheduled_task_persistence
+  #   - linux_system_inventory
+  #   - linux_process_analysis
+  #   - linux_network_connections
+  #   - linux_cron_persistence
+  #   - linux_package_inventory
+  #   - cross_platform_identity
+  #   - cross_platform_process
+  #   - cross_platform_network
+  #
+  # Example: high-risk / privacy-sensitive profiles. Enable ONLY with
+  # policy.mode: controlled + an approval store, and only when the
+  # investigation justifies collecting privacy-bearing data.
+  #
+  # allowed_artifacts:
+  #   - Windows.Applications.Chrome.History      # browser history (privacy)
+  #   - Windows.Applications.Chrome.Cookies      # session tokens (sensitive)
+  #   - Windows.System.Powershell.PSReadline     # console history (may hold secrets)
+  #   - Windows.NTFS.MFT                          # full filesystem timeline (large)
+  #   - Linux.Sys.BashHistory                    # shell history (may hold secrets)
+  #   - Linux.Ssh.AuthorizedKeys                 # SSH trust (backdoor surface)
+  #
+  # allowed_profiles:
+  #   - windows_browser_history
+  #   - windows_browser_cookies
+  #   - windows_powershell_activity
+  #   - windows_filesystem_timeline
+  #   - linux_shell_history
+  #   - linux_ssh_trust
+  # ---------------------------------------------------------------------
+
 audit:
   enabled: true
   path: /var/log/agentic-velociraptor-mcp/audit.jsonl

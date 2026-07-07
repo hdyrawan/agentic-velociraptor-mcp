@@ -1,0 +1,21 @@
+# DFIR profile: linux_auth_logs
+#
+# Curated bundle of reviewed, catalog-verified Velociraptor artifacts.
+# Every artifact below is present in catalog/artifacts.yaml and must also
+# be added to policy.allowed_artifacts before this profile can be used.
+# Definition only: adding this file adds no collection/hunt/VQL logic.
+name: linux_auth_logs
+display_name: "Linux Authentication Logs"
+description: >
+  SSH login records, last/wtmp login history, and interactive-user accounts.
+target_os: linux
+category: authentication
+risk_level: medium
+requires_approval: false
+max_runtime_seconds: 600
+max_result_rows: 5000
+max_result_bytes: 10485760
+artifacts:
+  - name: Linux.Syslog.SSHLogin
+  - name: Linux.Sys.LastUserLogin
+  - name: Linux.Users.InteractiveUsers

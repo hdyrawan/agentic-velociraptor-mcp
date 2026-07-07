@@ -1,0 +1,20 @@
+# DFIR profile: cross_platform_ioc_context
+#
+# Curated bundle of reviewed, catalog-verified Velociraptor artifacts.
+# Every artifact below is present in catalog/artifacts.yaml and must also
+# be added to policy.allowed_artifacts before this profile can be used.
+# Definition only: adding this file adds no collection/hunt/VQL logic.
+name: cross_platform_ioc_context
+display_name: "Cross-Platform IOC Context"
+description: >
+  Hash-reputation lookup context and a hash-hunter over a filesystem glob, for enriching an indicator on any OS.
+target_os: any
+category: ioc
+risk_level: medium
+requires_approval: false
+max_runtime_seconds: 900
+max_result_rows: 20000
+max_result_bytes: 20971520
+artifacts:
+  - name: Generic.Forensic.HashLookup
+  - name: Generic.Detection.HashHunter

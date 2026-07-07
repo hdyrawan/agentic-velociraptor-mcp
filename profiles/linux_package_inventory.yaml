@@ -1,0 +1,22 @@
+# DFIR profile: linux_package_inventory
+#
+# Curated bundle of reviewed, catalog-verified Velociraptor artifacts.
+# Every artifact below is present in catalog/artifacts.yaml and must also
+# be added to policy.allowed_artifacts before this profile can be used.
+# Definition only: adding this file adds no collection/hunt/VQL logic.
+name: linux_package_inventory
+display_name: "Linux Package Inventory"
+description: >
+  Installed packages across Debian/APT, RHEL/RPM, and SuSE, plus configured APT sources (supply-chain surface).
+target_os: linux
+category: inventory
+risk_level: low
+requires_approval: false
+max_runtime_seconds: 600
+max_result_rows: 20000
+max_result_bytes: 20971520
+artifacts:
+  - name: Linux.Debian.Packages
+  - name: Linux.RHEL.Packages
+  - name: Linux.SuSE.Packages
+  - name: Linux.Debian.AptSources

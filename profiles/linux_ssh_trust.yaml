@@ -1,0 +1,20 @@
+# DFIR profile: linux_ssh_trust
+#
+# Curated bundle of reviewed, catalog-verified Velociraptor artifacts.
+# Every artifact below is present in catalog/artifacts.yaml and must also
+# be added to policy.allowed_artifacts before this profile can be used.
+# Definition only: adding this file adds no collection/hunt/VQL logic.
+name: linux_ssh_trust
+display_name: "Linux SSH Trust Relationships"
+description: >
+  SSH authorized_keys (backdoor-access / persistence surface) and known_hosts (outbound lateral-movement history). Sensitive; approval-gated. Private keys are deliberately NOT collected.
+target_os: linux
+category: persistence
+risk_level: high
+requires_approval: true
+max_runtime_seconds: 600
+max_result_rows: 5000
+max_result_bytes: 10485760
+artifacts:
+  - name: Linux.Ssh.AuthorizedKeys
+  - name: Linux.Ssh.KnownHosts

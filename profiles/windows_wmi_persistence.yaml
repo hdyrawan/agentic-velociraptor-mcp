@@ -1,0 +1,19 @@
+# DFIR profile: windows_wmi_persistence
+#
+# Curated bundle of reviewed, catalog-verified Velociraptor artifacts.
+# Every artifact below is present in catalog/artifacts.yaml and must also
+# be added to policy.allowed_artifacts before this profile can be used.
+# Definition only: adding this file adds no collection/hunt/VQL logic.
+name: windows_wmi_persistence
+display_name: "Windows WMI Persistence"
+description: >
+  Permanent WMI event subscriptions, a stealthy persistence mechanism.
+target_os: windows
+category: persistence
+risk_level: medium
+requires_approval: false
+max_runtime_seconds: 600
+max_result_rows: 5000
+max_result_bytes: 10485760
+artifacts:
+  - name: Windows.Persistence.PermanentWMIEvents

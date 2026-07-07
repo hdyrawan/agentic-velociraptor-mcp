@@ -1,0 +1,736 @@
+# Curated Velociraptor artifact catalog
+#
+# This is the single reviewed registry of every Velociraptor artifact
+# name that any profiles/*.yaml file is allowed to reference. It is an
+# AUTHORING-TIME and TEST-TIME control, NOT a runtime permission path:
+#
+#   - It does NOT grant collection. Whether an artifact may actually run
+#     is still gated exclusively by policy.allowed_artifacts at runtime
+#     (see internal/policy and internal/dfir/validate.go). Adding an
+#     entry here never widens or bypasses that allowlist.
+#   - Its job is to guarantee every profile artifact is a known, reviewed,
+#     exact name (never a wildcard/prefix/pattern, never agent-supplied)
+#     carrying recorded OS / category / risk / sensitivity / verification
+#     metadata. internal/dfir.ValidateProfileAgainstCatalog and the dfir
+#     tests enforce that profiles reference only names present here.
+#
+# Metadata fields (all required except notes):
+#   name              exact Velociraptor artifact name
+#   target_os         windows | linux | macos | any
+#   category          loose grouping (inventory, process, network, ...)
+#   risk_level        low | medium | high  (operational risk / data volume)
+#   requires_approval advisory: should profiles containing it be approval-gated
+#   sensitivity       short privacy/impact label
+#   verified          true if confirmed present in a real Velociraptor
+#                     catalog; false = candidate/illustrative, not
+#                     production-ready without confirming against the
+#                     target deployment's own catalog
+#   notes             reviewer context
+#
+# "verified: true" entries below were confirmed against a real
+# Velociraptor lab server (image wlambert/velociraptor, 433-artifact
+# catalog) on 2026-07-07 via `velociraptor artifacts list`. "verified:
+# false" entries are pre-existing illustrative names carried by the
+# original v0.4.0-v0.7.0 profiles; each notes the nearest real artifact.
+
+artifacts:
+  # ---- Cross-platform / generic (verified) ----
+  - name: Generic.Client.Info
+    target_os: any
+    category: inventory
+    risk_level: low
+    requires_approval: false
+    sensitivity: system
+    verified: true
+    notes: Client identity/metadata. Baseline first-look artifact.
+  - name: Generic.Network.InterfaceAddresses
+    target_os: any
+    category: network
+    risk_level: low
+    requires_approval: false
+    sensitivity: network
+    verified: true
+    notes: Local network interface addresses.
+  - name: Generic.System.Pstree
+    target_os: any
+    category: process
+    risk_level: low
+    requires_approval: false
+    sensitivity: system
+    verified: true
+    notes: Process tree (parent/child relationships).
+  - name: Network.ExternalIpAddress
+    target_os: any
+    category: network
+    risk_level: low
+    requires_approval: false
+    sensitivity: network
+    verified: true
+    notes: Resolves the host's outbound/external IP. Makes an outbound request.
+  - name: Generic.Forensic.HashLookup
+    target_os: any
+    category: ioc
+    risk_level: low
+    requires_approval: false
+    sensitivity: system
+    verified: true
+    notes: Reputation/hash lookup context for IOC triage.
+  - name: Generic.Detection.HashHunter
+    target_os: any
+    category: ioc
+    risk_level: medium
+    requires_approval: false
+    sensitivity: system
+    verified: true
+    notes: Hunts a filesystem glob for files matching known hashes.
+  - name: Generic.Forensic.LocalHashes.Glob
+    target_os: any
+    category: ioc
+    risk_level: medium
+    requires_approval: false
+    sensitivity: system
+    verified: true
+    notes: Hashes files matching a glob. Can be I/O heavy on broad globs.
+  - name: Generic.Applications.Chrome.SessionStorage
+    target_os: any
+    category: browser
+    risk_level: high
+    requires_approval: true
+    sensitivity: user-activity
+    verified: true
+    notes: Chrome session storage. User web activity; privacy-sensitive.
+
+  # ---- Windows: inventory / system (verified) ----
+  - name: Windows.Sys.Users
+    target_os: windows
+    category: inventory
+    risk_level: low
+    requires_approval: false
+    sensitivity: system
+    verified: true
+    notes: Local user accounts.
+  - name: Windows.Sys.Programs
+    target_os: windows
+    category: inventory
+    risk_level: low
+    requires_approval: false
+    sensitivity: system
+    verified: true
+    notes: Installed programs (software inventory).
+  - name: Windows.Sys.Drivers
+    target_os: windows
+    category: inventory
+    risk_level: low
+    requires_approval: false
+    sensitivity: system
+    verified: true
+    notes: Loaded/installed drivers.
+  - name: Windows.Sys.Interfaces
+    target_os: windows
+    category: network
+    risk_level: low
+    requires_approval: false
+    sensitivity: network
+    verified: true
+    notes: Network interface configuration.
+  - name: Windows.Sys.StartupItems
+    target_os: windows
+    category: persistence
+    risk_level: low
+    requires_approval: false
+    sensitivity: system
+    verified: true
+    notes: Startup items (autostart persistence surface).
+  - name: Windows.System.Pslist
+    target_os: windows
+    category: process
+    risk_level: low
+    requires_approval: false
+    sensitivity: system
+    verified: true
+    notes: Running process list.
+  - name: Windows.System.Services
+    target_os: windows
+    category: persistence
+    risk_level: medium
+    requires_approval: false
+    sensitivity: system
+    verified: true
+    notes: Installed Windows services.
+  - name: Windows.System.CriticalServices
+    target_os: windows
+    category: persistence
+    risk_level: medium
+    requires_approval: false
+    sensitivity: system
+    verified: true
+    notes: Security-relevant/critical services state.
+
+  # ---- Windows: PowerShell (verified) ----
+  - name: Windows.EventLogs.PowershellScriptblock
+    target_os: windows
+    category: powershell
+    risk_level: medium
+    requires_approval: false
+    sensitivity: system
+    verified: true
+    notes: PowerShell scriptblock (4104) logging. Captures executed script content.
+  - name: Windows.EventLogs.PowershellModule
+    target_os: windows
+    category: powershell
+    risk_level: medium
+    requires_approval: false
+    sensitivity: system
+    verified: true
+    notes: PowerShell module (4103) logging.
+  - name: Windows.System.Powershell.PSReadline
+    target_os: windows
+    category: powershell
+    risk_level: high
+    requires_approval: true
+    sensitivity: credential-adjacent
+    verified: true
+    notes: Per-user PowerShell console history. May contain typed secrets; approval-gated.
+
+  # ---- Windows: persistence (verified) ----
+  - name: Windows.System.TaskScheduler
+    target_os: windows
+    category: persistence
+    risk_level: medium
+    requires_approval: false
+    sensitivity: system
+    verified: true
+    notes: Scheduled tasks (persistence surface).
+  - name: Windows.EventLogs.ScheduledTasks
+    target_os: windows
+    category: persistence
+    risk_level: medium
+    requires_approval: false
+    sensitivity: system
+    verified: true
+    notes: Scheduled-task creation/modification event log records.
+  - name: Windows.Persistence.PermanentWMIEvents
+    target_os: windows
+    category: persistence
+    risk_level: medium
+    requires_approval: false
+    sensitivity: system
+    verified: true
+    notes: Permanent WMI event subscriptions (stealthy persistence).
+  - name: Windows.EventLogs.ServiceCreationComspec
+    target_os: windows
+    category: persistence
+    risk_level: medium
+    requires_approval: false
+    sensitivity: system
+    verified: true
+    notes: Service-creation events (7045) with COMSPEC indicators.
+
+  # ---- Windows: execution evidence (verified) ----
+  - name: Windows.Forensics.Prefetch
+    target_os: windows
+    category: execution
+    risk_level: medium
+    requires_approval: false
+    sensitivity: system
+    verified: true
+    notes: Prefetch files (program execution evidence).
+  - name: Windows.Forensics.Amcache
+    target_os: windows
+    category: execution
+    risk_level: medium
+    requires_approval: false
+    sensitivity: system
+    verified: true
+    notes: Amcache (program execution/installation evidence).
+  - name: Windows.Registry.AppCompatCache
+    target_os: windows
+    category: execution
+    risk_level: medium
+    requires_approval: false
+    sensitivity: system
+    verified: true
+    notes: ShimCache/AppCompatCache execution evidence.
+  - name: Windows.Forensics.Bam
+    target_os: windows
+    category: execution
+    risk_level: medium
+    requires_approval: false
+    sensitivity: system
+    verified: true
+    notes: Background Activity Moderator execution timestamps.
+
+  # ---- Windows: authentication / account activity ----
+  - name: Windows.EventLogs.RDPAuth
+    target_os: windows
+    category: authentication
+    risk_level: medium
+    requires_approval: false
+    sensitivity: network
+    verified: true
+    notes: RDP authentication event records.
+  - name: Windows.EventLogs.AlternateLogon
+    target_os: windows
+    category: authentication
+    risk_level: medium
+    requires_approval: false
+    sensitivity: network
+    verified: true
+    notes: Alternate-credential logon events (runas / explicit creds).
+  - name: Windows.EventLogs.ExplicitLogon
+    target_os: windows
+    category: authentication
+    risk_level: medium
+    requires_approval: false
+    sensitivity: network
+    verified: true
+    notes: Explicit logon (4648) events.
+  - name: Windows.Forensics.UserAccessLogs
+    target_os: windows
+    category: user-activity
+    risk_level: high
+    requires_approval: true
+    sensitivity: user-activity
+    verified: true
+    notes: User Access Logging (Server). Per-user access records; privacy-sensitive.
+  - name: Windows.Registry.UserAssist
+    target_os: windows
+    category: user-activity
+    risk_level: high
+    requires_approval: true
+    sensitivity: user-activity
+    verified: true
+    notes: UserAssist GUI program-execution counts per user; privacy-sensitive.
+  - name: Windows.Forensics.RecentApps
+    target_os: windows
+    category: user-activity
+    risk_level: high
+    requires_approval: true
+    sensitivity: user-activity
+    verified: true
+    notes: RecentApps user activity; privacy-sensitive.
+
+  # ---- Windows: network (verified) ----
+  - name: Windows.Network.Netstat
+    target_os: windows
+    category: network
+    risk_level: low
+    requires_approval: false
+    sensitivity: network
+    verified: true
+    notes: Active network connections.
+  - name: Windows.Network.ListeningPorts
+    target_os: windows
+    category: network
+    risk_level: low
+    requires_approval: false
+    sensitivity: network
+    verified: true
+    notes: Listening ports and owning processes.
+  - name: Windows.Network.ArpCache
+    target_os: windows
+    category: network
+    risk_level: low
+    requires_approval: false
+    sensitivity: network
+    verified: true
+    notes: ARP cache (recently contacted L2 neighbors).
+  - name: Windows.System.DNSCache
+    target_os: windows
+    category: network
+    risk_level: low
+    requires_approval: false
+    sensitivity: network
+    verified: true
+    notes: DNS resolver cache.
+
+  # ---- Windows: timeline / heavy forensics (verified) ----
+  - name: Windows.NTFS.MFT
+    target_os: windows
+    category: timeline
+    risk_level: high
+    requires_approval: true
+    sensitivity: privacy
+    verified: true
+    notes: Full $MFT parse. Very large; enumerates every filename on volume. Approval-gated.
+  - name: Windows.Forensics.Timeline
+    target_os: windows
+    category: timeline
+    risk_level: high
+    requires_approval: true
+    sensitivity: privacy
+    verified: true
+    notes: Super-timeline reconstruction. Large; broad filesystem/user coverage. Approval-gated.
+
+  # ---- Windows: browser (verified, privacy-sensitive) ----
+  - name: Windows.Applications.Chrome.History
+    target_os: windows
+    category: browser
+    risk_level: high
+    requires_approval: true
+    sensitivity: user-activity
+    verified: true
+    notes: Chrome browsing history. Privacy-sensitive; approval-gated.
+  - name: Windows.Applications.Edge.History
+    target_os: windows
+    category: browser
+    risk_level: high
+    requires_approval: true
+    sensitivity: user-activity
+    verified: true
+    notes: Edge browsing history. Privacy-sensitive; approval-gated.
+  - name: Windows.Applications.Firefox.History
+    target_os: windows
+    category: browser
+    risk_level: high
+    requires_approval: true
+    sensitivity: user-activity
+    verified: true
+    notes: Firefox browsing history. Privacy-sensitive; approval-gated.
+  - name: Windows.Applications.Firefox.Downloads
+    target_os: windows
+    category: browser
+    risk_level: high
+    requires_approval: true
+    sensitivity: user-activity
+    verified: true
+    notes: Firefox download records. Privacy-sensitive; approval-gated.
+  - name: Windows.Analysis.EvidenceOfDownload
+    target_os: windows
+    category: browser
+    risk_level: high
+    requires_approval: true
+    sensitivity: user-activity
+    verified: true
+    notes: Cross-browser evidence-of-download (zone identifiers). Approval-gated.
+  - name: Windows.Applications.Chrome.Extensions
+    target_os: windows
+    category: browser
+    risk_level: high
+    requires_approval: true
+    sensitivity: user-activity
+    verified: true
+    notes: Installed Chrome extensions. Privacy-sensitive; approval-gated.
+  - name: Windows.Applications.Chrome.Cookies
+    target_os: windows
+    category: browser
+    risk_level: high
+    requires_approval: true
+    sensitivity: credential-adjacent
+    verified: true
+    notes: Chrome cookies (session tokens). Highly sensitive; approval-gated.
+  - name: Windows.Applications.Edge.Favicons
+    target_os: windows
+    category: browser
+    risk_level: high
+    requires_approval: true
+    sensitivity: user-activity
+    verified: true
+    notes: Edge favicon cache (visited-site evidence). Privacy-sensitive; approval-gated.
+
+  # ---- Linux: inventory / system (verified) ----
+  - name: Linux.Sys.Users
+    target_os: linux
+    category: inventory
+    risk_level: low
+    requires_approval: false
+    sensitivity: system
+    verified: true
+    notes: Local user accounts (/etc/passwd).
+  - name: Linux.Sys.Groups
+    target_os: linux
+    category: inventory
+    risk_level: low
+    requires_approval: false
+    sensitivity: system
+    verified: true
+    notes: Local groups (/etc/group).
+  - name: Linux.Sys.Services
+    target_os: linux
+    category: persistence
+    risk_level: medium
+    requires_approval: false
+    sensitivity: system
+    verified: true
+    notes: systemd/init services (persistence surface).
+  - name: Linux.Mounts
+    target_os: linux
+    category: inventory
+    risk_level: low
+    requires_approval: false
+    sensitivity: system
+    verified: true
+    notes: Mounted filesystems.
+  - name: Linux.Sys.Pslist
+    target_os: linux
+    category: process
+    risk_level: low
+    requires_approval: false
+    sensitivity: system
+    verified: true
+    notes: Running process list.
+  - name: Linux.Proc.Modules
+    target_os: linux
+    category: process
+    risk_level: medium
+    requires_approval: false
+    sensitivity: system
+    verified: true
+    notes: Loaded kernel modules (rootkit surface).
+  - name: Linux.Network.Netstat
+    target_os: linux
+    category: network
+    risk_level: low
+    requires_approval: false
+    sensitivity: network
+    verified: true
+    notes: Active network connections.
+  - name: Linux.Proc.Arp
+    target_os: linux
+    category: network
+    risk_level: low
+    requires_approval: false
+    sensitivity: network
+    verified: true
+    notes: ARP table (recently contacted L2 neighbors).
+
+  # ---- Linux: authentication / access (verified) ----
+  - name: Linux.Syslog.SSHLogin
+    target_os: linux
+    category: authentication
+    risk_level: medium
+    requires_approval: false
+    sensitivity: network
+    verified: true
+    notes: SSH login records parsed from syslog/auth logs.
+  - name: Linux.Sys.LastUserLogin
+    target_os: linux
+    category: authentication
+    risk_level: medium
+    requires_approval: false
+    sensitivity: network
+    verified: true
+    notes: last / wtmp user login records.
+  - name: Linux.Users.InteractiveUsers
+    target_os: linux
+    category: authentication
+    risk_level: low
+    requires_approval: false
+    sensitivity: system
+    verified: true
+    notes: Users with interactive shells.
+  - name: Linux.Ssh.AuthorizedKeys
+    target_os: linux
+    category: persistence
+    risk_level: high
+    requires_approval: true
+    sensitivity: credential-adjacent
+    verified: true
+    notes: SSH authorized_keys (trust relationships / backdoor access). Approval-gated. NOTE - private keys deliberately excluded from the catalog.
+  - name: Linux.Ssh.KnownHosts
+    target_os: linux
+    category: lateral-movement
+    risk_level: high
+    requires_approval: true
+    sensitivity: user-activity
+    verified: true
+    notes: SSH known_hosts (outbound connection history / lateral movement). Approval-gated.
+
+  # ---- Linux: privilege / SUID (verified) ----
+  - name: Linux.Users.RootUsers
+    target_os: linux
+    category: privilege
+    risk_level: medium
+    requires_approval: false
+    sensitivity: system
+    verified: true
+    notes: Accounts with UID 0 (privileged). Sudo has no single dedicated artifact.
+  - name: Linux.Sys.SUID
+    target_os: linux
+    category: privilege
+    risk_level: medium
+    requires_approval: false
+    sensitivity: system
+    verified: true
+    notes: SUID/SGID binaries (privilege-escalation surface).
+
+  # ---- Linux: shell history (privacy-sensitive) ----
+  - name: Linux.Sys.BashHistory
+    target_os: linux
+    category: user-activity
+    risk_level: high
+    requires_approval: true
+    sensitivity: credential-adjacent
+    verified: true
+    notes: Per-user shell history. May contain typed secrets; privacy-sensitive; approval-gated.
+
+  # ---- Linux: cron / persistence (verified) ----
+  - name: Linux.Sys.Crontab
+    target_os: linux
+    category: persistence
+    risk_level: medium
+    requires_approval: false
+    sensitivity: system
+    verified: true
+    notes: Cron jobs (scheduled persistence).
+
+  # ---- Linux: packages (verified) ----
+  - name: Linux.Debian.Packages
+    target_os: linux
+    category: inventory
+    risk_level: low
+    requires_approval: false
+    sensitivity: system
+    verified: true
+    notes: Installed dpkg/APT packages.
+  - name: Linux.RHEL.Packages
+    target_os: linux
+    category: inventory
+    risk_level: low
+    requires_approval: false
+    sensitivity: system
+    verified: true
+    notes: Installed RPM packages.
+  - name: Linux.SuSE.Packages
+    target_os: linux
+    category: inventory
+    risk_level: low
+    requires_approval: false
+    sensitivity: system
+    verified: true
+    notes: Installed SuSE/zypper packages.
+  - name: Linux.Debian.AptSources
+    target_os: linux
+    category: inventory
+    risk_level: low
+    requires_approval: false
+    sensitivity: system
+    verified: true
+    notes: Configured APT sources (supply-chain surface).
+
+  # ---- Linux: containers (verified) ----
+  - name: Linux.Applications.Docker.Info
+    target_os: linux
+    category: containers
+    risk_level: medium
+    requires_approval: false
+    sensitivity: system
+    verified: true
+    notes: Docker daemon info / running containers.
+  - name: Linux.Applications.Docker.Version
+    target_os: linux
+    category: containers
+    risk_level: low
+    requires_approval: false
+    sensitivity: system
+    verified: true
+    notes: Docker version.
+
+  # ---- Pre-existing illustrative names (UNVERIFIED / candidate) ----
+  # These are carried by the original v0.4.0-v0.7.0 profiles and remain
+  # illustrative. Each notes the nearest real, verified artifact an
+  # operator should substitute after confirming against their catalog.
+  - name: System.Hash.Hunt
+    target_os: any
+    category: ioc
+    risk_level: low
+    requires_approval: false
+    sensitivity: system
+    verified: false
+    notes: Illustrative IOC-hunt template target. Real equivalent - Generic.Detection.HashHunter / Generic.Forensic.HashLookup.
+  - name: System.IP.Hunt
+    target_os: any
+    category: ioc
+    risk_level: low
+    requires_approval: false
+    sensitivity: network
+    verified: false
+    notes: Illustrative IOC-hunt template target. No single verified IP-hunt artifact; build from netstat/ETW.DNS on the target catalog.
+  - name: System.Domain.Hunt
+    target_os: any
+    category: ioc
+    risk_level: low
+    requires_approval: false
+    sensitivity: network
+    verified: false
+    notes: Illustrative IOC-hunt template target. No single verified domain-hunt artifact; build from DNS-cache/ETW.DNS on the target catalog.
+  - name: Windows.Browser.History
+    target_os: windows
+    category: browser
+    risk_level: high
+    requires_approval: true
+    sensitivity: user-activity
+    verified: false
+    notes: Illustrative. Real equivalents - Windows.Applications.Chrome.History / Edge.History / Firefox.History.
+  - name: Windows.System.EventLogs
+    target_os: windows
+    category: eventlog
+    risk_level: medium
+    requires_approval: false
+    sensitivity: system
+    verified: false
+    notes: Illustrative. Real equivalent - Windows.EventLogs.Evtx (or the specific Windows.EventLogs.* parsers).
+  - name: Windows.System.CredentialTheft
+    target_os: windows
+    category: credential-theft
+    risk_level: high
+    requires_approval: true
+    sensitivity: credential-adjacent
+    verified: false
+    notes: Illustrative. No single verified artifact; build from Windows.Registry.WDigest / Windows.EventLogs.Kerberoasting on the target catalog.
+  - name: Windows.System.LateralMovement
+    target_os: windows
+    category: lateral-movement
+    risk_level: high
+    requires_approval: false
+    sensitivity: network
+    verified: false
+    notes: Illustrative. Real equivalent - Windows.Packs.LateralMovement.
+  - name: Windows.System.Persistence
+    target_os: windows
+    category: persistence
+    risk_level: medium
+    requires_approval: false
+    sensitivity: system
+    verified: false
+    notes: Illustrative. Real equivalent - Windows.Packs.Persistence.
+  - name: Windows.System.Timeline
+    target_os: windows
+    category: timeline
+    risk_level: high
+    requires_approval: true
+    sensitivity: privacy
+    verified: false
+    notes: Illustrative. Real equivalent - Windows.Forensics.Timeline.
+  - name: Windows.Registry.RunMRU
+    target_os: windows
+    category: user-activity
+    risk_level: medium
+    requires_approval: false
+    sensitivity: user-activity
+    verified: false
+    notes: Illustrative. Real equivalent - Windows.Timeline.Registry.RunMRU.
+  - name: Windows.Detection.RecentlyModifiedFiles
+    target_os: windows
+    category: timeline
+    risk_level: medium
+    requires_approval: false
+    sensitivity: system
+    verified: false
+    notes: Illustrative. No single verified artifact of this exact name; use Windows.NTFS.MFT / Windows.Search.FileFinder on the target catalog.
+  - name: Linux.System.Pslist
+    target_os: linux
+    category: process
+    risk_level: low
+    requires_approval: false
+    sensitivity: system
+    verified: false
+    notes: Illustrative. Real equivalent - Linux.Sys.Pslist.
+  - name: Linux.System.Persistence
+    target_os: linux
+    category: persistence
+    risk_level: medium
+    requires_approval: false
+    sensitivity: system
+    verified: false
+    notes: Illustrative. Build from Linux.Sys.Crontab / Linux.Sys.Services on the target catalog.

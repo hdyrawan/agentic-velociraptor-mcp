@@ -1,0 +1,19 @@
+# DFIR profile: cross_platform_local_hashes
+#
+# Curated bundle of reviewed, catalog-verified Velociraptor artifacts.
+# Every artifact below is present in catalog/artifacts.yaml and must also
+# be added to policy.allowed_artifacts before this profile can be used.
+# Definition only: adding this file adds no collection/hunt/VQL logic.
+name: cross_platform_local_hashes
+display_name: "Cross-Platform Local Hashes"
+description: >
+  Hashes files matching a glob for IOC comparison. Can be I/O heavy on broad globs.
+target_os: any
+category: ioc
+risk_level: medium
+requires_approval: false
+max_runtime_seconds: 900
+max_result_rows: 50000
+max_result_bytes: 33554432
+artifacts:
+  - name: Generic.Forensic.LocalHashes.Glob
