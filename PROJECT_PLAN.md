@@ -23,7 +23,7 @@ This is the authoritative roadmap for `agentic-velociraptor-mcp`. For
 - stdio MCP transport first; HTTP/SSE/streamable HTTP only if/when
   explicitly requested.
 
-## Stable core target: 28 tools (complete as of v0.7.0, preserved through v0.10.4)
+## Stable core target: 28 tools (complete as of v0.7.0, preserved through v1.0.0)
 
 See [docs/tool-reference.md](docs/tool-reference.md) for the full table.
 Groups: visibility (5), flow/results (6), collection (3), hunts (7),
@@ -365,24 +365,36 @@ pass and v0.10.1's approval-gate fix. What remains:
   (GLM 5.2 pass); **live-lab validation against a real Velociraptor lab
   remains pending.**
 
-### v1.0.0-rc.1 — Controlled pilot (next milestone, not GA)
+### v1.0.0 — First production release (complete)
 
-- Run the staged controlled pilot per docs/runbooks/controlled-pilot.md,
-  gated by docs/security-review-checklist-v0.10.4.md.
-- Close the live-validation gaps during the pilot: label-scoped hunt
-  against a genuinely labeled client, Windows client, real
-  file-producing upload/download.
-- Re-triage known open review items (e.g. the `approve` CLI accepting
-  requester == approver) — fix or formally accept for the RC.
-
-### v1.0.0 — Stable release (after a successful rc.1 pilot)
+Production-ready for **strict controlled deployment**: read-only by
+default; `controlled` mode only with human out-of-band approvals,
+exact-name allowlists, a fail-closed audit log, and least-privilege
+Velociraptor identities. Deployment gated by
+docs/release/v1.0.0-production-checklist.md; known limitations are
+documented and explicitly accepted at sign-off, not hidden. (This
+supersedes the earlier "v1.0.0-rc.1 pilot before GA" plan — the staged
+plan in docs/runbooks/controlled-pilot.md remains the recommended
+first-deployment procedure, as operational guidance rather than a
+release gate.)
 
 - All 28 core tools implemented. — **done**
-- Stable schemas.
-- Full documentation. — largely done; upgrade/log-shipping topics remain (see docs/production-deployment.md).
-- Lab validation report. — **done** (docs/live-validation-report-v0.10.2.md); pilot report to be added by rc.1.
-- Production deployment guide. — **done** (docs/production-deployment.md + docs/runbooks/).
-- Versioned release; changelog updated.
+- Stable schemas. — **done** (typed tool schemas + `response.Result` envelope, unchanged through v0.10.x)
+- Full documentation. — **done** (architecture/security/config/tools/profiles/permissions/deployment/runbooks/release docs)
+- Lab validation report. — **done** (docs/live-validation-report-v0.10.2.md)
+- Production deployment guide. — **done** (docs/production-deployment.md + docs/runbooks/ + docs/release/)
+- Versioned release; changelog updated. — **done** (binary version 1.0.0 with anti-drift test; CHANGELOG `[1.0.0]` section; release-notes draft at docs/release/v1.0.0-release-notes.md; git tag created after PR review on explicit request)
+
+### Post-1.0 operational validation and candidates (not yet started)
+
+- First-production-use validation events: label-scoped hunt against a
+  genuinely labeled client, Windows client, real file-producing
+  upload/download (staged by docs/runbooks/controlled-pilot.md).
+- Enforce requester != approver in the `approve` CLI (procedural
+  control today).
+- Curated artifacts for the unsupported IOC kinds
+  (ip/domain/process/path) if a real workflow needs them.
+- Rate limits; docs/lab-validation-plan.md Phase 5/Phase 8 leftovers.
 
 ## Explicitly out of scope (for now, or permanently)
 

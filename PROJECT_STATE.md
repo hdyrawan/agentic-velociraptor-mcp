@@ -1,8 +1,57 @@
 # Project state
 
-Last updated: 2026-07-07 (v0.10.4, production-readiness hardening for the controlled pilot).
+Last updated: 2026-07-07 (v1.0.0, first production release).
 
 ## Current milestone
+
+**v1.0.0 — First production release, for strict controlled
+deployment.** Still exactly 28 tools, no raw VQL/generic query, no new
+write path, no weakened approval/policy/audit control. v1.0.0 is
+**production-ready for strict controlled deployment**: read-only by
+default; `controlled` mode only with human out-of-band approvals,
+exact-name allowlists, a fail-closed audit log, and least-privilege
+Velociraptor identities. Deployment is gated by
+[docs/release/v1.0.0-production-checklist.md](docs/release/v1.0.0-production-checklist.md)
+(deployment, operator acceptance, monitoring/audit, emergency
+disable/rollback drills, and explicit acceptance of the known
+limitations); release notes draft at
+[docs/release/v1.0.0-release-notes.md](docs/release/v1.0.0-release-notes.md).
+
+This milestone's changes are release alignment only:
+
+- Binary version bumped to `1.0.0` (was stale at `0.10.1-dev` since
+  v0.10.1), with a new regression test pinning the default version to
+  the released version so drift cannot recur.
+- CHANGELOG restructured: the accumulated v0.10.x/GLM work under
+  "Unreleased" now ships under a dated `[1.0.0]` section.
+- README/PROJECT_STATE/PROJECT_PLAN state the production posture and
+  supersede the earlier "v1.0.0-rc.1 pilot before GA" framing — the
+  staged plan in docs/runbooks/controlled-pilot.md remains the
+  recommended first-deployment procedure, now as operational guidance
+  rather than a release gate.
+
+**Known limitations accepted for v1.0.0** (unchanged in substance from
+v0.10.4's gap list; each also appears in the production checklist's
+sign-off section):
+
+1. Label-scoped hunts not yet live-validated against a client with a
+   verified persistent label — treat first production use as a
+   validation event.
+2. No Windows client exercised live yet — same treatment.
+3. Upload/download not yet exercised against a real file-producing
+   collection — same treatment.
+4. Explicit `client_ids` hunt scope unsupported in real mode (no typed
+   RPC; refused before approval consumption) — use `label` scoping.
+5. `ip`/`domain`/`process`/`path` IOC kinds unsupported (fail closed)
+   until a curated artifact set exists for them; `hash` is supported
+   via `Generic.Detection.HashHunter`.
+6. The `approve` CLI does not enforce requester ≠ approver (procedural
+   control).
+7. This project assumes an already-operated, already-secured
+   Velociraptor deployment; Velociraptor-side ACLs remain the primary
+   boundary.
+
+## Previous milestone
 
 **v0.10.4 — Production-readiness hardening.** Docs/examples/tests-only:
 still exactly 28 tools, no raw VQL/generic query, no new write path, no
@@ -718,29 +767,29 @@ validation and a small number of deliberately out-of-scope items:
 
 ## Immediate next step
 
-The 28-tool stable-core target is complete (PROJECT_PLAN.md); v0.10.2
-live-validated the collection/hunt RPC groups, v0.10.3 fixed the two
-bugs that validation found, and v0.10.4 (this milestone) added the
-operational material — config examples, runbooks, deployment
-hardening, integration notes, and the pre-RC security checklist. The
-next milestone is **v1.0.0-rc.1: the controlled pilot** (not GA), run
-per [docs/runbooks/controlled-pilot.md](docs/runbooks/controlled-pilot.md)
-after completing
-[docs/security-review-checklist-v0.10.4.md](docs/security-review-checklist-v0.10.4.md).
-During (or before) that pilot:
+v1.0.0 is released state: the 28-tool stable core is complete,
+live-validated (v0.10.2), corrected (v0.10.3), operationally hardened
+(v0.10.4), and version/docs-aligned (v1.0.0). Production deployment is
+**strict controlled deployment only**, gated by
+[docs/release/v1.0.0-production-checklist.md](docs/release/v1.0.0-production-checklist.md);
+the staged plan in
+[docs/runbooks/controlled-pilot.md](docs/runbooks/controlled-pilot.md)
+is the recommended first-deployment procedure. Post-1.0 operational
+validation and candidate work, in priority order:
 
-1. Close validation gaps 1–3 from "Remaining production
-   assumptions/gaps" above (label-scoped hunt against a genuinely
-   labeled client; Windows client; real file-producing
-   upload/download) — the pilot runbook stages these deliberately.
+1. Close known-limitation items 1–3 above during first production use
+   (label-scoped hunt against a genuinely labeled client; Windows
+   client; real file-producing upload/download) — each staged as a
+   validation event by the first-deployment runbook.
 2. Consider curated, real artifacts for the still-unsupported IOC kinds
    (`ip`/`domain`/`process`/`path`) if a real workflow needs them —
    v0.10.3 deliberately left these failing closed rather than forcing a
    mismatched or OS-ambiguous mapping; see docs/tool-reference.md's "IOC
    kind support status" section for what was considered and why.
 3. The remaining unchecked items in docs/lab-validation-plan.md (Phase
-   5's `velo_cancel_flow_with_approval`; Phase 8's adversarial testing).
+   5's `velo_cancel_flow_with_approval`; Phase 8's adversarial testing),
+   plus enforcing requester ≠ approver in the `approve` CLI.
 
 Do not point this project at a production Velociraptor deployment
-except through the staged pilot procedure above — see
+except through the v1.0.0 production checklist above — see
 docs/production-deployment.md.

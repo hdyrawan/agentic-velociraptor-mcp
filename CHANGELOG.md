@@ -7,6 +7,53 @@ releases begin.
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [1.0.0] - 2026-07-07
+
+**First production release**, for **strict controlled deployment**:
+read-only by default; `controlled` mode only with human out-of-band
+approvals, exact-name artifact/profile allowlists, a JSONL audit log
+(fail-closed for writes), and separate least-privilege Velociraptor API
+identities. See
+[docs/release/v1.0.0-production-checklist.md](docs/release/v1.0.0-production-checklist.md)
+for the deployment gate and
+[docs/release/v1.0.0-release-notes.md](docs/release/v1.0.0-release-notes.md)
+for the release notes.
+
+Release summary: exactly **28 MCP tools** (14 read-only, 14
+approval/policy-gated), stdio transport only, no raw VQL or generic
+query execution anywhere, typed gRPC bindings for every RPC group
+(live-validated in v0.10.2, with both live-found bugs fixed in
+v0.10.3), production runbooks/config examples/security checklist from
+v0.10.4, and the version/help/docs alignment below. Known limitations
+are documented, not hidden — see the release notes' "Known limitations"
+section (label-scoped hunts/Windows clients/real uploads not yet
+exercised live; explicit `client_ids` hunt scope unsupported in real
+mode and refused before approval consumption; only the `hash` IOC kind
+resolves to a real artifact).
+
+### Added — v1.0.0 release alignment
+
+- Bumped the binary's built-in version to `1.0.0` (was stale at
+  `0.10.1-dev` since v0.10.1) and added a regression test pinning the
+  default version string to the released version so version drift
+  cannot recur silently.
+- Added [docs/release/](docs/release/):
+  `v1.0.0-production-checklist.md` (deployment, operator acceptance,
+  monitoring/audit checks, emergency disable, rollback, known
+  limitations) and `v1.0.0-release-notes.md` (draft — tag/GitHub
+  release created only after PR review, on request).
+- README/PROJECT_STATE/PROJECT_PLAN updated: v1.0.0 declared
+  production-ready **for strict controlled deployment** (read-only by
+  default; controlled mode requires approval store + allowlists +
+  audit + least-privilege identities), superseding the earlier
+  "v1.0.0-rc.1 pilot" framing; the pilot runbook remains the
+  recommended first-deployment procedure.
+
+The following sections were previously accumulated under
+"Unreleased" and ship as part of 1.0.0:
+
 ### Added — v0.10.4: production-readiness hardening for the controlled pilot
 
 Docs/examples/tests-only milestone: still exactly 28 tools, no raw
