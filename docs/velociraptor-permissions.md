@@ -1,8 +1,16 @@
 # Velociraptor permissions
 
-Status: draft operator guidance. This is the primary security boundary
-(see [security-model.md](security-model.md)) — get this right
-independent of anything the MCP-layer code does.
+Status: operator guidance, hardened for the controlled pilot as of
+v0.10.4. This is the primary security boundary (see
+[security-model.md](security-model.md)) — get this right independent of
+anything the MCP-layer code does.
+
+Summary of what each identity is for:
+
+| Identity | Config field | Must be able to | Must NOT be able to |
+|---|---|---|---|
+| **Reader** | `read_api_config_path` | Read client metadata/search, browse the artifact catalog, read existing flow/hunt results. | Start/cancel anything, write artifacts, execute processes, touch server administration — nothing in the "never grant" table below. |
+| **Investigator (write)** | `write_api_config_path` | Everything Reader can, plus start/cancel collections and hunts against already-enrolled clients, read collection uploads. | Define or modify artifacts, execute processes (`EXECVE`), write endpoint filesystems, administer the server — nothing in the "never grant" table below. |
 
 ## Two separate API client identities
 
@@ -121,18 +129,44 @@ not), while this project's config bounds *which* artifacts.
       approval workflow end to end in a lab (see
       [lab-validation-plan.md](lab-validation-plan.md)).
 
+## Validation checklist: no arbitrary VQL/generic query path exists through MCP
 
-## v0.8.0 backend wiring status
+Even a correctly-scoped identity is worth pairing with proof that this
+server cannot be talked into arbitrary queries. Each item names the
+evidence; run these against the deployed build during the
+[pre-RC review](security-review-checklist-v0.10.4.md):
 
-v0.8.0 is a backend-wiring review milestone that preserves the v0.7.0 28-tool MCP inventory. The hand-authored `internal/velociraptor/veloapi` mirror currently exposes only `Check`, `ListClients`, `GetClient`, and `GetArtifacts`; it does not include reviewed typed RPC bindings for flow enumeration/results, collection execution, flow cancel, uploads, hunt execution/cancel, hunt results, or IOC hunt execution. Implementing those by exposing a generic VQL query path would violate the stable-core raw-VQL rule, so they remain scaffolded with structured errors.
+- [ ] **No raw-VQL tool is registered.** MCP Inspector `tools/list`
+      shows exactly 28 tools, none accepting a query string
+      (`internal/mcpserver/server_test.go`'s
+      `TestNewRegistersExactlyTwentyEightTools` /
+      `TestNewNeverRegistersUnsafeTools` pin this in CI).
+- [ ] **Config cannot enable one.** `policy.allow_raw_vql: true` is
+      rejected by `config.Validate` — the server refuses to start.
+- [ ] **The gRPC surface has no query RPC.** The hand-scoped
+      `internal/velociraptor/veloapi` mirror declares only the typed
+      RPCs the 28 tools use — upstream's generic free-form VQL `Query`
+      RPC is deliberately absent, so there is no method to call even by
+      a code bug. Evidence: `grep -n "rpc " internal/velociraptor/veloapi/api.proto`
+      lists every declared method; none is `Query`/`RunVQL`. (The
+      `query` field in `visibility.proto` is `SearchClientsRequest`'s
+      client-search term — a filter string, not VQL.)
+- [ ] **VQL text cannot even be decoded.** The proto mirror omits every
+      field carrying VQL bodies (`ArtifactSource.query`/`queries`/
+      `precondition`, `Artifact.raw`, ...); a server sending them hits
+      unknown-field handling with no Go field to land in.
+- [ ] **IOC templates bind parameters, never build queries.**
+      `internal/vql.Bind` maps a template name to a fixed artifact plus
+      a single named parameter; the indicator value is never
+      concatenated into anything (`internal/vql/render_test.go`).
+- [ ] **Artifacts are exact-name allowlisted.** No wildcard/prefix
+      grammar exists in `policy.allowed_artifacts`; collection of
+      anything outside the list is refused before any RPC.
 
-| Group | v0.8.0 status |
-|---|---|
-| Visibility (`health`, client search/info, artifact list/details) | Real gRPC already implemented and unchanged. |
-| Flow list/status/results | Handler contracts, validation, limits, pagination, audit unchanged; real gRPC remains scaffolded (`backend_not_implemented`/`error`, no panic). |
-| Collection start / DFIR profile collection / flow cancel | Approval/policy/input/allowlist gates unchanged; backend capability is now checked before consuming approval; real gRPC remains scaffolded. |
-| Flow uploads list/metadata/download | Read handlers and download file controls unchanged; download backend capability is now checked before consuming approval; real gRPC upload RPCs remain scaffolded. |
-| Hunts list/status/results/preview | Handler contracts, limits, target_all/max-client policy unchanged; real gRPC remains scaffolded. |
-| Approved hunt start/cancel and IOC hunt | Approval fingerprint/scope/template gates unchanged; backend capability is now checked before consuming approval; real gRPC hunt RPCs remain scaffolded. |
+## Current backend wiring status
 
-Live-lab validation remains pending for every scaffolded operation above. Required follow-up: add reviewed typed protobuf bindings for the specific Velociraptor RPCs, prove least-privilege read/write API permissions in a disposable lab, and keep `max_rows`, `max_result_bytes`, `max_upload_bytes`, `max_hunt_clients`, `target_all`, cursor, audit, and no-raw-VQL invariants under test.
+Every RPC group behind the 28 tools has a reviewed, typed gRPC binding
+(no generic query path), live-validated per the table in
+[PROJECT_STATE.md](../PROJECT_STATE.md#backend-wiring-status-as-of-v0103)
+— that table is the single source of truth; earlier per-doc copies of
+the v0.8.0 "scaffolded" status are superseded.

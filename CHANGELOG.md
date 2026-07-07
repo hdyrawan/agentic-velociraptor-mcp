@@ -7,6 +7,67 @@ releases begin.
 
 ## [Unreleased]
 
+### Added — v0.10.4: production-readiness hardening for the controlled pilot
+
+Docs/examples/tests-only milestone: still exactly 28 tools, no raw
+VQL/generic query, no new write path, no weakened approval/policy/audit
+control, and no Go production-code changes at all. Prepares the project
+for the v1.0.0-rc.1 controlled pilot (not GA).
+
+- **Production-safe config examples**
+  (`examples/config/config.readonly.example.yaml`,
+  `examples/config/config.controlled.example.yaml`): safe defaults
+  only, clearly-marked `/path/to/...` placeholders, no embedded
+  secrets; the controlled example includes
+  `Generic.Detection.HashHunter` (required for v0.10.3's hash IOC
+  hunts) and keeps `download_dir` disabled by default. New
+  `internal/config/examples_test.go` loads and `Validate`s every
+  shipped example server config in CI and pins that none can drift
+  into an unsafe posture (raw VQL, target-all, non-stdio transport,
+  disabled audit, wildcard allowlist entries, missing approval
+  categories, embedded key material).
+- **Operational runbooks** (`docs/runbooks/`): `approval-and-audit.md`
+  (approval creation/consumption, store hygiene, audit permissions/
+  rotation, and the fail-closed audit-failure procedure — never
+  disable audit to unblock writes), `rollback.md` (emergency switch to
+  `read_only`, disabling MCP client access, revoking the Velociraptor
+  service identities, image/tag rollback), and `controlled-pilot.md`
+  (staged read-only → lab → pilot plan with explicit exit criteria for
+  v1.0.0-rc.1 and the known remaining validation gaps).
+- **Deployment hardening** (`docs/production-deployment.md` expanded):
+  stdio-only/no-ports transport model, non-root distroless container,
+  hardened `docker run` flags (`--read-only`, `--cap-drop=ALL`,
+  `no-new-privileges`), image tag/digest pinning, read-only secret
+  mounting (never env vars, never baked in), and SBOM/scan
+  recommendations (syft/trivy/grype).
+- **MCP client integration notes** (`docs/mcp-client-integration.md`):
+  MCP Inspector smoke checklist (exactly 28 tools, no raw-VQL tool,
+  gated writes verified), Claude Desktop/Claude Code examples with
+  generic paths, and the explicit note that writes require out-of-band
+  human approval — MCP cannot self-approve.
+- **Pre-RC security checklist**
+  (`docs/security-review-checklist-v0.10.4.md`): evidence-named checks
+  for tool inventory, approval gates, audit fail-closed, allowlists,
+  IOC support limits, named-source results, upload/download limits,
+  TLS/pinned-server-name config, config/secret file permissions, and
+  secret scanning, with a sign-off table.
+- **Least-privilege identity guidance hardened**
+  (`docs/velociraptor-permissions.md`): summary table of what the
+  reader and investigator identities must and must not be able to do,
+  plus a "no arbitrary VQL/generic query path through MCP" validation
+  checklist with evidence commands.
+- **Doc drift fixed**: the stale "v0.8.0 backend wiring status"
+  sections in `docs/approval-flow.md`, `docs/configuration.md`, and
+  `docs/velociraptor-permissions.md` (which still described the
+  backend as scaffolded and the approval store as unlocked) now defer
+  to PROJECT_STATE.md's current table; approval-flow's known
+  limitations reflect the post-v0.8.0 `flock` and completed RPC
+  wiring.
+- README/PROJECT_STATE/PROJECT_PLAN updated: v0.10.4 marked as
+  production-readiness hardening; next milestone stated as
+  **v1.0.0-rc.1 controlled pilot, not GA**; remaining production
+  assumptions/gaps listed in one place (PROJECT_STATE.md).
+
 ### Fixed — v0.10.3: v0.10.2's 2 live-found correctness bugs
 
 No new/removed MCP tool (still exactly 28), no raw VQL/generic query, no

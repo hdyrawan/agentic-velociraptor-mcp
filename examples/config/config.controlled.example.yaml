@@ -1,0 +1,103 @@
+# Controlled-pilot posture — approval-gated write tools reachable, every
+# write still requiring a human-created approval via the separate
+# `approve` CLI (no MCP tool can create or decide one; see
+# docs/approval-flow.md and docs/runbooks/controlled-pilot.md).
+#
+# Do NOT start a deployment here. Start from
+# config.readonly.example.yaml, run the read-only posture until you
+# trust it, then switch to this posture inside a controlled pilot with
+# the narrowest allowlists your investigation actually needs.
+#
+# PLACEHOLDERS: every value written as /path/to/... MUST be replaced
+# before use. This file itself contains no secrets and must never be
+# edited to contain any — the only secret material lives in the two
+# separate api.config.yaml files referenced below, which stay outside
+# version control with mode 0600 (enforced at load time).
+#
+# Field reference: docs/configuration.md. Identity guidance:
+# docs/velociraptor-permissions.md. Pre-flight checks:
+# docs/security-review-checklist-v0.10.4.md.
+
+server:
+  name: agentic-velociraptor-mcp
+  transport: stdio            # the only supported transport; never expose a port
+
+velociraptor:
+  org_id: root
+  # SECRET FILES (not secret values): two SEPARATE least-privilege
+  # identities — never one shared identity, never `administrator`, and
+  # never anything holding ARTIFACT_WRITER / SERVER_ARTIFACT_WRITER /
+  # EXECVE / FILESYSTEM_WRITE / SERVER_ADMIN. chmod 0600 both. See
+  # docs/velociraptor-permissions.md for exactly what each identity
+  # must and must not be able to do.
+  read_api_config_path: /path/to/reader.api.config.yaml
+  write_api_config_path: /path/to/investigator.api.config.yaml
+  timeout_seconds: 30
+  max_rows: 500               # hard cap on rows per tool call
+  max_result_bytes: 1048576   # 1 MiB serialized-result cap per call
+  max_upload_bytes: 52428800  # 50 MiB cap on a single evidence download
+  # Evidence download stays disabled until you deliberately point this
+  # at a real, access-controlled directory (created 0700, files 0600).
+  # It is the one tool that discloses raw evidence bytes to local disk,
+  # so it has this third, independent enable switch.
+  download_dir: ""
+  # download_dir: /path/to/evidence-downloads
+
+policy:
+  mode: controlled            # write tools reachable, but only with approval
+  allow_raw_vql: false        # must stay false; config validation rejects true
+  allow_list_all_artifacts: false
+  allow_target_all: false     # keep false: no all-clients hunts in a pilot
+  max_hunt_clients: 25        # deliberately tight for a pilot; raise only with review
+  require_approval_for:       # every write-capable category — do not remove entries
+    - collect_artifact
+    - collect_dfir_profile
+    - start_hunt
+    - start_dfir_hunt
+    - cancel_flow
+    - cancel_hunt
+    - download_flow_upload
+    - hunt_ioc
+  # The complete artifact allowlist: nothing outside this list can be
+  # collected or hunted, no wildcards/prefixes supported by design.
+  # Verify every name against YOUR server's catalog
+  # (velo_get_artifact_details) and get DFIR-team sign-off before
+  # enabling. See examples/client-configs/config.read-only.example.yaml
+  # for a larger commented catalog of curated candidates.
+  allowed_artifacts:
+    - Generic.Client.Info
+    - Windows.System.Pslist
+    - Windows.Network.Netstat
+    - Linux.Sys.Pslist
+    - Linux.Network.Netstat
+    # Required for velo_hunt_ioc_with_approval kind "hash" (the only
+    # supported IOC kind as of v0.10.3 — see docs/tool-reference.md's
+    # "IOC kind support status"). Remove if the pilot does no IOC hunts.
+    - Generic.Detection.HashHunter
+  allowed_profiles:
+    - windows_basic_triage
+    - linux_basic_triage
+
+audit:
+  enabled: true               # required: audit-write failure blocks writes (fail closed)
+  # Directory must exist, be writable by the service account only, and
+  # sit on storage with retention appropriate for investigation records.
+  # The file is written 0600. See docs/runbooks/approval-and-audit.md.
+  path: /var/log/agentic-velociraptor-mcp/audit.jsonl
+  max_size_bytes: 104857600   # rotate at 100 MiB
+  max_files: 10               # retain ~1 GiB of audit history
+  redact_fields:              # additive to the hard-coded redaction list
+    - client_private_key
+    - client_cert
+    - ca_certificate
+    - api_key
+    - approval_token
+    - password
+    - secret
+
+approval:
+  # Must point at the exact same file the human-run `approve` CLI's
+  # --store flag targets. Directory owned by the service account; no
+  # MCP tool can ever create or decide an approval in it.
+  store_path: /path/to/approvals.json
+  ttl_seconds: 900            # approved-but-unused approvals expire after 15 min
