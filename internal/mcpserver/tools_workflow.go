@@ -247,12 +247,14 @@ func newCompareDFIRProfilesHandler(deps Deps) mcp.ToolHandlerFor[CompareDFIRProf
 			})
 		}
 		common := make([]string, 0)
+		for artifact, count := range artifactCounts {
+			if count == len(profiles) {
+				common = append(common, artifact)
+			}
+		}
 		unique := make(map[string][]string, len(profiles))
 		for _, p := range profiles {
 			for artifact := range artifactSets[p.Name] {
-				if artifactCounts[artifact] == len(profiles) {
-					common = append(common, artifact)
-				}
 				if artifactCounts[artifact] == 1 {
 					unique[p.Name] = append(unique[p.Name], artifact)
 				}

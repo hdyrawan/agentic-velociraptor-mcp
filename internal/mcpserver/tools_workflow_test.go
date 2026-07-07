@@ -113,6 +113,30 @@ func TestCompareDFIRProfilesHandlerSuccess(t *testing.T) {
 	}
 }
 
+func TestCompareDFIRProfilesCommonArtifactsHasNoDuplicates(t *testing.T) {
+	deps, _ := testDeps(t)
+	handler := newCompareDFIRProfilesHandler(deps)
+
+	_, out, err := handler(context.Background(), nil, CompareDFIRProfilesInput{Names: []string{"windows_basic_triage", "linux_basic_triage"}})
+	if err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	if out.Status != response.StatusSuccess {
+		t.Fatalf("Status = %q, want success: %+v", out.Status, out)
+	}
+
+	seen := make(map[string]bool, len(out.CommonArtifacts))
+	for _, artifact := range out.CommonArtifacts {
+		if seen[artifact] {
+			t.Fatalf("CommonArtifacts contains duplicate %q: %v", artifact, out.CommonArtifacts)
+		}
+		seen[artifact] = true
+	}
+	if !seen["Generic.Client.Info"] {
+		t.Fatalf("expected Generic.Client.Info in CommonArtifacts: %v", out.CommonArtifacts)
+	}
+}
+
 func TestCompareDFIRProfilesHandlerNotFound(t *testing.T) {
 	deps, sink := testDeps(t)
 	handler := newCompareDFIRProfilesHandler(deps)

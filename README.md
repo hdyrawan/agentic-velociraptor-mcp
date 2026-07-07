@@ -7,7 +7,7 @@ collection flows/results, reviewed DFIR investigation profiles, a
 controlled, approval-gated single-client collection pilot, hunt
 management, and a fixed-template IOC hunting helper.
 
-**Status: v0.10.1**, 28 callable MCP tools: 14 read-only (visibility,
+**Status: v0.10.2**, 28 callable MCP tools: 14 read-only (visibility,
 DFIR profiles, workflow helpers, flows/results), plus 6 approval-gated
 write tools implementing a controlled single-client collection pilot
 (collect artifact/profile, cancel flow, list/get/download flow uploads),
@@ -33,8 +33,15 @@ real mode (only label or all-clients scoping is possible; see
 `velociraptor.ErrHuntScopeClientIDsUnsupported`) — the three hunt/IOC
 hunt-start tools detect this and leave the approval unconsumed rather
 than burning it on a call that can't succeed. **Live-lab validation of
-the write-capable paths (collection, uploads, hunts, IOC hunting) against
-a real Velociraptor server is still pending** — see
+the write-capable paths (collection, hunts) against a real Velociraptor
+server was performed in v0.10.2** — see
+[docs/live-validation-report-v0.10.2.md](docs/live-validation-report-v0.10.2.md)
+for the full pass/fail detail. Two real gaps remain confirmed and
+unfixed: `velo_get_flow_results`/`velo_get_hunt_results` cannot retrieve
+rows for named-source artifacts (notably `Generic.Client.Info`), and
+`velo_hunt_ioc_with_approval`'s artifact mapping does not exist in any
+real Velociraptor catalog. Uploads/downloads and Windows-client/label-
+scoped-hunt paths remain unvalidated live — see
 [docs/lab-validation-plan.md](docs/lab-validation-plan.md). Do not point
 this at a production Velociraptor deployment until that validation is
 complete. See [PROJECT_STATE.md](PROJECT_STATE.md) for the current

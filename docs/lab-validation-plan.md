@@ -273,32 +273,42 @@ Performed against the disposable lab described in
   and audit success/error/blocked outcomes.
 - [x] `velo_get_flow_results` is bounded by `max_rows` and
   `max_result_bytes` in handler tests and reports truncation explicitly.
-- [ ] Real Velociraptor flow listing/status/result field mapping remains
-  pending; the current `grpcClient` backend still returns structured
-  `error` for flow methods until a reviewed backend RPC is added.
+- [x] Real Velociraptor flow listing/status/result field mapping —
+      **live-validated 2026-07-07** for list/status and for
+      default-source artifacts (`Linux.Sys.Pslist`: real rows, correct
+      fields). **Confirmed gap**: `velo_get_flow_results` returns a false
+      `empty` for named-source artifacts (`Generic.Client.Info`) — see
+      [live-validation-report-v0.10.2.md](live-validation-report-v0.10.2.md)
+      finding 2.
 
-### Phase 5 — controlled collection (v0.4.0, unit-tested; pending live-lab validation)
+### Phase 5 — controlled collection (v0.4.0, unit-tested; partially live-validated 2026-07-07)
 
 The six collection/flow-upload tools are unit-tested with fakes. The
 items below require a disposable lab with enrolled clients and the write
 API configured:
 
-- [ ] Attempt `velo_collect_artifact_with_approval` without a prior
-      approval and confirm it is blocked, not executed.
+- [x] Attempt `velo_collect_artifact_with_approval` without a prior
+      approval and confirm it is blocked, not executed. **Live-validated
+      2026-07-07**: `status: "not_found"`.
 - [ ] Grant an approval scoped to artifact A on client X; confirm an
       attempt to use it for artifact B or client Y is rejected
-      (fingerprint mismatch).
+      (fingerprint mismatch). Not re-exercised live this pass (already
+      unit-tested); only the reuse-of-the-same-approval case was
+      live-confirmed (rejected: `"already been used"`).
 - [ ] Confirm the write identity, not the read identity, is used for the
       actual collection call (e.g. via Velociraptor server-side audit
       logging of which API identity performed the action, if available).
 - [ ] Confirm `velo_download_flow_upload_with_approval` enforces
       `max_upload_bytes` and requires its own approval distinct from the
-      collection's approval.
+      collection's approval. **Not exercised 2026-07-07** — no
+      allowlisted artifact in that pass produced a real upload; see
+      live-validation-report-v0.10.2.md's "Limitations".
 - [ ] Confirm cancellation (`velo_cancel_flow_with_approval`) requires
       approval and correctly reflects in subsequent
-      `velo_get_flow_status`.
+      `velo_get_flow_status`. Not exercised 2026-07-07 (no long-running
+      flow available within the pass's time budget).
 
-### Phase 6 — hunts (v0.6.0, unit-tested incl. v0.7.0's fingerprint fix; pending live-lab validation)
+### Phase 6 — hunts (v0.6.0, unit-tested incl. v0.7.0's fingerprint fix; largely live-validated 2026-07-07)
 
 - [x] Approval for one hunt (artifact/case/scope) cannot be reused to
       start/cancel a *different* hunt (fingerprint mismatch) —
@@ -308,33 +318,56 @@ API configured:
       `TestCancelHuntRejectsMismatchedApproval`
       (`internal/mcpserver/tools_hunts_test.go`). This was previously a
       real, unverified gap — see CHANGELOG.md's v0.7.0 entry.
-- [ ] `velo_preview_hunt_scope` against a label/explicit-client-list
-      scope returns an accurate matched-client count without creating a
-      hunt.
-- [ ] `velo_start_hunt_with_approval` with a valid approval actually
-      creates a hunt on the Velociraptor server (requires real
-      `write_api_config_path`; the `CreateHunt` RPC is implemented on
-      `grpcClient` but not yet live-validated).
-- [ ] `velo_start_dfir_hunt_with_approval` with a valid approval creates
-      hunts for each profile artifact (same real-RPC prerequisite).
-- [ ] `velo_list_hunts` returns real hunt records from the server.
-- [ ] `velo_get_hunt_status` returns accurate state/client-count for a
-      real created hunt, and `not_found` for a nonexistent hunt ID.
-- [ ] `velo_get_hunt_results` returns real result rows for a real hunt,
-      bounded by `max_rows`/`max_result_bytes`, and pagination works
-      across result pages.
-- [ ] `velo_cancel_hunt_with_approval` with a valid approval cancels a
-      real running hunt, reflected in subsequent `velo_get_hunt_status`.
+- [x] `velo_preview_hunt_scope` against an all-clients scope returns an
+      accurate matched-client count (`matched: 1` in a 1-client lab)
+      without creating a hunt — **live-validated 2026-07-07**.
+      Label-scope matching was attempted but could not be confirmed
+      against a genuinely labeled client this pass (lab-tooling
+      limitation, not a code defect — see
+      live-validation-report-v0.10.2.md's "Limitations"); the label
+      *condition* sent to Velociraptor was independently confirmed
+      correct by inspecting the created hunt's stored server-side JSON.
+- [x] `velo_start_hunt_with_approval` with a valid approval actually
+      creates a hunt on the Velociraptor server — **live-validated
+      2026-07-07** with an all-clients scope: real `CreateHunt`, the
+      client was genuinely scheduled (a hunt-driven flow appeared, and
+      `velo_get_hunt_status` reported `client_count: 1`).
+- [x] `velo_start_dfir_hunt_with_approval` with a valid approval creates
+      hunts for each profile artifact — **live-validated 2026-07-07**
+      with a label scope (real `CreateHunt` per artifact, correct scope
+      stored server-side); 0 clients matched for the label-application
+      reason above.
+- [x] `velo_list_hunts` returns real hunt records from the server —
+      **live-validated 2026-07-07**.
+- [x] `velo_get_hunt_status` returns accurate state/client-count for a
+      real created hunt — **live-validated 2026-07-07** (`client_count: 1`
+      for the all-clients hunt; `stopped` after cancellation). Not-found
+      sentinel not re-exercised live this pass (already unit-tested).
+- [x] `velo_get_hunt_results` returns real result rows for a real hunt —
+      **live-validated 2026-07-07** for the RPC path itself, but hit the
+      same named-source gap as flow results (`Generic.Client.Info`
+      returned `empty` despite `client_count: 1`); pagination across
+      result pages not exercised (too little data in this tiny lab).
+- [x] `velo_cancel_hunt_with_approval` with a valid approval cancels a
+      real running hunt, reflected in subsequent `velo_get_hunt_status` —
+      **live-validated 2026-07-07** (state changed to `stopped`).
 - [ ] Attempt a scope matching more than `policy.max_hunt_clients`;
-      confirm start is refused rather than silently capped.
+      confirm start is refused rather than silently capped. Not
+      exercised (1-client lab; already unit-tested with fakes).
 - [ ] Attempt `all`-clients scope with `policy.allow_target_all: false`;
-      confirm refusal.
-- [ ] Start/cancel without prior approval is blocked (audited as
-      `blocked`), not executed.
+      confirm refusal. Not re-exercised live this pass — this pass
+      deliberately set `allow_target_all: true` (in a genuinely tiny
+      1-client lab) to validate the opposite path end-to-end; the
+      refusal path itself is already unit-tested with fakes.
+- [x] Start without prior approval is blocked (audited as `blocked`),
+      not executed — **live-validated 2026-07-07** for `start_hunt`
+      (`status: "not_found"` for an unknown reference).
 - [ ] Unregistered profile names in `velo_start_dfir_hunt_with_approval`
-      are rejected with `not_found`.
+      are rejected with `not_found`. Not re-exercised live (already
+      unit-tested).
 - [ ] Non-allowlisted profile names in `velo_start_dfir_hunt_with_approval`
-      are rejected (blocked).
+      are rejected (blocked). Not re-exercised live (already
+      unit-tested).
 - [x] Real-mode explicit `client_ids` hunt scope is refused before
       consuming the approval for `velo_start_hunt_with_approval` and
       `velo_start_dfir_hunt_with_approval` (Velociraptor's typed hunt RPCs
@@ -372,18 +405,25 @@ API configured:
       consuming the approval, leaving it valid for a retry with `label`
       or `all` scope —
       `TestHuntIOCRealModeExplicitClientIDsPreservesApproval`.
-- [ ] `velo_hunt_ioc_with_approval` with a valid approval actually creates
-      a hunt on a real Velociraptor server for each of the 5 indicator
-      kinds (requires real `write_api_config_path`; the `CreateHunt` RPC
-      is implemented on `grpcClient` but not yet live-validated — same
-      prerequisite as Phase 6's real hunt-start items).
-- [ ] Confirm whether `System.Hash.Hunt`/`System.IP.Hunt`/
+- [x] `velo_hunt_ioc_with_approval` with a valid approval attempts to
+      create a hunt on a real Velociraptor server — **live-validated
+      2026-07-07, and confirmed failing**: the real `CreateHunt` call
+      returns `Unknown artifact System.Hash.Hunt`. The approval was
+      still correctly consumed (one-shot semantics apply even on
+      backend failure), and the error was honest/structured, not a
+      crash or fabricated success. Only the `hash` kind was exercised
+      (the other 4 kinds share the same nonexistent-artifact root
+      cause, so were not separately re-run).
+- [x] Confirm whether `System.Hash.Hunt`/`System.IP.Hunt`/
       `System.Domain.Hunt`/`System.Process.Hunt`/`System.Path.Hunt` (the
       illustrative artifact names `vql.Bind` resolves each IOC kind to)
       correspond to any real artifact in a live Velociraptor server's
-      catalog, or whether a different artifact/parameter mapping is
-      needed — this must be resolved before real hunt-start RPCs can be
-      wired for this tool.
+      catalog — **confirmed 2026-07-07: none of them do** (checked
+      against the same 433-artifact real catalog `catalog/artifacts.yaml`
+      was verified against in v0.10.0). This must be resolved (real,
+      catalog-verified artifact/parameter mapping) before
+      `velo_hunt_ioc_with_approval` can work against a real server —
+      see live-validation-report-v0.10.2.md finding 3.
 - [ ] Fuzz malformed hash/IP/domain/process/path input against a real
       server path (edge cases: IPv6, defanged indicators like
       `1[.]2[.]3[.]4`, mixed-case hashes, trailing-dot domains, Windows
@@ -414,27 +454,28 @@ above is checked against the actual implementation, with findings
 recorded (not just assumed from design intent).
 
 
-## Backend wiring status (as of v0.10.1)
+## Backend wiring status (as of v0.10.2)
 
 Every RPC group below now has a reviewed typed gRPC binding
 (`internal/velociraptor/grpcclient_flows.go`, `grpcclient_uploads.go`,
-`grpcclient_hunts.go`), unit-tested against fake gRPC service stubs.
-**None of this substitutes for the live-lab validation phases above** —
-unit tests confirm the request/response mapping is correct against the
-generated protobuf types; they cannot confirm the artifact catalog names,
-parameter names, or server behavior of a real Velociraptor deployment.
+`grpcclient_hunts.go`), unit-tested against fake gRPC service stubs, and
+— as of v0.10.2 — largely live-validated. See
+[live-validation-report-v0.10.2.md](live-validation-report-v0.10.2.md)
+for the full pass/fail detail.
 
 | Group | Status |
 |---|---|
 | Visibility (`health`, client search/info, artifact list/details) | Real gRPC; live-validated 2026-07-06 (Phase 2). |
-| Flow list/status/results | Real gRPC; not yet live-validated (Phase 4). |
-| Collection start / DFIR profile collection / flow cancel | Real gRPC; backend capability checked before consuming approval; not yet live-validated (Phase 5). |
-| Flow uploads list/metadata/download | Real gRPC; download backend capability checked before consuming approval; not yet live-validated (Phase 5). |
-| Hunts list/status/results/preview | Real gRPC; explicit `client_ids` scope has no typed RPC support and is refused before consuming approval; not yet live-validated (Phase 6). |
-| Approved hunt start/cancel and IOC hunt | Real gRPC; same `client_ids` limitation; not yet live-validated (Phases 6-7). |
+| Flow list/status/results | Real gRPC; live-validated 2026-07-07 for list/status and default-source artifacts; confirmed gap for named-source artifacts (Phase 4). |
+| Collection start / DFIR profile collection / flow cancel | Real gRPC; backend capability checked before consuming approval; collection start live-validated 2026-07-07; flow cancel not yet exercised (Phase 5). |
+| Flow uploads list/metadata/download | Real gRPC; download backend capability checked before consuming approval; list confirmed honest-empty 2026-07-07; metadata/download not yet exercised against a real upload (Phase 5). |
+| Hunts list/status/results/preview | Real gRPC; explicit `client_ids` scope has no typed RPC support and is refused before consuming approval; list/status/preview/results live-validated 2026-07-07 end-to-end (all-clients scope); label-scope matching not confirmed (lab-tooling limitation) (Phase 6). |
+| Approved hunt start/cancel and IOC hunt | Real gRPC; same `client_ids` limitation; start/cancel live-validated 2026-07-07; IOC hunt confirmed non-functional against a real server (nonexistent artifact mapping) (Phases 6-7). |
 
-Required follow-up before production: complete every unchecked item in
-Phases 4-7 above against a disposable lab, prove least-privilege
-read/write API permissions, and keep `max_rows`, `max_result_bytes`,
-`max_upload_bytes`, `max_hunt_clients`, `target_all`, cursor, audit, and
+Required follow-up before production: fix the named-source
+result-retrieval gap and the IOC-hunt artifact mapping, complete every
+remaining unchecked item in Phases 4-8 above against a disposable lab,
+prove least-privilege read/write API permissions, and keep `max_rows`,
+`max_result_bytes`, `max_upload_bytes`, `max_hunt_clients`, `target_all`,
+cursor, audit, and
 no-raw-VQL invariants under test throughout.
