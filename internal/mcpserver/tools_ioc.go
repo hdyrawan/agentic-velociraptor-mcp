@@ -171,6 +171,10 @@ func newHuntIOCHandler(deps Deps) mcp.ToolHandlerFor[HuntIOCInput, HuntIOCOutput
 			recordAudit(deps, audit.Event{Tool: tool, Outcome: audit.OutcomeError, CaseID: in.CaseID, Artifact: artifact, IOCKind: in.Kind, IOCValue: in.Value, Reason: result.Message})
 			return nil, HuntIOCOutput{Result: result, Kind: in.Kind, Artifact: artifact}, nil
 		}
+		if result := huntScopeBackendReady(deps, in.ClientIDs); result.Status != "" {
+			recordAudit(deps, audit.Event{Tool: tool, Outcome: audit.OutcomeBlocked, CaseID: in.CaseID, Artifact: artifact, IOCKind: in.Kind, IOCValue: in.Value, RequestReason: in.Reason, ApprovalID: in.ApprovalID, Reason: result.Message})
+			return nil, HuntIOCOutput{Result: result, Kind: in.Kind, Artifact: artifact}, nil
+		}
 		if result, ok := gateAuditForWrite(deps, audit.Event{Tool: tool, Artifact: artifact, IOCKind: in.Kind, IOCValue: in.Value, CaseID: in.CaseID, RequestReason: in.Reason, ApprovalID: in.ApprovalID}); !ok {
 			return nil, HuntIOCOutput{Result: result, Kind: in.Kind, Artifact: artifact}, nil
 		}

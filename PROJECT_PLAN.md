@@ -23,14 +23,17 @@ This is the authoritative roadmap for `agentic-velociraptor-mcp`. For
 - stdio MCP transport first; HTTP/SSE/streamable HTTP only if/when
   explicitly requested.
 
-## Stable core target: 28 tools (complete as of v0.7.0, preserved in v0.8.0)
+## Stable core target: 28 tools (complete as of v0.7.0, preserved through v0.10.1)
 
 See [docs/tool-reference.md](docs/tool-reference.md) for the full table.
 Groups: visibility (5), flow/results (6), collection (3), hunts (7),
 DFIR profiles (3), DFIR workflow planning helpers (3), IOC helper (1).
-All 28 are now callable; see "What does not exist yet" in
-[PROJECT_STATE.md](PROJECT_STATE.md) for what remains scaffolded
-(real gRPC hunt/collection/IOC execution) versus real.
+All 28 are now callable, and every one has a real typed gRPC backend
+binding as of the GLM 5.2 hardening pass (see PROJECT_STATE.md's "Backend
+wiring status"); see "What does not exist yet" in
+[PROJECT_STATE.md](PROJECT_STATE.md) for what remains — chiefly live-lab
+validation and the explicit-`client_ids` hunt-scope limitation, not
+missing RPC wiring.
 
 ## DFIR cases this design must support
 
@@ -45,6 +48,23 @@ from investigation case to profile.
 - Reviewed flow, collection, upload, hunt, and IOC backend paths against the available typed `veloapi` surface. No additional real RPC could be implemented safely in this repo yet because the needed typed bindings are absent.
 - Added backend-capability checks before approval consumption for approval-gated operations, preserving approvals when a backend path is scaffolded or missing.
 - Documented live-lab validation as pending for every scaffolded operation.
+
+### GLM 5.2 hardening pass (complete, landed after v0.8.0, undocumented until v0.10.1)
+
+- Added the typed `veloapi` bindings v0.8.0 above found missing, and wired real gRPC RPCs for every remaining group: flow list/status/results, collection start/cancel, flow uploads/download, and hunt list/status/results/preview/start/cancel. See PROJECT_STATE.md's "Backend wiring status".
+- Discovered and documented `velociraptor.ErrHuntScopeClientIDsUnsupported`: real Velociraptor's hunt RPCs have no field for an explicit client-ID list.
+- Hardened the approval store against cross-process races (OS-level `flock`), made the audit sanitizer recurse into nested structures, and added audit log rotation.
+
+### v0.10.0 — Curated artifact catalog and DFIR profile expansion (complete)
+
+- Added `catalog/artifacts.yaml` and `internal/dfir.LoadCatalog`/`ValidateProfileAgainstCatalog` as an authoring/test-time control (runtime collection still gated solely by `policy.allowed_artifacts`).
+- Added 31 new catalog-verified DFIR profiles (46 total). Still exactly 28 MCP tools; no raw VQL; no agent-supplied artifact/profile mutation.
+
+### v0.10.1 — Stabilization: docs/version drift, hunt-scope approval gate, CI (complete)
+
+- Closed a real approval-consumption gap: the three hunt/IOC-hunt-start tools now refuse an explicit `client_ids` scope in real mode before consuming the approval, instead of only failing (after consuming it) inside `WriteClient.StartHunt`.
+- Fixed README/PROJECT_STATE/PROJECT_PLAN/docs/CLI-help drift left over from the undocumented GLM 5.2 pass and v0.10.0 (stale "20 tools"/"scaffolded backend"/`v0.8.0` language).
+- Added `.github/workflows/ci.yml`.
 
 ### v0.0.x — Project foundation (this run)
 
@@ -306,19 +326,29 @@ paths for anything safe/clear to implement for real.
 - Callable tool inventory increases from 27 to 28 (the full stable-core
   target).
 
-### v0.8.0 — Production hardening
+### Remaining production-hardening items (not yet started)
 
-- Docker image, non-root runtime.
-- Config validation hardening.
-- Audit redaction tests.
-- Rate limits.
-- Stable error model and response schemas.
-- Integration tests; MCP Inspector validation.
+This was originally planned as "v0.8.0 — Production hardening"; the
+version number was used instead for the backend-wiring-review milestone
+above, and the real gRPC wiring item below was completed by the GLM 5.2
+pass and v0.10.1's approval-gate fix. What remains:
+
+- Docker image, non-root runtime. — **done** (see production-deployment.md).
+- Config validation hardening. — **done** (config.Validate, tested).
+- Audit redaction tests. — **done**, and extended to recursive
+  redaction by the GLM 5.2 pass.
+- Rate limits. — not yet started.
+- Stable error model and response schemas. — **done**
+  (`internal/response.Result`).
+- Integration tests; MCP Inspector validation. — partial: unit/handler
+  tests exist; live-lab validation against a real Velociraptor server
+  remains pending (docs/lab-validation-plan.md).
 - Security review checklist (see
-  [docs/lab-validation-plan.md](docs/lab-validation-plan.md)).
-- Real gRPC wiring for collection/cancel/upload/hunt/IOC RPCs (see
-  v0.4.0's known limitation above), validated against a live
-  Velociraptor lab.
+  [docs/lab-validation-plan.md](docs/lab-validation-plan.md)). — checklist
+  exists; most live-server items remain unchecked.
+- Real gRPC wiring for collection/cancel/upload/hunt/IOC RPCs — **done**
+  (GLM 5.2 pass); **live-lab validation against a real Velociraptor lab
+  remains pending.**
 
 ### v1.0.0 — Stable release (not yet started)
 

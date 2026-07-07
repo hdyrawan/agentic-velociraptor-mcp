@@ -7,20 +7,38 @@ collection flows/results, reviewed DFIR investigation profiles, a
 controlled, approval-gated single-client collection pilot, hunt
 management, and a fixed-template IOC hunting helper.
 
-**Status: v0.8.0**, 28 callable MCP tools: 14 read-only from
-v0.1.0-v0.5.0 (visibility, profiles, workflow, flows/results), plus 6
-approval-gated write tools from v0.4.0 implementing a controlled
-single-client collection pilot (collect artifact/profile, cancel flow,
-list/get/download flow uploads), plus 7 hunt management tools from
-v0.6.0 (preview, start, start-DFIR, list, status, results, cancel), plus
-1 IOC hunting helper from v0.7.0 (`velo_hunt_ioc_with_approval`, for
-hash/ip/domain/process/path indicators). Hunt tools include read-only
-scope preview, list, status, and results (mock/real branching) plus
-approval-gated start, start-DFIR, cancel, and IOC hunt — all gated
-through approval, policy, scope validation, artifact/profile/template
-allowlists, and `max_hunt_clients` enforcement.
+**Status: v0.10.1**, 28 callable MCP tools: 14 read-only (visibility,
+DFIR profiles, workflow helpers, flows/results), plus 6 approval-gated
+write tools implementing a controlled single-client collection pilot
+(collect artifact/profile, cancel flow, list/get/download flow uploads),
+plus 7 hunt management tools (preview, start, start-DFIR, list, status,
+results, cancel), plus 1 IOC hunting helper
+(`velo_hunt_ioc_with_approval`, for hash/ip/domain/process/path
+indicators). Hunt tools include read-only scope preview, list, status,
+and results (mock/real branching) plus approval-gated start, start-DFIR,
+cancel, and IOC hunt — all gated through approval, policy, scope
+validation, artifact/profile/template allowlists, and
+`max_hunt_clients` enforcement. A curated catalog of 46 DFIR profiles
+ships under `profiles/`, every artifact backed by a reviewed entry in
+`catalog/artifacts.yaml` (see [docs/dfir-profiles.md](docs/dfir-profiles.md)).
 
-**Important:** v0.8.0 preserves the 28-tool v0.7.0 inventory and reviews backend wiring. Real gRPC remains limited to health, client search/info, and artifact list/details. Flow, collection, upload, hunt, and IOC execution paths remain scaffolded because this repo does not yet have reviewed typed Velociraptor protobuf bindings for those RPCs, and exposing generic/raw VQL is still forbidden. Approval-gated scaffolded paths now fail before consuming a one-shot approval. See [PROJECT_STATE.md](PROJECT_STATE.md) for the current inventory and [PROJECT_PLAN.md](PROJECT_PLAN.md) for the roadmap. Do not point this at a production Velociraptor deployment.
+**Backend status:** every one of the 28 tools has a real typed
+Velociraptor gRPC RPC binding (health, client search/info, artifact
+list/details, flow list/status/results, collection start/cancel, flow
+uploads/download, and hunt list/status/results/preview/start/cancel) —
+see `internal/velociraptor/grpcclient*.go`. No raw/generic VQL query
+path exists or is planned for the stable core. **Known limitation:** an
+explicit `client_ids` hunt scope has no typed Velociraptor RPC support in
+real mode (only label or all-clients scoping is possible; see
+`velociraptor.ErrHuntScopeClientIDsUnsupported`) — the three hunt/IOC
+hunt-start tools detect this and leave the approval unconsumed rather
+than burning it on a call that can't succeed. **Live-lab validation of
+the write-capable paths (collection, uploads, hunts, IOC hunting) against
+a real Velociraptor server is still pending** — see
+[docs/lab-validation-plan.md](docs/lab-validation-plan.md). Do not point
+this at a production Velociraptor deployment until that validation is
+complete. See [PROJECT_STATE.md](PROJECT_STATE.md) for the current
+inventory and [PROJECT_PLAN.md](PROJECT_PLAN.md) for the roadmap.
 
 ## Contents
 
@@ -29,12 +47,14 @@ allowlists, and `max_hunt_clients` enforcement.
   - [Option A: Docker](#option-a-docker)
   - [Option B: Build from source](#option-b-build-from-source)
 - [Configure the Velociraptor connection](#configure-the-velociraptor-connection)
+- [Read-only vs. controlled mode](#read-only-vs-controlled-mode)
 - [Connect an MCP client](#connect-an-mcp-client)
   - [Claude Desktop](#claude-desktop)
   - [Claude Code](#claude-code)
   - [Hermes](#hermes)
   - [OpenCode](#opencode)
   - [Any other MCP client / MCP Inspector](#any-other-mcp-client--mcp-inspector)
+- [Common workflows](#common-workflows)
 - [Design principles](#design-principles)
 - [Repository layout](#repository-layout)
 - [Documentation](#documentation)
@@ -150,6 +170,53 @@ deployment:
 
 A misconfigured-but-set path fails the server closed at startup rather
 than silently falling back to mock mode.
+
+## Read-only vs. controlled mode
+
+`policy.mode` in `config.yaml` picks one of two postures. There is no
+partial state in between: every write-capable tool checks this at call
+time, not just at startup.
+
+- **`read_only` (the default, and the recommended starting point):**
+  every approval-gated tool (collection, hunt start/cancel, IOC hunt,
+  flow cancel, evidence download) refuses to run and reports itself
+  disabled. Only the 14 read-only tools do anything. Safe to point at a
+  real Velociraptor deployment for visibility/triage with zero risk of
+  an agent changing endpoint state.
+- **`controlled`:** approval-gated tools become reachable, but only once
+  **both** `policy.mode: controlled` **and** `approval.store_path` are
+  set — either one missing keeps every write tool refusing to run. Even
+  then, no MCP tool call executes a write by itself:
+
+  1. An agent (or you, through an MCP client) calls an approval-gated
+     tool, e.g. `velo_collect_artifact_with_approval`, supplying
+     `case_id`, `reason`, `requester`, and an `approval_reference` — a
+     reference to an approval that doesn't exist yet.
+  2. The tool call is refused: no matching approval, so nothing runs.
+  3. **A human**, not the MCP client, runs the separate `approve` CLI
+     subcommand shipped in this binary to create and approve that exact
+     request:
+
+     ```sh
+     ./bin/agentic-velociraptor-mcp approve \
+       --store /path/to/approvals.json --reference CASE-42-collect-1 \
+       --operation collect_artifact --case-id CASE-42 \
+       --reason "triage per incident #42" --requester analyst@example.com \
+       --approved-by lead-analyst@example.com \
+       --client-id C.1234abcd5678ef90 --artifact Generic.Client.Info
+     ```
+
+  4. The agent retries the same tool call with `approval_reference:
+     "CASE-42-collect-1"`. It now succeeds — and only for that exact
+     client/artifact/parameters; a mismatched call (different client,
+     different artifact) is rejected even with a valid, approved
+     reference.
+
+  No MCP tool can create or decide an approval — `approve` is a
+  human-operator-only command, never reachable over the MCP stdio
+  transport. This is what prevents an LLM-driven agent from approving its
+  own request. See [docs/approval-flow.md](docs/approval-flow.md) for the
+  full workflow, including denial and expiry.
 
 ## Connect an MCP client
 
@@ -293,47 +360,109 @@ worked example against this server specifically.
 ## Repository layout
 
 ```
-cmd/agentic-velociraptor-mcp/   CLI entrypoint
+cmd/agentic-velociraptor-mcp/   CLI entrypoint + `approve` subcommand
 internal/
-  audit/        structured audit events, JSONL sink, secret redaction
-  approval/     human-approval request/decision workflow
+  audit/        structured audit events, JSONL sink, recursive secret redaction, rotation
+  approval/     human-approval request/decision workflow (cross-process file-locked store)
+  catalog/      (see repo-root catalog/) curated artifact catalog loader + validation
   config/       YAML config model + validation
-  dfir/         DFIR profile model, registry, validation
-  mcpserver/    MCP server + tool registration (28 registered so far)
+  dfir/         DFIR profile model, registry, validation, artifact-catalog cross-check
+  mcpserver/    MCP server + tool registration (28 registered)
   policy/       MCP-layer policy engine (allowlists, approval routing)
   validation/   strict input validation (client IDs, artifacts, IOCs, scope)
-  velociraptor/ Velociraptor gRPC client (mTLS: health check, client search/detail, artifact catalog, flow/result reads; rest still placeholders)
-  velociraptor/veloapi/  minimal, hand-scoped gRPC stubs (Check, ListClients, GetClient, GetArtifacts)
+  velociraptor/ Velociraptor gRPC client (mTLS): real RPCs for health, client search/detail,
+                artifact catalog, flow list/status/results, collection start/cancel, flow
+                uploads/download, hunt list/status/results/preview/start/cancel
+  velociraptor/veloapi/  hand-scoped gRPC stubs generated from reviewed proto definitions
   vql/          allowlisted VQL template binding — no raw VQL execution
-profiles/       DFIR profile definitions (YAML)
+catalog/        curated artifact catalog (artifacts.yaml) — authoring/test-time control
+profiles/       46 DFIR profile definitions (YAML)
 docs/           architecture, security model, config, tool, and ops docs
 examples/       MCP Inspector and example client config snippets
 tests/          integration-level tests (as they're added)
 Dockerfile      multi-stage build → distroless, non-root runtime image
 ```
 
-## Getting started
+## Common workflows
 
-Requires **Go 1.25+** (the official MCP Go SDK dependency's minimum).
+These are the same MCP tool calls an agent makes, shown as their JSON
+arguments — use [MCP Inspector](examples/inspector/README.md) or your
+MCP client to actually invoke them. All examples assume
+`policy.mode: controlled` and `approval.store_path` set for the
+approval-gated ones; read-only tools work in either mode.
 
-```sh
-go build -o bin/agentic-velociraptor-mcp ./cmd/agentic-velociraptor-mcp
-./bin/agentic-velociraptor-mcp --version
-./bin/agentic-velociraptor-mcp --help
+**1. Health check** (`velo_health_check`, read-only, works in mock mode
+with zero setup):
 
-# Start the MCP stdio server (see examples/client-configs for a sample
-# config.yaml; profiles/ ships 3 DFIR profile definitions):
-./bin/agentic-velociraptor-mcp --config /path/to/config.yaml \
-  --profiles-dir /path/to/agentic-velociraptor-mcp/profiles
+```json
+{}
 ```
 
-Once running, the server speaks MCP over stdio and exposes exactly 28
-tools (14 read-only, plus 6 approval-gated collection tools, plus 7
-hunt management tools, plus 1 IOC hunting helper) — see
-[docs/tool-reference.md](docs/tool-reference.md) for the current callable
-inventory and [examples/inspector/README.md](examples/inspector/README.md)
-for how to drive it with MCP Inspector. Track progress in
-[PROJECT_STATE.md](PROJECT_STATE.md).
+**2. List clients** (`velo_search_clients`, read-only):
+
+```json
+{"query": "windows", "limit": 20}
+```
+
+**3. Collect an approved artifact from one client**
+(`velo_collect_artifact_with_approval`). First get an approval from a
+human operator (see [Read-only vs. controlled mode](#read-only-vs-controlled-mode)
+above), then call:
+
+```json
+{
+  "case_id": "CASE-42", "reason": "triage per incident #42",
+  "requester": "analyst@example.com", "approval_reference": "CASE-42-collect-1",
+  "client_id": "C.1234abcd5678ef90", "artifact": "Generic.Client.Info"
+}
+```
+
+**4. Start an approved DFIR profile hunt** across a label-scoped set of
+clients (`velo_start_dfir_hunt_with_approval`) — always
+`velo_preview_hunt_scope` first to see blast radius before requesting
+approval:
+
+```json
+{"label": "windows", "max_clients": 25}
+```
+
+then, with a matching approval created via `approve --operation
+start_dfir_hunt --profile windows_basic_triage --label windows`:
+
+```json
+{
+  "case_id": "CASE-42", "reason": "triage per incident #42",
+  "requester": "analyst@example.com", "approval_reference": "CASE-42-hunt-1",
+  "profile": "windows_basic_triage", "label": "windows"
+}
+```
+
+**5. IOC hunt with approval** (`velo_hunt_ioc_with_approval`) for a
+hash/IP/domain/process/path indicator, same approval flow, scoped by
+`label` or `all` — **explicit `client_ids` scope is not supported by
+Velociraptor's typed hunt RPCs in real mode**, use `label` or `all`
+instead (see the "Known limitation" note above):
+
+```json
+{
+  "case_id": "CASE-42", "reason": "hunting a known-bad hash",
+  "requester": "analyst@example.com", "approval_reference": "CASE-42-ioc-1",
+  "kind": "hash", "value": "d41d8cd98f00b204e9800998ecf8427e", "label": "windows"
+}
+```
+
+**6. Review and download flow results** (`velo_get_flow_results`,
+read-only, then `velo_download_flow_upload_with_approval` for any
+attached file):
+
+```json
+{"client_id": "C.1234abcd5678ef90", "flow_id": "F.1234abcd5678ef90", "limit": 50}
+```
+
+See [docs/tool-reference.md](docs/tool-reference.md) for every tool's
+full input/output schema, and [docs/dfir-profiles.md](docs/dfir-profiles.md)
+for the 46 available DFIR profiles.
+
 ## Documentation
 
 - [docs/architecture.md](docs/architecture.md)

@@ -230,6 +230,10 @@ func newStartHuntHandler(deps Deps) mcp.ToolHandlerFor[StartHuntInput, StartHunt
 			recordAudit(deps, audit.Event{Tool: "velo_start_hunt_with_approval", Outcome: audit.OutcomeError, Artifact: in.Artifact, CaseID: in.CaseID, Reason: result.Message})
 			return nil, StartHuntOutput{Result: result, Artifact: in.Artifact}, nil
 		}
+		if result := huntScopeBackendReady(deps, in.ClientIDs); result.Status != "" {
+			recordAudit(deps, audit.Event{Tool: "velo_start_hunt_with_approval", Outcome: audit.OutcomeBlocked, Artifact: in.Artifact, CaseID: in.CaseID, RequestReason: in.Reason, ApprovalID: in.ApprovalID, Reason: result.Message})
+			return nil, StartHuntOutput{Result: result, Artifact: in.Artifact}, nil
+		}
 		if result, ok := gateAuditForWrite(deps, audit.Event{Tool: "velo_start_hunt_with_approval", Artifact: in.Artifact, CaseID: in.CaseID, RequestReason: in.Reason, ApprovalID: in.ApprovalID}); !ok {
 			return nil, StartHuntOutput{Result: result, Artifact: in.Artifact}, nil
 		}
@@ -354,6 +358,10 @@ func newStartDFIRHuntHandler(deps Deps) mcp.ToolHandlerFor[StartDFIRHuntInput, S
 		}
 		if result := backendOperationReady(deps.WriteClient, velociraptor.BackendOpStartHunt); result.Status != "" {
 			recordAudit(deps, audit.Event{Tool: "velo_start_dfir_hunt_with_approval", Outcome: audit.OutcomeError, Profile: in.Profile, CaseID: in.CaseID, Reason: result.Message})
+			return nil, StartDFIRHuntOutput{Result: result, Profile: in.Profile}, nil
+		}
+		if result := huntScopeBackendReady(deps, in.ClientIDs); result.Status != "" {
+			recordAudit(deps, audit.Event{Tool: "velo_start_dfir_hunt_with_approval", Outcome: audit.OutcomeBlocked, Profile: in.Profile, CaseID: in.CaseID, RequestReason: in.Reason, ApprovalID: in.ApprovalID, Reason: result.Message})
 			return nil, StartDFIRHuntOutput{Result: result, Profile: in.Profile}, nil
 		}
 		if result, ok := gateAuditForWrite(deps, audit.Event{Tool: "velo_start_dfir_hunt_with_approval", Profile: in.Profile, CaseID: in.CaseID, RequestReason: in.Reason, ApprovalID: in.ApprovalID}); !ok {
@@ -745,6 +753,27 @@ func validateHuntWriteInput(deps Deps, caseID, reason, requester, approvalID str
 		return fmt.Errorf("approval store not configured; approval workflow is unavailable")
 	}
 	return nil
+}
+
+// huntScopeBackendReady reports whether the write backend can actually
+// enact the requested hunt scope, distinct from backendOperationReady's
+// per-operation (not per-scope) check. Real Velociraptor's typed hunt
+// RPCs (CreateHunt/EstimateHunt) have no field for "this explicit list
+// of client IDs" — only label and all-clients scopes are expressible
+// (see velociraptor.ErrHuntScopeClientIDsUnsupported and
+// grpcclient_hunts.go's huntConditionFromScope). Without this check, an
+// explicit client_ids hunt in real mode would pass backendOperationReady
+// (which only knows "start_hunt" is supported in general), consume the
+// caller's one-shot approval, and only then fail inside
+// WriteClient.StartHunt — burning a human approval for a request that
+// was never going to execute. Checking here, before gateAuditForWrite
+// and consumeApproval, keeps the approval unconsumed for this known
+// limitation. Label and target_all scopes are unaffected.
+func huntScopeBackendReady(deps Deps, clientIDs []string) response.Result {
+	if deps.VelociraptorWriteMode == VelociraptorModeReal && len(clientIDs) > 0 {
+		return response.Error(velociraptor.ErrHuntScopeClientIDsUnsupported.Error())
+	}
+	return response.Result{}
 }
 
 func configuredMaxHuntClients(deps Deps) int {

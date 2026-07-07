@@ -1,17 +1,22 @@
 // Command agentic-velociraptor-mcp is the entrypoint for the
 // agentic-velociraptor-mcp MCP server.
 //
-// As of v0.4.0 (rebased onto v0.5.0's read-only flow/result backfill)
-// this starts a real MCP server over the stdio transport (the only
+// It starts a real MCP server over the stdio transport (the only
 // transport this project supports; see docs/security-model.md),
-// exposing 20 tools: the 14 read-only tools from v0.1.0-v0.5.0
-// (visibility, flow/result, DFIR profile, and workflow tools), plus six
-// new tools implementing a controlled, auditable, single-client
-// collection pilot (velo_collect_artifact_with_approval,
+// exposing exactly 28 tools: 14 read-only tools (visibility, flow/result,
+// DFIR profile, and workflow tools), 6 approval-gated single-client
+// collection tools (velo_collect_artifact_with_approval,
 // velo_collect_dfir_profile_with_approval, velo_cancel_flow_with_approval,
 // velo_list_flow_uploads, velo_get_flow_upload_metadata,
-// velo_download_flow_upload_with_approval). See PROJECT_PLAN.md and
-// PROJECT_STATE.md for what's left.
+// velo_download_flow_upload_with_approval), 7 hunt management tools
+// (preview, start, start-DFIR, list, status, results, cancel), and 1
+// IOC hunting helper (velo_hunt_ioc_with_approval). Flow, collection,
+// upload, and hunt/IOC write paths call real typed Velociraptor gRPC RPCs
+// when velociraptor.write_api_config_path is configured; explicit
+// client_ids hunt scope has no typed RPC support in real mode (see
+// velociraptor.ErrHuntScopeClientIDsUnsupported) and is refused before an
+// approval is consumed. See PROJECT_PLAN.md and PROJECT_STATE.md for
+// current status and docs/security-model.md for the full threat model.
 //
 // This binary also provides a second, non-MCP entrypoint: the `approve`
 // subcommand, run directly by a human operator (never reachable over the
@@ -49,7 +54,7 @@ import (
 
 // version is the build version. Overridden at release build time via
 // -ldflags "-X main.version=...".
-var version = "0.8.0"
+var version = "0.10.1-dev"
 
 // defaultProfilesDir is the --profiles-dir flag's default value.
 // resolveProfilesDir only applies its cwd-independent fallback when the
@@ -86,15 +91,18 @@ func runServer(args []string, out io.Writer) int {
 		fmt.Fprintf(out, "  agentic-velociraptor-mcp approve --store PATH --reference REF ... (see 'approve -h')\n\n")
 		fmt.Fprintf(out, "Flags:\n")
 		fs.PrintDefaults()
-		fmt.Fprintf(out, "\nStatus: v0.4.0. Starts a real MCP server over stdio exposing 20 tools: the 14\n")
-		fmt.Fprintf(out, "read-only tools from v0.1.0-v0.5.0, plus a controlled, approval-gated\n")
-		fmt.Fprintf(out, "collection pilot (collect artifact, collect DFIR profile, cancel flow, list/get\n")
-		fmt.Fprintf(out, "flow upload metadata, download flow upload). Every approval-gated tool is\n")
-		fmt.Fprintf(out, "disabled unless policy.mode is \"controlled\" and approval.store_path is set; no\n")
-		fmt.Fprintf(out, "MCP tool can create or decide an approval, only the separate 'approve'\n")
-		fmt.Fprintf(out, "subcommand can. This is a controlled pilot, not unrestricted Velociraptor write\n")
-		fmt.Fprintf(out, "access: no hunts, no multi-client collection, no raw VQL. See PROJECT_PLAN.md,\n")
-		fmt.Fprintf(out, "PROJECT_STATE.md, and docs/approval-flow.md.\n")
+		fmt.Fprintf(out, "\nStarts a real MCP server over stdio exposing exactly 28 tools: 14 read-only\n")
+		fmt.Fprintf(out, "visibility/DFIR-profile/workflow/flow-result tools, 6 approval-gated\n")
+		fmt.Fprintf(out, "single-client collection tools, 7 hunt management tools, and 1 IOC hunting\n")
+		fmt.Fprintf(out, "helper. Every approval-gated tool is disabled unless policy.mode is\n")
+		fmt.Fprintf(out, "\"controlled\" and approval.store_path is set; no MCP tool can create or decide\n")
+		fmt.Fprintf(out, "an approval, only the separate 'approve' subcommand can. No raw VQL, no\n")
+		fmt.Fprintf(out, "agent-supplied artifact names: every capability maps to an allowlisted\n")
+		fmt.Fprintf(out, "artifact or DFIR profile. Explicit client_ids hunt scope has no typed\n")
+		fmt.Fprintf(out, "Velociraptor RPC support in real mode (use label or all instead); the\n")
+		fmt.Fprintf(out, "approval is left unconsumed when that scope is requested. See\n")
+		fmt.Fprintf(out, "PROJECT_PLAN.md, PROJECT_STATE.md, docs/approval-flow.md, and\n")
+		fmt.Fprintf(out, "docs/tool-reference.md.\n")
 	}
 
 	if err := fs.Parse(args); err != nil {

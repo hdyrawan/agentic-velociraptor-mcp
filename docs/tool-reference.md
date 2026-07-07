@@ -1,8 +1,7 @@
 # Tool reference
 
-v0.8.0 (preserving the v0.7.0 inventory), all 28 tools — the full
-stable-core target — are implemented and registered as callable MCP
-tools: 5 visibility (`velo_health_check`,
+As of v0.10.1, all 28 tools — the full stable-core target — are
+implemented and registered as callable MCP tools: 5 visibility (`velo_health_check`,
 `velo_search_clients`, `velo_get_client_info`, `velo_list_artifact_names`,
 `velo_get_artifact_details`), 3 DFIR profile (`velo_list_dfir_profiles`,
 `velo_get_dfir_profile`, `velo_validate_dfir_profile`), 3 DFIR workflow
@@ -23,11 +22,11 @@ via `mcp.AddTool`; there is no remaining unwired `ToolSpec` metadata.
 
 Legend: RO = read-only, no approval. Approval = requires a resolvable
 `approval_reference` (see [approval-flow.md](approval-flow.md)) before
-any Velociraptor call is made. **v0.4.0, v0.6.0, and v0.7.0 implement a
-controlled pilot, not unrestricted Velociraptor write access**: every
-Approval-kind tool below requires `policy.mode: controlled` and
-`approval.store_path` to be explicitly configured (off by default), and
-no raw-VQL tool exists anywhere in this codebase.
+any Velociraptor call is made. **This remains a controlled pilot, not
+unrestricted Velociraptor write access**: every Approval-kind tool below
+requires `policy.mode: controlled` and `approval.store_path` to be
+explicitly configured (off by default), and no raw-VQL tool exists
+anywhere in this codebase.
 
 **Response envelope (v0.2.0+):** `velo_search_clients`,
 `velo_get_client_info`, `velo_list_artifact_names`, and
@@ -40,15 +39,20 @@ field (`"ok"`/`"error"`) was left as-is rather than migrated. v0.3.0's
 three workflow tools, v0.5.0's three flow/result tools, and every v0.4.0
 tool also embed the same `internal/response.Result` envelope.
 
-**Approval-gated tool inputs (v0.4.0+):** every Approval-kind tool takes
-`case_id`, `reason`, `requester`, its target (client plus
-artifact/profile/flow_id/upload_name as applicable), and an
+**Approval-gated tool inputs:** every Approval-kind tool takes `case_id`,
+`reason`, `requester`, its target (client plus
+artifact/profile/flow_id/upload_name/scope as applicable), and an
 `approval_reference`. The reference must name an
 `internal/approval.Store` record — created and approved out-of-band by a
 human operator via the `agentic-velociraptor-mcp approve` CLI subcommand,
 never by any MCP tool — that is approved, unconsumed, unexpired, and
 whose `approval.RequestFingerprint` exactly matches the call's operation/
-case_id/client_id/artifact/profile/parameters/flow_id/upload_name. In v0.8.0, backend-capability checks happen before approval consumption, so scaffolded write paths preserve the approval. See
+case_id/client_id/artifact/profile/parameters/flow_id/upload_name/scope.
+Backend-capability and scope-support checks happen before approval
+consumption, so a request the configured backend cannot execute (an
+unimplemented operation, or an explicit `client_ids` hunt scope in real
+mode — see "Known real-mode limitation" below) preserves the approval for
+a later, valid retry instead of burning it. See
 [approval-flow.md](approval-flow.md) for the full operator workflow.
 
 ## Visibility tools (`tools_visibility.go`)
@@ -65,25 +69,26 @@ case_id/client_id/artifact/profile/parameters/flow_id/upload_name. In v0.8.0, ba
 
 | Tool | Kind | Description | Target milestone | Implemented |
 |------|------|-------------|-------------------|-------------|
-| `velo_list_flows` | RO | List flows for a client, bounded by `max_rows` with cursor pagination. | v0.1.0 / v0.5.0 backfill | **yes (mock or read-client; real gRPC backend not yet implemented)** |
-| `velo_get_flow_status` | RO | State of one flow. `client_id` and `flow_id` are validated before any call. | v0.1.0 / v0.5.0 backfill | **yes (mock or read-client; real gRPC backend not yet implemented)** |
-| `velo_get_flow_results` | RO | Result rows for one flow, bounded by `max_rows` and `max_result_bytes`; reports `truncated`, `returned_rows`, `byte_count`, and optional `next_cursor`. | v0.1.0 / v0.5.0 backfill | **yes (mock or read-client; real gRPC backend not yet implemented)** |
+| `velo_list_flows` | RO | List flows for a client, bounded by `max_rows` with cursor pagination. | v0.1.0 / v0.5.0 backfill | **yes (mock, or real via `GetClientFlows`)** |
+| `velo_get_flow_status` | RO | State of one flow. `client_id` and `flow_id` are validated before any call. | v0.1.0 / v0.5.0 backfill | **yes (mock, or real via `GetFlowDetails`)** |
+| `velo_get_flow_results` | RO | Result rows for one flow, bounded by `max_rows` and `max_result_bytes`; reports `truncated`, `returned_rows`, `byte_count`, and optional `next_cursor`. | v0.1.0 / v0.5.0 backfill | **yes (mock, or real via `GetTable`)** |
 | `velo_list_flow_uploads` | RO | List uploads attached to a flow via `Deps.ReadClient`; same mock/real convention as the visibility tools. | v0.4.0 | **yes (mock or real)** |
 | `velo_get_flow_upload_metadata` | RO | Size/hash metadata for one upload; `status: "not_found"` via `velociraptor.ErrUploadNotFound` for an unknown upload. | v0.4.0 | **yes (mock or real)** |
-| `velo_download_flow_upload_with_approval` | Approval | Download upload bytes (bounded by `max_upload_bytes`) and write them to a local `velociraptor.download_dir` file; the MCP response never carries raw bytes, only `local_path`/`size_bytes`/`sha256`. Requires `velociraptor.download_dir` configured in addition to the standard write-pilot gate. | v0.4.0 | **yes (control-flow only — see "known limitation" below)** |
+| `velo_download_flow_upload_with_approval` | Approval | Download upload bytes (bounded by `max_upload_bytes`) and write them to a local `velociraptor.download_dir` file; the MCP response never carries raw bytes, only `local_path`/`size_bytes`/`sha256`. Requires `velociraptor.download_dir` configured in addition to the standard write-pilot gate. | v0.4.0 | **yes (mock, or real via `VFSGetBuffer`)** |
 
 
 ### Flow/result response contract
 
-The three v0.5.0 flow/result tools are read-only. They never collect,
-cancel, download, mutate client/server state, or expose raw VQL.
-Malformed `client_id` / `flow_id` input is blocked before any backend
-call and audited as `blocked`. Mock mode returns empty data with a
-`success` status and explicit `mode: "mock"`. Real mode uses
-`Deps.ReadClient`; with the current `grpcClient` backend these methods
-still return a structured `error` until a reviewed flow-results RPC
-implementation is added, while tests exercise the handler contract
-against a fake read client.
+The three flow/result tools are read-only. They never collect, cancel,
+download, mutate client/server state, or expose raw VQL. Malformed
+`client_id` / `flow_id` input is blocked before any backend call and
+audited as `blocked`. Mock mode returns empty data with a `success`
+status and explicit `mode: "mock"`. Real mode calls `Deps.ReadClient`'s
+typed gRPC methods (`GetClientFlows`/`GetFlowDetails`/`GetTable`) against
+the real server; a connectivity or lookup failure is reported as a
+normal structured `error` result, not a Go-level panic. Tests exercise
+the handler contract against both a fake read client and, at the
+`internal/velociraptor` layer, a fake gRPC service stub.
 
 `velo_get_flow_results` always applies the lower of the requested
 `limit` and configured `velociraptor.max_rows`, then bounds serialized
@@ -96,31 +101,48 @@ requested. Audit events include `client_id`, `flow_id`, `row_count`, and
 
 | Tool | Kind | Description | Target milestone | Implemented |
 |------|------|-------------|-------------------|-------------|
-| `velo_collect_artifact_with_approval` | Approval | Collect one allowlisted artifact from one client, with optional agent-supplied `parameters`. | v0.4.0 | **yes (control-flow only — see "known limitation" below)** |
-| `velo_collect_dfir_profile_with_approval` | Approval | Collect every artifact in an allowlisted, locally-loaded DFIR profile from one client, using each artifact's own fixed profile parameters (no agent-supplied parameters). Reports partial progress (`flows`) if collection stops partway through. | v0.4.0 | **yes (control-flow only — see "known limitation" below)** |
-| `velo_cancel_flow_with_approval` | Approval | Cancel a running flow. | v0.4.0 | **yes (control-flow only — see "known limitation" below)** |
+| `velo_collect_artifact_with_approval` | Approval | Collect one allowlisted artifact from one client, with optional agent-supplied `parameters`. | v0.4.0 | **yes (mock, or real via `CollectArtifact`)** |
+| `velo_collect_dfir_profile_with_approval` | Approval | Collect every artifact in an allowlisted, locally-loaded DFIR profile from one client, using each artifact's own fixed profile parameters (no agent-supplied parameters). Reports partial progress (`flows`) if collection stops partway through. | v0.4.0 | **yes (mock, or real via `CollectArtifact`)** |
+| `velo_cancel_flow_with_approval` | Approval | Cancel a running flow. | v0.4.0 | **yes (mock, or real via `CancelFlow`)** |
 
-**Known limitation**: the hand-authored `veloapi` proto mirror (see
-v0.1.0-alpha.2's rationale) does not yet wire real gRPC bindings for
-`CollectArtifact`/`CancelFlow`/upload RPCs. All approval/policy/audit
-control-flow for these four tools is implemented and tested (against
-fake `velociraptor.Client` implementations); calling any of them with a
-real (non-mock) write client currently returns
-`velociraptor.ErrNotImplemented`, reported honestly as a structured `backend_not_implemented`/`error`-status
-response without consuming approval. Real RPC wiring is still pending for every write-capable tool
-group (collection, flows, hunts, and IOC hunting).
+These three tools, plus flow uploads and hunt start/cancel, call real
+typed Velociraptor gRPC RPCs (`internal/velociraptor/grpcclient_flows.go`,
+`grpcclient_uploads.go`, `grpcclient_hunts.go`) when
+`velociraptor.write_api_config_path` is configured. A write client that
+cannot perform a given operation (the built-in placeholder client used
+when no write API config is set) reports a structured
+`backend_not_implemented`/`error`-status response without consuming the
+approval — see `internal/mcpserver/server.go`'s `backendOperationReady`.
 
 ## Hunt tools (`tools_hunts.go`)
 
 | Tool | Kind | Description | Target milestone | Implemented |
 |------|------|-------------|-------------------|-------------|
-| `velo_preview_hunt_scope` | RO | Resolve a proposed scope against the live client population. Blocks `target_all` by default. | v0.6.0 | **yes** (scaffold: mock/real branching works; real gRPC not implemented) |
-| `velo_start_hunt_with_approval` | Approval | Start a hunt for one allowlisted artifact. Enforces `max_hunt_clients`, artifact allowlist, scope validation. | v0.6.0 | **yes** (scaffold: approval/safety gates active; real gRPC not implemented) |
-| `velo_start_dfir_hunt_with_approval` | Approval | Start a hunt for a DFIR profile's artifacts. Enforces profile allowlist, artifact allowlist, DFIR profile validation. | v0.6.0 | **yes** (scaffold: approval/safety gates active; real gRPC not implemented) |
-| `velo_list_hunts` | RO | List hunts with cursor pagination. | v0.6.0 | **yes** (scaffold: mock/real branching works; real gRPC not implemented) |
-| `velo_get_hunt_status` | RO | State/client count of one hunt. Returns `not_found` for unknown hunt IDs. | v0.6.0 | **yes** (scaffold: mock/real branching works; real gRPC not implemented) |
-| `velo_get_hunt_results` | RO | Result rows for one hunt, bounded by `max_rows`/`max_result_bytes`, with cursor pagination. | v0.6.0 | **yes** (scaffold: mock/real branching works; real gRPC not implemented) |
-| `velo_cancel_hunt_with_approval` | Approval | Stop a running hunt. | v0.6.0 | **yes** (scaffold: approval/safety gates active; real gRPC not implemented) |
+| `velo_preview_hunt_scope` | RO | Resolve a proposed scope against the live client population. Blocks `target_all` by default. | v0.6.0 | **yes** (mock, or real via `EstimateHunt`; explicit `client_ids` unsupported in real mode — see below) |
+| `velo_start_hunt_with_approval` | Approval | Start a hunt for one allowlisted artifact. Enforces `max_hunt_clients`, artifact allowlist, scope validation. | v0.6.0 | **yes** (mock, or real via `CreateHunt`; explicit `client_ids` unsupported in real mode — see below) |
+| `velo_start_dfir_hunt_with_approval` | Approval | Start a hunt for a DFIR profile's artifacts. Enforces profile allowlist, artifact allowlist, DFIR profile validation. | v0.6.0 | **yes** (mock, or real via `CreateHunt`; explicit `client_ids` unsupported in real mode — see below) |
+| `velo_list_hunts` | RO | List hunts with cursor pagination. | v0.6.0 | **yes** (mock, or real via `ListHunts`) |
+| `velo_get_hunt_status` | RO | State/client count of one hunt. Returns `not_found` for unknown hunt IDs. | v0.6.0 | **yes** (mock, or real via `GetHunt`) |
+| `velo_get_hunt_results` | RO | Result rows for one hunt, bounded by `max_rows`/`max_result_bytes`, with cursor pagination. | v0.6.0 | **yes** (mock, or real via `GetHuntResults`) |
+| `velo_cancel_hunt_with_approval` | Approval | Stop a running hunt. | v0.6.0 | **yes** (mock, or real via `ModifyHunt`) |
+
+### Known real-mode limitation: explicit `client_ids` hunt scope
+
+Real Velociraptor's typed hunt RPCs (`CreateHunt`/`EstimateHunt`) accept a
+`HuntCondition` that can express a label filter or "all clients" — there
+is no field for an explicit, caller-chosen list of client IDs. So when
+`velociraptor.write_api_config_path` (or the read equivalent for preview)
+points at a real server, a hunt-scoped tool call with `client_ids` set
+(`velo_preview_hunt_scope`, `velo_start_hunt_with_approval`,
+`velo_start_dfir_hunt_with_approval`, `velo_hunt_ioc_with_approval`)
+returns a structured error rather than attempting the RPC
+(`velociraptor.ErrHuntScopeClientIDsUnsupported`). For the three
+approval-gated tools, this check runs before the approval is consumed, so
+the approval remains valid for a retry with `label` or `all` scope
+instead. Label- and all-clients-scoped hunts are fully implemented
+against the real RPCs. This has no effect in mock mode, and does not
+affect single-client `client_id` tools like
+`velo_collect_artifact_with_approval` (a different, unrelated field).
 
 ## DFIR profile tools (`tools_profiles.go`)
 
@@ -219,7 +241,7 @@ Example:
 
 | Tool | Kind | Description | Target milestone | Implemented |
 |------|------|-------------|-------------------|-------------|
-| `velo_hunt_ioc_with_approval` | Approval | Hunt for a validated `hash`/`ip`/`domain`/`process`/`path` indicator using a fixed template, across a bounded scope. Enforces `max_hunt_clients`, artifact allowlist (on the template's resolved artifact), scope validation, `target_all` policy. | v0.7.0 | **yes** (scaffold: approval/safety gates active and fingerprint-checked, template→artifact/parameter mapping is real; real gRPC hunt-start not implemented) |
+| `velo_hunt_ioc_with_approval` | Approval | Hunt for a validated `hash`/`ip`/`domain`/`process`/`path` indicator using a fixed template, across a bounded scope. Enforces `max_hunt_clients`, artifact allowlist (on the template's resolved artifact), scope validation, `target_all` policy. | v0.7.0 | **yes** (approval/safety gates active and fingerprint-checked, template→artifact/parameter mapping is real, starts a real hunt via `CreateHunt` in real mode; explicit `client_ids` unsupported in real mode — see above) |
 
 Input: `case_id`, `reason`, `requester`, `approval_id` (all required, same
 as every other approval-gated tool), `kind` (one of `hash`, `ip`,
@@ -245,19 +267,32 @@ mentioning "does not match" with `status` unchanged by a Go-level error
 - `run_vql` / any raw-VQL tool — see
   [security-model.md](security-model.md).
 - Any generic remote shell / command-execution tool.
+- Agent-supplied/mutable artifact or DFIR profile catalogs — see
+  [dfir-profiles.md](dfir-profiles.md).
 
+## Backend wiring status
 
-## v0.8.0 backend wiring status
+The `internal/velociraptor/veloapi` proto mirror now includes reviewed
+typed RPC bindings for flow enumeration/results (`GetClientFlows`,
+`GetFlowDetails`, `GetTable`), collection execution and cancel
+(`CollectArtifact`, `CancelFlow`), uploads (`VFSGetBuffer`), and hunt
+execution/cancel/results (`CreateHunt`, `ModifyHunt`, `ListHunts`,
+`GetHunt`, `GetHuntResults`, `EstimateHunt`) — see
+`internal/velociraptor/grpcclient_flows.go`, `grpcclient_uploads.go`, and
+`grpcclient_hunts.go`. None of this exposes a generic VQL query path,
+which remains entirely out of the stable core.
 
-v0.8.0 is a backend-wiring review milestone that preserves the v0.7.0 28-tool MCP inventory. The hand-authored `internal/velociraptor/veloapi` mirror currently exposes only `Check`, `ListClients`, `GetClient`, and `GetArtifacts`; it does not include reviewed typed RPC bindings for flow enumeration/results, collection execution, flow cancel, uploads, hunt execution/cancel, hunt results, or IOC hunt execution. Implementing those by exposing a generic VQL query path would violate the stable-core raw-VQL rule, so they remain scaffolded with structured errors.
-
-| Group | v0.8.0 status |
+| Group | Status |
 |---|---|
-| Visibility (`health`, client search/info, artifact list/details) | Real gRPC already implemented and unchanged. |
-| Flow list/status/results | Handler contracts, validation, limits, pagination, audit unchanged; real gRPC remains scaffolded (`backend_not_implemented`/`error`, no panic). |
-| Collection start / DFIR profile collection / flow cancel | Approval/policy/input/allowlist gates unchanged; backend capability is now checked before consuming approval; real gRPC remains scaffolded. |
-| Flow uploads list/metadata/download | Read handlers and download file controls unchanged; download backend capability is now checked before consuming approval; real gRPC upload RPCs remain scaffolded. |
-| Hunts list/status/results/preview | Handler contracts, limits, target_all/max-client policy unchanged; real gRPC remains scaffolded. |
-| Approved hunt start/cancel and IOC hunt | Approval fingerprint/scope/template gates unchanged; backend capability is now checked before consuming approval; real gRPC hunt RPCs remain scaffolded. |
+| Visibility (`health`, client search/info, artifact list/details) | Real gRPC. |
+| Flow list/status/results | Real gRPC (`GetClientFlows`/`GetFlowDetails`/`GetTable`). |
+| Collection start / DFIR profile collection / flow cancel | Real gRPC (`CollectArtifact`/`CancelFlow`). |
+| Flow uploads list/metadata/download | Real gRPC (`GetTable` for listing/metadata, `VFSGetBuffer` for download). |
+| Hunts list/status/results/preview | Real gRPC (`ListHunts`/`GetHunt`/`GetHuntResults`/`EstimateHunt`); explicit `client_ids` scope unsupported (see above). |
+| Approved hunt start/cancel and IOC hunt | Real gRPC (`CreateHunt`/`ModifyHunt`); explicit `client_ids` scope unsupported (see above). |
 
-Live-lab validation remains pending for every scaffolded operation above. Required follow-up: add reviewed typed protobuf bindings for the specific Velociraptor RPCs, prove least-privilege read/write API permissions in a disposable lab, and keep `max_rows`, `max_result_bytes`, `max_upload_bytes`, `max_hunt_clients`, `target_all`, cursor, audit, and no-raw-VQL invariants under test.
+Every real-mode path above still requires a live, disposable Velociraptor
+lab pass to confirm end-to-end behavior against enrolled endpoints and
+real hunt/flow data before production use — see
+[lab-validation-plan.md](lab-validation-plan.md) for what remains
+unchecked.

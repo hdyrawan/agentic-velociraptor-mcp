@@ -243,10 +243,12 @@ Velociraptor data supports. Concretely:
   any read-client call, report `not_found` separately from operational
   errors when the read client returns the sentinel errors, and make
   truncation explicit (`truncated`, `next_cursor`, row/byte counts)
-  rather than presenting partial results as complete. The current real
-  gRPC backend does not yet implement flow RPCs, so real-mode flow calls
-  return a structured `error` rather than fabricated data until a
-  reviewed backend is added.
+  rather than presenting partial results as complete. At the time of
+  v0.5.0, the real gRPC backend did not yet implement flow RPCs, so
+  real-mode flow calls returned a structured `error` rather than
+  fabricated data. As of the GLM 5.2 hardening pass, `grpcClient`
+  implements real `GetClientFlows`/`GetFlowDetails`/`GetTable` RPCs for
+  these three tools — see "Backend wiring status" below.
 - **v0.4.0** extends the same envelope to the six new write-capable
   tools, adding a distinction the earlier read-only tools didn't need:
   an unresolved `approval_reference` is `status: "not_found"` (a normal,
@@ -307,9 +309,8 @@ question entirely for these RPCs rather than relying on
 for the one case that has no purpose-built RPC equivalent:
 `velo_hunt_ioc_with_approval` (v0.7.0), which resolves a validated
 indicator through `vql.Bind` to a fixed artifact + one bound parameter,
-then reaches Velociraptor via the same `StartHunt` RPC path (still
-scaffolded — see PROJECT_STATE.md's "What does not exist yet") every
-other hunt tool uses, never a raw query string.
+then reaches Velociraptor via the same real `CreateHunt` RPC path every
+other hunt-start tool uses, never a raw query string.
 
 ## Out of scope for this MCP server (by design)
 
@@ -451,17 +452,31 @@ e.g. `velo:read`, `velo:profiles:read`, `velo:collect`, `velo:hunt`)
 rather than an all-or-nothing API token.
 
 
-## v0.8.0 backend wiring status
+## Backend wiring status (as of v0.10.1)
 
-v0.8.0 is a backend-wiring review milestone that preserves the v0.7.0 28-tool MCP inventory. The hand-authored `internal/velociraptor/veloapi` mirror currently exposes only `Check`, `ListClients`, `GetClient`, and `GetArtifacts`; it does not include reviewed typed RPC bindings for flow enumeration/results, collection execution, flow cancel, uploads, hunt execution/cancel, hunt results, or IOC hunt execution. Implementing those by exposing a generic VQL query path would violate the stable-core raw-VQL rule, so they remain scaffolded with structured errors.
+The `internal/velociraptor/veloapi` proto mirror now includes reviewed
+typed RPC bindings for every one of the 28 tools' backend operations —
+visibility (`Check`/`ListClients`/`GetClient`/`GetArtifacts`), flow
+enumeration/results (`GetClientFlows`/`GetFlowDetails`/`GetTable`),
+collection and flow cancel (`CollectArtifact`/`CancelFlow`), uploads
+(`VFSGetBuffer`), and hunt execution/cancel/results
+(`CreateHunt`/`ModifyHunt`/`ListHunts`/`GetHunt`/`GetHuntResults`/
+`EstimateHunt`). None of this exposes a generic VQL query path, which
+remains entirely out of the stable core — every message the generated
+types define deliberately omits fields for a query body.
 
-| Group | v0.8.0 status |
+| Group | Status |
 |---|---|
-| Visibility (`health`, client search/info, artifact list/details) | Real gRPC already implemented and unchanged. |
-| Flow list/status/results | Handler contracts, validation, limits, pagination, audit unchanged; real gRPC remains scaffolded (`backend_not_implemented`/`error`, no panic). |
-| Collection start / DFIR profile collection / flow cancel | Approval/policy/input/allowlist gates unchanged; backend capability is now checked before consuming approval; real gRPC remains scaffolded. |
-| Flow uploads list/metadata/download | Read handlers and download file controls unchanged; download backend capability is now checked before consuming approval; real gRPC upload RPCs remain scaffolded. |
-| Hunts list/status/results/preview | Handler contracts, limits, target_all/max-client policy unchanged; real gRPC remains scaffolded. |
-| Approved hunt start/cancel and IOC hunt | Approval fingerprint/scope/template gates unchanged; backend capability is now checked before consuming approval; real gRPC hunt RPCs remain scaffolded. |
+| Visibility (`health`, client search/info, artifact list/details) | Real gRPC. |
+| Flow list/status/results | Real gRPC. |
+| Collection start / DFIR profile collection / flow cancel | Real gRPC; backend capability is checked before consuming approval. |
+| Flow uploads list/metadata/download | Real gRPC; download backend capability is checked before consuming approval. |
+| Hunts list/status/results/preview | Real gRPC; explicit `client_ids` hunt scope has no typed RPC support and is refused before consuming approval — see docs/tool-reference.md. |
+| Approved hunt start/cancel and IOC hunt | Real gRPC; same `client_ids` limitation as above. |
 
-Live-lab validation remains pending for every scaffolded operation above. Required follow-up: add reviewed typed protobuf bindings for the specific Velociraptor RPCs, prove least-privilege read/write API permissions in a disposable lab, and keep `max_rows`, `max_result_bytes`, `max_upload_bytes`, `max_hunt_clients`, `target_all`, cursor, audit, and no-raw-VQL invariants under test.
+Every real-mode path above still needs a live, disposable-lab validation
+pass against enrolled endpoints before production use — unit tests here
+use fake gRPC service stubs, not a real Velociraptor server. See
+docs/lab-validation-plan.md for what remains unchecked, and do not point
+this project at a production Velociraptor deployment until that
+validation is complete.

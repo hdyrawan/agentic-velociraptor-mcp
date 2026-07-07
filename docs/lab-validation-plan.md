@@ -313,8 +313,8 @@ API configured:
       hunt.
 - [ ] `velo_start_hunt_with_approval` with a valid approval actually
       creates a hunt on the Velociraptor server (requires real
-      `write_api_config_path` and gRPC hunt RPCs, which are not yet
-      implemented on `grpcClient`).
+      `write_api_config_path`; the `CreateHunt` RPC is implemented on
+      `grpcClient` but not yet live-validated).
 - [ ] `velo_start_dfir_hunt_with_approval` with a valid approval creates
       hunts for each profile artifact (same real-RPC prerequisite).
 - [ ] `velo_list_hunts` returns real hunt records from the server.
@@ -335,6 +335,12 @@ API configured:
       are rejected with `not_found`.
 - [ ] Non-allowlisted profile names in `velo_start_dfir_hunt_with_approval`
       are rejected (blocked).
+- [x] Real-mode explicit `client_ids` hunt scope is refused before
+      consuming the approval for `velo_start_hunt_with_approval` and
+      `velo_start_dfir_hunt_with_approval` (Velociraptor's typed hunt RPCs
+      have no field for an explicit client-ID list) —
+      `TestStartHuntRealModeExplicitClientIDsPreservesApproval`,
+      `TestStartDFIRHuntRealModeExplicitClientIDsPreservesApproval`.
 
 ### Phase 7 — IOC hunting (v0.7.0, unit-tested; pending live-lab validation)
 
@@ -357,14 +363,20 @@ API configured:
       `TestApprovalForIOCHuntCannotAuthorizeRegularHuntStart`.
 - [x] Approved fake-client path starts a hunt and consumes the approval —
       `TestHuntIOCApprovedFakePath`.
-- [x] Real (non-mock) `WriteClient` without hunt RPCs implemented reports
-      `ErrNotImplemented` honestly as an `error`-status result, not
-      fabricated success — `TestHuntIOCScaffoldedRealModeReturnsHonestError`.
+- [x] Real (non-mock) `WriteClient` without hunt RPCs implemented (e.g.
+      the built-in placeholder client used when no write API config is
+      set) reports `ErrNotImplemented`/`backend_not_implemented` honestly
+      as an `error`-status result, not fabricated success —
+      `TestHuntIOCScaffoldedRealModeReturnsHonestError`.
+- [x] Real-mode explicit `client_ids` hunt scope is refused before
+      consuming the approval, leaving it valid for a retry with `label`
+      or `all` scope —
+      `TestHuntIOCRealModeExplicitClientIDsPreservesApproval`.
 - [ ] `velo_hunt_ioc_with_approval` with a valid approval actually creates
       a hunt on a real Velociraptor server for each of the 5 indicator
-      kinds (requires real `write_api_config_path` and gRPC hunt RPCs,
-      which are not yet implemented on `grpcClient` — same prerequisite
-      as Phase 6's real hunt-start items).
+      kinds (requires real `write_api_config_path`; the `CreateHunt` RPC
+      is implemented on `grpcClient` but not yet live-validated — same
+      prerequisite as Phase 6's real hunt-start items).
 - [ ] Confirm whether `System.Hash.Hunt`/`System.IP.Hunt`/
       `System.Domain.Hunt`/`System.Process.Hunt`/`System.Path.Hunt` (the
       illustrative artifact names `vql.Bind` resolves each IOC kind to)
@@ -402,17 +414,27 @@ above is checked against the actual implementation, with findings
 recorded (not just assumed from design intent).
 
 
-## v0.8.0 backend wiring status
+## Backend wiring status (as of v0.10.1)
 
-v0.8.0 is a backend-wiring review milestone that preserves the v0.7.0 28-tool MCP inventory. The hand-authored `internal/velociraptor/veloapi` mirror currently exposes only `Check`, `ListClients`, `GetClient`, and `GetArtifacts`; it does not include reviewed typed RPC bindings for flow enumeration/results, collection execution, flow cancel, uploads, hunt execution/cancel, hunt results, or IOC hunt execution. Implementing those by exposing a generic VQL query path would violate the stable-core raw-VQL rule, so they remain scaffolded with structured errors.
+Every RPC group below now has a reviewed typed gRPC binding
+(`internal/velociraptor/grpcclient_flows.go`, `grpcclient_uploads.go`,
+`grpcclient_hunts.go`), unit-tested against fake gRPC service stubs.
+**None of this substitutes for the live-lab validation phases above** —
+unit tests confirm the request/response mapping is correct against the
+generated protobuf types; they cannot confirm the artifact catalog names,
+parameter names, or server behavior of a real Velociraptor deployment.
 
-| Group | v0.8.0 status |
+| Group | Status |
 |---|---|
-| Visibility (`health`, client search/info, artifact list/details) | Real gRPC already implemented and unchanged. |
-| Flow list/status/results | Handler contracts, validation, limits, pagination, audit unchanged; real gRPC remains scaffolded (`backend_not_implemented`/`error`, no panic). |
-| Collection start / DFIR profile collection / flow cancel | Approval/policy/input/allowlist gates unchanged; backend capability is now checked before consuming approval; real gRPC remains scaffolded. |
-| Flow uploads list/metadata/download | Read handlers and download file controls unchanged; download backend capability is now checked before consuming approval; real gRPC upload RPCs remain scaffolded. |
-| Hunts list/status/results/preview | Handler contracts, limits, target_all/max-client policy unchanged; real gRPC remains scaffolded. |
-| Approved hunt start/cancel and IOC hunt | Approval fingerprint/scope/template gates unchanged; backend capability is now checked before consuming approval; real gRPC hunt RPCs remain scaffolded. |
+| Visibility (`health`, client search/info, artifact list/details) | Real gRPC; live-validated 2026-07-06 (Phase 2). |
+| Flow list/status/results | Real gRPC; not yet live-validated (Phase 4). |
+| Collection start / DFIR profile collection / flow cancel | Real gRPC; backend capability checked before consuming approval; not yet live-validated (Phase 5). |
+| Flow uploads list/metadata/download | Real gRPC; download backend capability checked before consuming approval; not yet live-validated (Phase 5). |
+| Hunts list/status/results/preview | Real gRPC; explicit `client_ids` scope has no typed RPC support and is refused before consuming approval; not yet live-validated (Phase 6). |
+| Approved hunt start/cancel and IOC hunt | Real gRPC; same `client_ids` limitation; not yet live-validated (Phases 6-7). |
 
-Live-lab validation remains pending for every scaffolded operation above. Required follow-up: add reviewed typed protobuf bindings for the specific Velociraptor RPCs, prove least-privilege read/write API permissions in a disposable lab, and keep `max_rows`, `max_result_bytes`, `max_upload_bytes`, `max_hunt_clients`, `target_all`, cursor, audit, and no-raw-VQL invariants under test.
+Required follow-up before production: complete every unchecked item in
+Phases 4-7 above against a disposable lab, prove least-privilege
+read/write API permissions, and keep `max_rows`, `max_result_bytes`,
+`max_upload_bytes`, `max_hunt_clients`, `target_all`, cursor, audit, and
+no-raw-VQL invariants under test throughout.
