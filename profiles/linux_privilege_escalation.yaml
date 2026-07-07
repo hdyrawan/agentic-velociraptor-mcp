@@ -1,0 +1,20 @@
+# DFIR profile: linux_privilege_escalation
+#
+# Curated bundle of reviewed, catalog-verified Velociraptor artifacts.
+# Every artifact below is present in catalog/artifacts.yaml and must also
+# be added to policy.allowed_artifacts before this profile can be used.
+# Definition only: adding this file adds no collection/hunt/VQL logic.
+name: linux_privilege_escalation
+display_name: "Linux Privilege Escalation Surface"
+description: >
+  UID-0 (root) accounts and SUID/SGID binaries. Sudo has no single dedicated Velociraptor artifact; these cover the privileged-access surface.
+target_os: linux
+category: privilege
+risk_level: medium
+requires_approval: false
+max_runtime_seconds: 600
+max_result_rows: 5000
+max_result_bytes: 10485760
+artifacts:
+  - name: Linux.Users.RootUsers
+  - name: Linux.Sys.SUID

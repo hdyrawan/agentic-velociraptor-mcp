@@ -1,0 +1,21 @@
+# DFIR profile: linux_process_analysis
+#
+# Curated bundle of reviewed, catalog-verified Velociraptor artifacts.
+# Every artifact below is present in catalog/artifacts.yaml and must also
+# be added to policy.allowed_artifacts before this profile can be used.
+# Definition only: adding this file adds no collection/hunt/VQL logic.
+name: linux_process_analysis
+display_name: "Linux Process Analysis"
+description: >
+  Running processes, process tree, and loaded kernel modules (rootkit surface).
+target_os: linux
+category: process
+risk_level: medium
+requires_approval: false
+max_runtime_seconds: 600
+max_result_rows: 5000
+max_result_bytes: 10485760
+artifacts:
+  - name: Linux.Sys.Pslist
+  - name: Generic.System.Pstree
+  - name: Linux.Proc.Modules

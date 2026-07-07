@@ -14,6 +14,7 @@ type fakeAllowlist struct{ allow map[string]bool }
 func (f fakeAllowlist) ArtifactAllowed(name string) bool { return f.allow[name] }
 
 var expectedShippedProfileNames = []string{
+	// v0.4.0-v0.7.0 original catalog (15).
 	"windows_basic_triage",
 	"windows_process_network_triage",
 	"windows_persistence_triage",
@@ -29,6 +30,42 @@ var expectedShippedProfileNames = []string{
 	"ioc_hash_hunt",
 	"ioc_ip_hunt",
 	"ioc_domain_hunt",
+	// v0.10.0 curated, catalog-verified expansion (31).
+	// Windows.
+	"windows_system_inventory",
+	"windows_powershell_activity",
+	"windows_scheduled_task_persistence",
+	"windows_wmi_persistence",
+	"windows_service_persistence",
+	"windows_execution_evidence",
+	"windows_authentication_events",
+	"windows_user_activity",
+	"windows_network_connections",
+	"windows_filesystem_timeline",
+	// Windows browser sub-profiles.
+	"windows_browser_history",
+	"windows_browser_downloads",
+	"windows_browser_extensions",
+	"windows_browser_cookies",
+	"windows_browser_cache",
+	// Linux.
+	"linux_system_inventory",
+	"linux_process_analysis",
+	"linux_network_connections",
+	"linux_auth_logs",
+	"linux_ssh_trust",
+	"linux_privilege_escalation",
+	"linux_shell_history",
+	"linux_cron_persistence",
+	"linux_systemd_services",
+	"linux_package_inventory",
+	"linux_container_triage",
+	// Cross-platform.
+	"cross_platform_identity",
+	"cross_platform_process",
+	"cross_platform_network",
+	"cross_platform_ioc_context",
+	"cross_platform_local_hashes",
 }
 
 var disallowedProfileNameSubstrings = []string{

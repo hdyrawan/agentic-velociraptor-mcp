@@ -1,0 +1,20 @@
+# DFIR profile: windows_scheduled_task_persistence
+#
+# Curated bundle of reviewed, catalog-verified Velociraptor artifacts.
+# Every artifact below is present in catalog/artifacts.yaml and must also
+# be added to policy.allowed_artifacts before this profile can be used.
+# Definition only: adding this file adds no collection/hunt/VQL logic.
+name: windows_scheduled_task_persistence
+display_name: "Windows Scheduled Task Persistence"
+description: >
+  Scheduled tasks and their creation/modification event-log records (a common persistence surface).
+target_os: windows
+category: persistence
+risk_level: medium
+requires_approval: false
+max_runtime_seconds: 600
+max_result_rows: 5000
+max_result_bytes: 10485760
+artifacts:
+  - name: Windows.System.TaskScheduler
+  - name: Windows.EventLogs.ScheduledTasks

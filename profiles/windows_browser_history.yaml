@@ -1,0 +1,21 @@
+# DFIR profile: windows_browser_history
+#
+# Curated bundle of reviewed, catalog-verified Velociraptor artifacts.
+# Every artifact below is present in catalog/artifacts.yaml and must also
+# be added to policy.allowed_artifacts before this profile can be used.
+# Definition only: adding this file adds no collection/hunt/VQL logic.
+name: windows_browser_history
+display_name: "Windows Browser History"
+description: >
+  Chrome, Edge, and Firefox browsing history. Privacy-sensitive; approval-gated.
+target_os: windows
+category: browser
+risk_level: high
+requires_approval: true
+max_runtime_seconds: 600
+max_result_rows: 20000
+max_result_bytes: 20971520
+artifacts:
+  - name: Windows.Applications.Chrome.History
+  - name: Windows.Applications.Edge.History
+  - name: Windows.Applications.Firefox.History

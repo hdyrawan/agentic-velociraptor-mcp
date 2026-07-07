@@ -1,0 +1,20 @@
+# DFIR profile: windows_filesystem_timeline
+#
+# Curated bundle of reviewed, catalog-verified Velociraptor artifacts.
+# Every artifact below is present in catalog/artifacts.yaml and must also
+# be added to policy.allowed_artifacts before this profile can be used.
+# Definition only: adding this file adds no collection/hunt/VQL logic.
+name: windows_filesystem_timeline
+display_name: "Windows Filesystem Timeline"
+description: >
+  Full $MFT parse and super-timeline reconstruction. Large volume and enumerates every filename on the volume; approval-gated.
+target_os: windows
+category: timeline
+risk_level: high
+requires_approval: true
+max_runtime_seconds: 3600
+max_result_rows: 200000
+max_result_bytes: 536870912
+artifacts:
+  - name: Windows.NTFS.MFT
+  - name: Windows.Forensics.Timeline

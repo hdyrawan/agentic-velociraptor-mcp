@@ -1,0 +1,20 @@
+# DFIR profile: linux_container_triage
+#
+# Curated bundle of reviewed, catalog-verified Velociraptor artifacts.
+# Every artifact below is present in catalog/artifacts.yaml and must also
+# be added to policy.allowed_artifacts before this profile can be used.
+# Definition only: adding this file adds no collection/hunt/VQL logic.
+name: linux_container_triage
+display_name: "Linux Container Triage"
+description: >
+  Docker daemon info, running containers, and Docker version.
+target_os: linux
+category: containers
+risk_level: medium
+requires_approval: false
+max_runtime_seconds: 600
+max_result_rows: 5000
+max_result_bytes: 10485760
+artifacts:
+  - name: Linux.Applications.Docker.Info
+  - name: Linux.Applications.Docker.Version
