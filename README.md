@@ -84,6 +84,11 @@ roadmap.
 - [Why this exists](#why-this-exists)
 - [Quick start](#quick-start)
   - [Option A: Docker](#option-a-docker)
+    - [1. Build the image](#1-build-the-image)
+    - [2a. Smoke-test the container in mock mode](#2a-smoke-test-the-container-in-mock-mode)
+    - [2b. Create a real read-only config](#2b-create-a-real-read-only-config)
+    - [3. Run the hardened Docker command](#3-run-the-hardened-docker-command)
+    - [4. Register with Hermes](#4-register-with-hermes)
   - [Option B: Build from source](#option-b-build-from-source)
 - [Configure the Velociraptor connection](#configure-the-velociraptor-connection)
 - [Read-only vs. controlled mode](#read-only-vs-controlled-mode)
@@ -121,49 +126,243 @@ pieces fit together.
 
 ## Quick start
 
-You need a running instance of this server that an MCP client can
-launch — either a container image or a locally built binary. Both are
-configured the same way: a YAML config file (`--config`) plus a
-directory of DFIR profile definitions (`--profiles-dir`).
+You need an MCP client to launch this server. The server itself speaks
+MCP over stdio only: it does **not** listen on a port, and a standalone
+`docker run` waits on stdin until an MCP client talks to it.
+
+The fastest path is Docker in read-only mode:
+
+1. build the image;
+2. create a host config directory;
+3. mount a Velociraptor `api.config.yaml` secret;
+4. register the `docker run ...` command with your MCP client.
+
+If you only want to confirm the container starts, use the mock-mode
+example in [Step 2a](#2a-smoke-test-the-container-in-mock-mode). If you
+want real Velociraptor visibility, continue through
+[Step 2b](#2b-create-a-real-read-only-config).
 
 ### Option A: Docker
+
+#### 1. Build the image
 
 ```sh
 git clone https://github.com/hdyrawan/agentic-velociraptor-mcp.git
 cd agentic-velociraptor-mcp
-docker build -t agentic-velociraptor-mcp:latest .
+docker build -t agentic-velociraptor-mcp:v0.10.4 .
 ```
 
-The image runs as a non-root user, ships no shell, and only ever
-listens on stdio (no port is exposed). It needs a config file mounted
-read-only, and — if `audit.enabled: true` in that config (the default)
-— a writable directory for the audit log:
+For local experiments you can also tag `:latest`, but production and
+pilot deployments should use a version tag or image digest.
+
+#### 2a. Smoke-test the container in mock mode
+
+This verifies Docker and the binary before you wire in a real
+Velociraptor API identity. It does not contact Velociraptor.
+The distroless image runs as non-root UID 65532, so the mounted audit
+directory must be writable by that UID.
 
 ```sh
 mkdir -p ./audit
+sudo chown -R 65532:65532 ./audit
 docker run --rm -i \
+  --read-only \
+  --cap-drop=ALL \
+  --security-opt no-new-privileges \
   -v "$(pwd)/examples/client-configs/config.read-only.example.yaml:/etc/agentic-velociraptor-mcp/config.yaml:ro" \
   -v "$(pwd)/audit:/var/log/agentic-velociraptor-mcp" \
-  agentic-velociraptor-mcp:latest
+  agentic-velociraptor-mcp:v0.10.4
 ```
 
-That example config runs entirely in mock mode (no real Velociraptor
-connection) so it works with zero further setup — useful for confirming
-the container itself is healthy before wiring in a real
-`read_api_config_path`. The process reads/writes stdio and exits on
-EOF; an MCP client is what normally keeps it alive and talks to it (see
-[Connect an MCP client](#connect-an-mcp-client) below). To point it at a
-real Velociraptor server, mount your own `config.yaml` and the
-`api.config.yaml` file(s) it references (see
-[Configure the Velociraptor connection](#configure-the-velociraptor-connection)):
+The process will appear to hang because it is waiting for MCP messages
+on stdin. Press `Ctrl-C` after this smoke test, or use
+[MCP Inspector](examples/inspector/README.md) to call `tools/list` and
+`velo_health_check`.
+
+#### 2b. Create a real read-only config
+
+Create host directories for the MCP config, Velociraptor API secret, and
+audit log:
+
+```sh
+sudo mkdir -p /etc/agentic-velociraptor-mcp/secrets
+sudo mkdir -p /var/log/agentic-velociraptor-mcp
+sudo chown -R 65532:65532 /etc/agentic-velociraptor-mcp /var/log/agentic-velociraptor-mcp
+sudo chmod 700 /etc/agentic-velociraptor-mcp/secrets /var/log/agentic-velociraptor-mcp
+```
+
+Create the Velociraptor API client on the Velociraptor server host. This
+step produces the `api.config.yaml` file that the MCP container mounts
+as its secret. The MCP config never contains the certificate/key content
+itself — it only points at this file.
+
+For a read-only integration, start with a dedicated reader identity:
+
+```sh
+velociraptor --config /path/to/server.config.yaml config api_client \
+  --name agentic-velociraptor-mcp-reader \
+  --role api \
+  /tmp/reader.api.config.yaml
+```
+
+Then grant only the read permissions/role your Velociraptor version uses
+for client search, client metadata, artifact catalog browsing, and
+existing flow/hunt result reads. Depending on your Velociraptor version
+and role model, this may be done in the GUI under server user/API-client
+management, or with the ACL CLI. Example shape:
+
+```sh
+velociraptor --config /path/to/server.config.yaml acl grant \
+  agentic-velociraptor-mcp-reader \
+  --role api,reader
+```
+
+`acl grant` replaces the principal's existing roles unless you pass
+`--merge`, and ACL changes made this way may require a Velociraptor
+server restart. The Velociraptor GUI or `user_grant` VQL function can
+apply user changes at runtime on deployments that support it.
+
+Do **not** use `administrator`, and do not grant `ARTIFACT_WRITER`,
+`SERVER_ARTIFACT_WRITER`, `EXECVE`, `FILESYSTEM_WRITE`, or
+`SERVER_ADMIN`. See
+[docs/velociraptor-permissions.md](docs/velociraptor-permissions.md) for
+the least-privilege guidance and version-specific caveats.
+
+Copy the generated API config to the MCP host/container secret path:
+
+```sh
+sudo cp /tmp/reader.api.config.yaml \
+  /etc/agentic-velociraptor-mcp/secrets/reader.api.config.yaml
+```
+
+Lock it down. The server enforces strict permissions on POSIX systems:
+
+```sh
+sudo chown 65532:65532 /etc/agentic-velociraptor-mcp/secrets/reader.api.config.yaml
+sudo chmod 600 /etc/agentic-velociraptor-mcp/secrets/reader.api.config.yaml
+```
+
+Create `/etc/agentic-velociraptor-mcp/config.yaml`:
+
+```yaml
+server:
+  name: agentic-velociraptor-mcp
+  transport: stdio
+
+velociraptor:
+  org_id: root
+  read_api_config_path: /etc/agentic-velociraptor-mcp/secrets/reader.api.config.yaml
+  write_api_config_path: ""
+  timeout_seconds: 30
+  max_rows: 500
+  max_result_bytes: 1048576
+  max_upload_bytes: 52428800
+  download_dir: ""
+
+policy:
+  mode: read_only
+  allow_raw_vql: false
+  allow_list_all_artifacts: false
+  allow_target_all: false
+  max_hunt_clients: 25
+  require_approval_for:
+    - collect_artifact
+    - collect_dfir_profile
+    - start_hunt
+    - start_dfir_hunt
+    - cancel_flow
+    - cancel_hunt
+    - download_flow_upload
+    - hunt_ioc
+  allowed_artifacts:
+    - Generic.Client.Info
+    - Generic.Detection.HashHunter
+    - Windows.System.Pslist
+    - Windows.Network.Netstat
+    - Linux.Sys.Pslist
+    - Linux.Network.Netstat
+  allowed_profiles:
+    - windows_basic_triage
+    - linux_basic_triage
+    - cross_platform_identity
+    - cross_platform_ioc_context
+    - cross_platform_local_hashes
+
+audit:
+  enabled: true
+  path: /var/log/agentic-velociraptor-mcp/audit.jsonl
+  max_size_bytes: 104857600
+  max_files: 10
+  redact_fields:
+    - client_private_key
+    - client_cert
+    - ca_certificate
+    - api_key
+    - approval_token
+    - password
+    - secret
+
+approval:
+  store_path: ""
+  ttl_seconds: 900
+```
+
+Then set safe ownership:
+
+```sh
+sudo chown 65532:65532 /etc/agentic-velociraptor-mcp/config.yaml
+sudo chmod 644 /etc/agentic-velociraptor-mcp/config.yaml
+```
+
+This read-only posture can list clients, inspect metadata, list existing
+flows/hunts, and plan triage. It cannot collect artifacts, start hunts,
+cancel flows/hunts, or download evidence.
+
+#### 3. Run the hardened Docker command
+
+This is the command your MCP client should launch:
 
 ```sh
 docker run --rm -i \
+  --read-only \
+  --cap-drop=ALL \
+  --security-opt no-new-privileges \
   -v "/etc/agentic-velociraptor-mcp/config.yaml:/etc/agentic-velociraptor-mcp/config.yaml:ro" \
   -v "/etc/agentic-velociraptor-mcp/secrets:/etc/agentic-velociraptor-mcp/secrets:ro" \
   -v "/var/log/agentic-velociraptor-mcp:/var/log/agentic-velociraptor-mcp" \
-  agentic-velociraptor-mcp:latest
+  agentic-velociraptor-mcp:v0.10.4
 ```
+
+Again, running this directly waits on stdin. Register it with an MCP
+client, then call `velo_health_check`; a real deployment should report
+`mode: "real"` and a healthy Velociraptor connection.
+
+#### 4. Register with Hermes
+
+Hermes can register the Docker command directly:
+
+```sh
+hermes mcp add velociraptor \
+  --command docker \
+  --args run --rm -i \
+    --read-only \
+    --cap-drop=ALL \
+    --security-opt no-new-privileges \
+    -v /etc/agentic-velociraptor-mcp/config.yaml:/etc/agentic-velociraptor-mcp/config.yaml:ro \
+    -v /etc/agentic-velociraptor-mcp/secrets:/etc/agentic-velociraptor-mcp/secrets:ro \
+    -v /var/log/agentic-velociraptor-mcp:/var/log/agentic-velociraptor-mcp \
+    agentic-velociraptor-mcp:v0.10.4
+```
+
+Check the registration:
+
+```sh
+hermes mcp list
+hermes mcp test velociraptor
+```
+
+If Hermes is already running, reload or restart the session so the MCP
+tool list is refreshed.
 
 ### Option B: Build from source
 
@@ -297,9 +496,13 @@ Edit the config file at:
       "command": "docker",
       "args": [
         "run", "--rm", "-i",
+        "--read-only",
+        "--cap-drop=ALL",
+        "--security-opt", "no-new-privileges",
         "-v", "/etc/agentic-velociraptor-mcp/config.yaml:/etc/agentic-velociraptor-mcp/config.yaml:ro",
+        "-v", "/etc/agentic-velociraptor-mcp/secrets:/etc/agentic-velociraptor-mcp/secrets:ro",
         "-v", "/var/log/agentic-velociraptor-mcp:/var/log/agentic-velociraptor-mcp",
-        "agentic-velociraptor-mcp:latest"
+        "agentic-velociraptor-mcp:v0.10.4"
       ]
     }
   }
@@ -327,15 +530,28 @@ session.
 
 ### Hermes
 
-Most MCP-compatible agent hosts, including Hermes, use the same
-`mcpServers` JSON shape as Claude Desktop above (a `command` plus
-`args` array for a stdio server). Add an entry named `velociraptor`
-pointing at either the local binary or the Docker invocation shown
-above in whichever config file your Hermes installation reads MCP
-server definitions from. Consult Hermes's own documentation for that
-file's exact location — this project doesn't assume a specific path
-since that detail is client-specific and outside this repository's
-control.
+Hermes can register the same stdio server from the CLI. For the Docker
+quick start above:
+
+```sh
+hermes mcp add velociraptor \
+  --command docker \
+  --args run --rm -i \
+    --read-only \
+    --cap-drop=ALL \
+    --security-opt no-new-privileges \
+    -v /etc/agentic-velociraptor-mcp/config.yaml:/etc/agentic-velociraptor-mcp/config.yaml:ro \
+    -v /etc/agentic-velociraptor-mcp/secrets:/etc/agentic-velociraptor-mcp/secrets:ro \
+    -v /var/log/agentic-velociraptor-mcp:/var/log/agentic-velociraptor-mcp \
+    agentic-velociraptor-mcp:v0.10.4
+
+hermes mcp list
+hermes mcp test velociraptor
+```
+
+`--args` must be the last Hermes option; everything after it is passed
+to Docker. If Hermes is already running, reload MCP tools or restart the
+session after changing server definitions.
 
 ### OpenCode
 
