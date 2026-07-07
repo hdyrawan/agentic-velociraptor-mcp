@@ -23,6 +23,18 @@ func TestRunVersion(t *testing.T) {
 	}
 }
 
+// TestDefaultVersionMatchesRelease pins the compiled-in default version
+// to the released version, so it must be bumped in the same change as a
+// release. This exists because the default sat at "0.10.1-dev" through
+// three releases (v0.10.2–v0.10.4) before v1.0.0 caught it — silent
+// version drift in `--version` output must not recur.
+func TestDefaultVersionMatchesRelease(t *testing.T) {
+	const released = "1.0.0"
+	if version != released {
+		t.Fatalf("default version = %q, want %q — bump main.version (and this test) as part of the release change", version, released)
+	}
+}
+
 func TestRunNoConfigShowsUsage(t *testing.T) {
 	var buf bytes.Buffer
 	code := run(nil, &buf)

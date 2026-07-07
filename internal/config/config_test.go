@@ -13,6 +13,43 @@ func TestDefaultPassesValidate(t *testing.T) {
 	}
 }
 
+// TestDefaultIsReadOnlyFailClosed pins the v1.0.0 production posture of
+// the default configuration: read-only, stdio-only, auditing on, and
+// every write-enabling switch off — so a deployment that changes
+// nothing gets the safe posture, and this posture cannot drift without
+// failing this test.
+func TestDefaultIsReadOnlyFailClosed(t *testing.T) {
+	cfg := Default()
+
+	if cfg.Server.Transport != "stdio" {
+		t.Errorf("Server.Transport = %q, want stdio", cfg.Server.Transport)
+	}
+	if cfg.Policy.Mode != PolicyModeReadOnly {
+		t.Errorf("Policy.Mode = %q, want %q", cfg.Policy.Mode, PolicyModeReadOnly)
+	}
+	if cfg.Policy.AllowRawVQL {
+		t.Error("Policy.AllowRawVQL = true, want false")
+	}
+	if cfg.Policy.AllowTargetAll {
+		t.Error("Policy.AllowTargetAll = true, want false")
+	}
+	if cfg.Policy.AllowListAllArtifacts {
+		t.Error("Policy.AllowListAllArtifacts = true, want false")
+	}
+	if cfg.Approval.StorePath != "" {
+		t.Errorf("Approval.StorePath = %q, want empty (write pilot disabled by default)", cfg.Approval.StorePath)
+	}
+	if cfg.Velociraptor.WriteAPIConfigPath != "" {
+		t.Errorf("Velociraptor.WriteAPIConfigPath = %q, want empty by default", cfg.Velociraptor.WriteAPIConfigPath)
+	}
+	if cfg.Velociraptor.DownloadDir != "" {
+		t.Errorf("Velociraptor.DownloadDir = %q, want empty (evidence download disabled by default)", cfg.Velociraptor.DownloadDir)
+	}
+	if !cfg.Audit.Enabled {
+		t.Error("Audit.Enabled = false, want true")
+	}
+}
+
 func TestValidateAllowsEmptyReadAPIConfigPath(t *testing.T) {
 	// As of v0.1.0-alpha.2, an empty read_api_config_path is a valid,
 	// supported configuration: it means velo_health_check runs in mock
