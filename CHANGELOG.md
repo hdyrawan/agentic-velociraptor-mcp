@@ -7,6 +7,42 @@ releases begin.
 
 ## [Unreleased]
 
+### Fixed — v0.10.2 live-lab validation
+
+Validation-only milestone: still exactly 28 tools, no raw VQL/generic
+query, no new write path, no weakened approval/policy/audit control. Ran
+the full build against a disposable Docker-based Velociraptor 0.76.3 lab
+(one server, one disposable Linux client, least-privilege role-based API
+identities) driven over a real stdio subprocess via MCP Inspector. See
+[docs/live-validation-report-v0.10.2.md](docs/live-validation-report-v0.10.2.md)
+for full detail.
+
+- **Fixed**: `velo_compare_dfir_profiles`'s `common_artifacts` output
+  duplicated an artifact once per profile that contained it instead of
+  listing it once (`internal/mcpserver/tools_workflow.go`). New
+  regression test `TestCompareDFIRProfilesCommonArtifactsHasNoDuplicates`.
+- **First live confirmation of the collection and hunt RPC groups**:
+  real `CollectArtifact`, `GetFlowDetails`, `GetTable`, `CreateHunt`,
+  `EstimateHunt`, `CancelHunt`, and `ListHunts` all confirmed working
+  end-to-end against a real server, including a hunt that was created,
+  scheduled a real client, and produced a real hunt-driven flow.
+- **Found, documented, not fixed**: `velo_get_flow_results`/
+  `velo_get_hunt_results` silently report `empty` for artifacts with a
+  named (non-default) Velociraptor source — notably `Generic.Client.Info`
+  — because `GetTable` needs a source-qualified artifact name this
+  project doesn't yet track. Requires a proto/schema change, out of scope
+  for this validation-only pass.
+- **Found, documented, not fixed**: the IOC-hunt artifact mapping
+  (`System.Hash.Hunt`/`System.IP.Hunt`/`System.Domain.Hunt`/
+  `System.Process.Hunt`/`System.Path.Hunt`) is confirmed **not to exist**
+  in any real Velociraptor catalog (previously only "illustrative/
+  unverified") — `velo_hunt_ioc_with_approval` cannot succeed against a
+  real server until `internal/vql.Bind`'s template mapping is corrected.
+- Every approval-gated tool's one-shot consumption, fingerprint matching,
+  and the explicit-`client_ids` hunt-scope pre-consume gate (all three
+  affected tools) were reconfirmed live, including approval-preserved-
+  on-refusal.
+
 ### Fixed — v0.10.1 stabilization: docs/version drift, hunt-scope approval gate, CI
 
 Stabilizes the current codebase (post-v0.10.0) as v0.10.1: no new/removed
