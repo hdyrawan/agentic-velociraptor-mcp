@@ -47,7 +47,10 @@ type HuntScopePreview struct {
 type HuntReader interface {
 	ListHunts(ctx context.Context, limit int) ([]HuntSummary, error)
 	GetHuntStatus(ctx context.Context, huntID string) (HuntSummary, error)
-	GetHuntResults(ctx context.Context, huntID string, maxRows int, maxBytes int64) (FlowResultPage, error)
+	// GetHuntResults returns one page of the hunt's results for its
+	// artifact. source is optional; see FlowReader.GetFlowResults's doc
+	// comment — the same named-source disambiguation applies here.
+	GetHuntResults(ctx context.Context, huntID, source string, maxRows int, maxBytes int64) (FlowResultPage, error)
 
 	// PreviewHuntScope resolves a scope (see validation.HuntScope)
 	// against the current client population without starting anything.
@@ -62,7 +65,7 @@ func (placeholderClient) GetHuntStatus(ctx context.Context, huntID string) (Hunt
 	return HuntSummary{}, ErrNotImplemented
 }
 
-func (placeholderClient) GetHuntResults(ctx context.Context, huntID string, maxRows int, maxBytes int64) (FlowResultPage, error) {
+func (placeholderClient) GetHuntResults(ctx context.Context, huntID, source string, maxRows int, maxBytes int64) (FlowResultPage, error) {
 	return FlowResultPage{}, ErrNotImplemented
 }
 

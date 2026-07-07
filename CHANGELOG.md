@@ -7,6 +7,50 @@ releases begin.
 
 ## [Unreleased]
 
+### Fixed — v0.10.3: v0.10.2's 2 live-found correctness bugs
+
+No new/removed MCP tool (still exactly 28), no raw VQL/generic query, no
+new write path, no weakened approval/policy/audit control. Fixes both
+bugs v0.10.2's live-lab validation found and left documented-but-unfixed.
+
+- **Named-source result retrieval**
+  (`internal/velociraptor/grpcclient_flows.go`,
+  `grpcclient_hunts.go`, `grpcclient.go`). `velo_get_flow_results`/
+  `velo_get_hunt_results` gained an optional `source` input. A new
+  `resolveArtifactSourceNames` (via the existing `GetArtifacts` RPC) and
+  `resolveResultArtifact` helper auto-select a single named source
+  transparently, request disambiguation (`status: "source_required"`
+  plus a real `available_sources` list) for artifacts with more than
+  one, and validate an explicit `source` against the artifact's real
+  declared names (`ErrUnknownResultSource` for an invalid one).
+  `veloapi.Artifact` gained a `sources` field (`ArtifactSource{Name}`
+  only — never a query body — at upstream's real field number 4).
+  New `response.StatusSourceRequired`. Backwards-compatible: no behavior
+  change for artifacts with a single unnamed source.
+- **IOC hunt artifact mapping** (`internal/vql/render.go`,
+  `templates.go`). `Bind` no longer maps any IOC kind to an invented
+  artifact name. `kind: "hash"` resolves to `Generic.Detection.HashHunter`
+  — confirmed present in a real Velociraptor 0.76.3 catalog and
+  confirmed working via a real `CreateHunt` call in this pass's
+  verification lab — with the indicator bound to whichever of
+  `MD5List`/`SHA1List`/`SHA256List` matches the hash's own algorithm
+  (`validation.Hash`). `ip`/`domain`/`process`/`path` now return the new
+  `ErrTemplateUnsupported` ("unsupported until curated IOC artifacts are
+  installed") from `BuildHuntIOCApprovalRequest`, before any approval
+  lookup/consumption — an approval for an unsupported kind cannot even
+  be created via the `approve` CLI, and a call against an existing
+  approval for one leaves it fully unconsumed, audited `blocked`.
+- Regression tests added at every layer: `internal/vql` (hash-algorithm
+  parameter selection, unsupported-kind failure), `internal/velociraptor`
+  (fixture-based named-source resolution and `GetTable`/`GetHuntResults`
+  source-qualification, both via fake gRPC service stubs), and
+  `internal/mcpserver` (tool-level `source_required`/explicit-`source`/
+  malformed-`source` behavior, unsupported-IOC-kind pre-approval-lookup
+  behavior).
+- Full `go test ./...`/`go vet ./...`/`go build -buildvcs=false ./...`
+  pass; the fixed hash-hunt mapping was also verified live against a
+  disposable Velociraptor 0.76.3 server (real `CreateHunt` succeeded).
+
 ### Fixed — v0.10.2 live-lab validation
 
 Validation-only milestone: still exactly 28 tools, no raw VQL/generic

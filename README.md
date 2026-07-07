@@ -7,7 +7,7 @@ collection flows/results, reviewed DFIR investigation profiles, a
 controlled, approval-gated single-client collection pilot, hunt
 management, and a fixed-template IOC hunting helper.
 
-**Status: v0.10.2**, 28 callable MCP tools: 14 read-only (visibility,
+**Status: v0.10.3**, 28 callable MCP tools: 14 read-only (visibility,
 DFIR profiles, workflow helpers, flows/results), plus 6 approval-gated
 write tools implementing a controlled single-client collection pilot
 (collect artifact/profile, cancel flow, list/get/download flow uploads),
@@ -36,12 +36,20 @@ than burning it on a call that can't succeed. **Live-lab validation of
 the write-capable paths (collection, hunts) against a real Velociraptor
 server was performed in v0.10.2** — see
 [docs/live-validation-report-v0.10.2.md](docs/live-validation-report-v0.10.2.md)
-for the full pass/fail detail. Two real gaps remain confirmed and
-unfixed: `velo_get_flow_results`/`velo_get_hunt_results` cannot retrieve
-rows for named-source artifacts (notably `Generic.Client.Info`), and
-`velo_hunt_ioc_with_approval`'s artifact mapping does not exist in any
-real Velociraptor catalog. Uploads/downloads and Windows-client/label-
-scoped-hunt paths remain unvalidated live — see
+for the full pass/fail detail. It found two real correctness bugs,
+**both fixed in v0.10.3**: `velo_get_flow_results`/`velo_get_hunt_results`
+now correctly handle named-source artifacts (notably
+`Generic.Client.Info`) via an optional `source` input and a
+`status: "source_required"` response when disambiguation is needed
+instead of silently reporting empty; `velo_hunt_ioc_with_approval`'s
+`kind: "hash"` now resolves to a real, catalog-verified artifact
+(`Generic.Detection.HashHunter`, confirmed via a real `CreateHunt` call),
+while `ip`/`domain`/`process`/`path` fail closed with a clear
+unsupported-kind error before any approval is consumed rather than an
+invented artifact name — see
+[docs/tool-reference.md](docs/tool-reference.md) for the full behavior.
+Uploads/downloads and Windows-client/label-scoped-hunt paths remain
+unvalidated live — see
 [docs/lab-validation-plan.md](docs/lab-validation-plan.md). Do not point
 this at a production Velociraptor deployment until that validation is
 complete. See [PROJECT_STATE.md](PROJECT_STATE.md) for the current

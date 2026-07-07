@@ -132,7 +132,13 @@ through the exact same validation and fixed-template binding path
 `vql.Bind`) that `velo_hunt_ioc_with_approval` fingerprints at
 execution time, so the stored artifact and bound parameter are
 byte-for-byte what the handler will verify — an operator can never
-approve an artifact/parameter combination the tool wouldn't produce:
+approve an artifact/parameter combination the tool wouldn't produce.
+**As of v0.10.3, only `--ioc-kind hash` resolves to a real artifact**
+(`Generic.Detection.HashHunter`); `ip`/`domain`/`process`/`path` fail
+with a clear "unsupported until curated IOC artifacts are installed"
+error before this command creates anything — see
+[docs/tool-reference.md](tool-reference.md)'s "IOC kind support status"
+section:
 
 ```sh
 agentic-velociraptor-mcp approve \

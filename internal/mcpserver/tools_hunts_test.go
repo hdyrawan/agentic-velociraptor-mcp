@@ -26,7 +26,7 @@ type fakeHuntClient struct {
 	startHunt        func(ctx context.Context, req velociraptor.HuntRequest) (velociraptor.HuntSummary, error)
 	listHunts        func(ctx context.Context, limit int) ([]velociraptor.HuntSummary, error)
 	getHuntStatus    func(ctx context.Context, huntID string) (velociraptor.HuntSummary, error)
-	getHuntResults   func(ctx context.Context, huntID string, maxRows int, maxBytes int64) (velociraptor.FlowResultPage, error)
+	getHuntResults   func(ctx context.Context, huntID, source string, maxRows int, maxBytes int64) (velociraptor.FlowResultPage, error)
 	cancelHunt       func(ctx context.Context, huntID string) error
 }
 
@@ -46,8 +46,8 @@ func (f *fakeHuntClient) GetHuntStatus(ctx context.Context, huntID string) (velo
 	return f.getHuntStatus(ctx, huntID)
 }
 
-func (f *fakeHuntClient) GetHuntResults(ctx context.Context, huntID string, maxRows int, maxBytes int64) (velociraptor.FlowResultPage, error) {
-	return f.getHuntResults(ctx, huntID, maxRows, maxBytes)
+func (f *fakeHuntClient) GetHuntResults(ctx context.Context, huntID, source string, maxRows int, maxBytes int64) (velociraptor.FlowResultPage, error) {
+	return f.getHuntResults(ctx, huntID, source, maxRows, maxBytes)
 }
 
 func (f *fakeHuntClient) CancelHunt(ctx context.Context, huntID string) error {
@@ -781,7 +781,7 @@ func TestGetHuntResultsSuccessReal(t *testing.T) {
 	deps.VelociraptorReadMode = VelociraptorModeReal
 	deps.ReadClient = &fakeHuntClient{
 		Client: velociraptor.NewClient(),
-		getHuntResults: func(_ context.Context, _ string, maxRows int, maxBytes int64) (velociraptor.FlowResultPage, error) {
+		getHuntResults: func(_ context.Context, _, _ string, maxRows int, maxBytes int64) (velociraptor.FlowResultPage, error) {
 			return velociraptor.FlowResultPage{
 				Rows: []map[string]any{
 					{"Hostname": "host1", "OS": "linux"},
@@ -821,7 +821,7 @@ func TestGetHuntResultsEmpty(t *testing.T) {
 	deps.VelociraptorReadMode = VelociraptorModeReal
 	deps.ReadClient = &fakeHuntClient{
 		Client: velociraptor.NewClient(),
-		getHuntResults: func(_ context.Context, _ string, _ int, _ int64) (velociraptor.FlowResultPage, error) {
+		getHuntResults: func(_ context.Context, _, _ string, _ int, _ int64) (velociraptor.FlowResultPage, error) {
 			return velociraptor.FlowResultPage{
 				Rows: []map[string]any{}, TotalRows: 0, ReturnedRows: 0,
 			}, nil
@@ -850,7 +850,7 @@ func TestGetHuntResultsNotFound(t *testing.T) {
 	deps.VelociraptorReadMode = VelociraptorModeReal
 	deps.ReadClient = &fakeHuntClient{
 		Client: velociraptor.NewClient(),
-		getHuntResults: func(_ context.Context, _ string, _ int, _ int64) (velociraptor.FlowResultPage, error) {
+		getHuntResults: func(_ context.Context, _, _ string, _ int, _ int64) (velociraptor.FlowResultPage, error) {
 			return velociraptor.FlowResultPage{}, velociraptor.ErrHuntNotFound
 		},
 	}
@@ -869,12 +869,97 @@ func TestGetHuntResultsNotFound(t *testing.T) {
 	}
 }
 
+// TestGetHuntResultsSourceRequired is the hunt-tool counterpart to
+// TestGetFlowResultsHandlerSourceRequired: a multi-named-source artifact
+// reports "source_required" with the real available_sources rather than
+// silently reporting empty. See docs/live-validation-report-v0.10.2.md
+// finding 2.
+func TestGetHuntResultsSourceRequired(t *testing.T) {
+	deps, sink, _ := testHuntDeps(t)
+	deps.VelociraptorReadMode = VelociraptorModeReal
+	deps.ReadClient = &fakeHuntClient{
+		Client: velociraptor.NewClient(),
+		getHuntResults: func(_ context.Context, _, source string, _ int, _ int64) (velociraptor.FlowResultPage, error) {
+			if source != "" {
+				t.Fatalf("source = %q, want empty", source)
+			}
+			return velociraptor.FlowResultPage{SourceRequired: true, AvailableSources: []string{"BasicInformation", "DetailedInfo", "LinuxInfo"}}, nil
+		},
+	}
+
+	handler := newGetHuntResultsHandler(deps)
+	_, out, err := handler(context.Background(), nil, GetHuntResultsInput{HuntID: "H.1111aaaa2222bbbb"})
+	if err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	if out.Status != response.StatusSourceRequired {
+		t.Errorf("Status = %q, want %q", out.Status, response.StatusSourceRequired)
+	}
+	if len(out.AvailableSources) != 3 {
+		t.Errorf("AvailableSources = %v, want 3 entries", out.AvailableSources)
+	}
+	evt, ok := sink.last()
+	if !ok || evt.Outcome != audit.OutcomeSuccess {
+		t.Errorf("audit event outcome = %q, ok=%v, want success (this is not an error condition)", evt.Outcome, ok)
+	}
+}
+
+// TestGetHuntResultsPassesThroughExplicitSource confirms the optional
+// `source` input reaches the read client unchanged.
+func TestGetHuntResultsPassesThroughExplicitSource(t *testing.T) {
+	deps, _, _ := testHuntDeps(t)
+	deps.VelociraptorReadMode = VelociraptorModeReal
+	var sawSource string
+	deps.ReadClient = &fakeHuntClient{
+		Client: velociraptor.NewClient(),
+		getHuntResults: func(_ context.Context, _, source string, _ int, _ int64) (velociraptor.FlowResultPage, error) {
+			sawSource = source
+			return velociraptor.FlowResultPage{Rows: []map[string]any{{"Hostname": "mcp-lab-linux-01"}}, TotalRows: 1}, nil
+		},
+	}
+
+	handler := newGetHuntResultsHandler(deps)
+	_, out, err := handler(context.Background(), nil, GetHuntResultsInput{HuntID: "H.1111aaaa2222bbbb", Source: "BasicInformation"})
+	if err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	if sawSource != "BasicInformation" {
+		t.Fatalf("source seen by read client = %q, want %q", sawSource, "BasicInformation")
+	}
+	if out.Status != response.StatusSuccess || len(out.Rows) != 1 {
+		t.Fatalf("out = %+v", out)
+	}
+}
+
+// TestGetHuntResultsRejectsMalformedSource confirms a syntactically
+// invalid source is blocked before any Velociraptor call.
+func TestGetHuntResultsRejectsMalformedSource(t *testing.T) {
+	deps, sink, _ := testHuntDeps(t)
+	deps.VelociraptorReadMode = VelociraptorModeReal
+	deps.ReadClient = &fakeHuntClient{
+		Client: velociraptor.NewClient(),
+		getHuntResults: func(_ context.Context, _, _ string, _ int, _ int64) (velociraptor.FlowResultPage, error) {
+			t.Fatal("read client should not be called for a malformed source")
+			return velociraptor.FlowResultPage{}, nil
+		},
+	}
+
+	handler := newGetHuntResultsHandler(deps)
+	_, _, err := handler(context.Background(), nil, GetHuntResultsInput{HuntID: "H.1111aaaa2222bbbb", Source: "not/a/valid/source"})
+	if err == nil {
+		t.Fatal("expected error for malformed source, got nil")
+	}
+	if evt, ok := sink.last(); !ok || evt.Outcome != audit.OutcomeBlocked {
+		t.Fatalf("audit event = %+v, ok=%v, want blocked", evt, ok)
+	}
+}
+
 func TestGetHuntResultsBoundLimit(t *testing.T) {
 	deps, _, _ := testHuntDeps(t)
 	deps.VelociraptorReadMode = VelociraptorModeReal
 	deps.ReadClient = &fakeHuntClient{
 		Client: velociraptor.NewClient(),
-		getHuntResults: func(_ context.Context, _ string, maxRows int, maxBytes int64) (velociraptor.FlowResultPage, error) {
+		getHuntResults: func(_ context.Context, _, _ string, maxRows int, maxBytes int64) (velociraptor.FlowResultPage, error) {
 			rows := make([]map[string]any, 50)
 			for i := range rows {
 				rows[i] = map[string]any{"idx": i}
@@ -903,7 +988,7 @@ func TestGetHuntResultsPaginationCursor(t *testing.T) {
 	deps.VelociraptorReadMode = VelociraptorModeReal
 	deps.ReadClient = &fakeHuntClient{
 		Client: velociraptor.NewClient(),
-		getHuntResults: func(_ context.Context, _ string, maxRows int, _ int64) (velociraptor.FlowResultPage, error) {
+		getHuntResults: func(_ context.Context, _, _ string, maxRows int, _ int64) (velociraptor.FlowResultPage, error) {
 			rows := make([]map[string]any, maxRows+20)
 			for i := range rows {
 				rows[i] = map[string]any{"idx": i}

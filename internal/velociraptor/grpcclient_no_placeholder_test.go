@@ -97,7 +97,7 @@ func TestGRPCClientNoMethodReturnsErrNotImplemented(t *testing.T) {
 	checks["ListFlows"] = err
 	_, err = c.GetFlowStatus(ctx, "C.1234abcd5678ef90", "F.1")
 	checks["GetFlowStatus"] = err
-	_, err = c.GetFlowResults(ctx, "C.1234abcd5678ef90", "F.1", 10, 1<<20, "")
+	_, err = c.GetFlowResults(ctx, "C.1234abcd5678ef90", "F.1", "", 10, 1<<20, "")
 	checks["GetFlowResults"] = err
 	_, err = c.CollectArtifact(ctx, CollectionRequest{ClientID: "C.1234abcd5678ef90", Artifact: "Generic.Client.Info"})
 	checks["CollectArtifact"] = err
@@ -113,7 +113,7 @@ func TestGRPCClientNoMethodReturnsErrNotImplemented(t *testing.T) {
 	checks["ListHunts"] = err
 	_, err = c.GetHuntStatus(ctx, "H.1")
 	checks["GetHuntStatus"] = err
-	_, err = c.GetHuntResults(ctx, "H.1", 10, 1<<20)
+	_, err = c.GetHuntResults(ctx, "H.1", "", 10, 1<<20)
 	checks["GetHuntResults"] = err
 	_, err = c.PreviewHuntScope(ctx, HuntScopeRequest{All: true})
 	checks["PreviewHuntScope"] = err

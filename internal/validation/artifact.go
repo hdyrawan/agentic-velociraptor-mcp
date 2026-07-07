@@ -34,3 +34,24 @@ func DFIRProfileName(name string) error {
 	}
 	return nil
 }
+
+// resultSourceNamePattern matches Velociraptor artifact source names
+// such as "BasicInformation" or "DetailedInfo": a single PascalCase
+// identifier segment, no dots (unlike an artifact name) and no "/" —
+// the result-table qualifier this project builds as "Artifact/Source"
+// (see internal/velociraptor/grpcclient.resolveResultArtifact) must
+// never let a caller-supplied source inject an extra path segment.
+var resultSourceNamePattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]*$`)
+
+// ResultSourceName validates the syntactic shape of an optional
+// velo_get_flow_results/velo_get_hunt_results `source` input. It does
+// not check the name against the target artifact's real declared
+// sources — that happens server-side in
+// internal/velociraptor.resolveResultArtifact, which rejects an unknown
+// (but syntactically valid) source with ErrUnknownResultSource.
+func ResultSourceName(name string) error {
+	if !resultSourceNamePattern.MatchString(name) {
+		return fmt.Errorf("validation: invalid result source name %q", name)
+	}
+	return nil
+}

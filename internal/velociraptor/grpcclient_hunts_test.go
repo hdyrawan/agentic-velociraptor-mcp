@@ -141,7 +141,7 @@ func TestGRPCClientGetHuntResultsSuccess(t *testing.T) {
 	}
 	c := &grpcClient{hunts: huntSvc, timeout: time.Second, maxRows: 100}
 
-	page, err := c.GetHuntResults(context.Background(), "H.1", 10, 1<<20)
+	page, err := c.GetHuntResults(context.Background(), "H.1", "", 10, 1<<20)
 	if err != nil {
 		t.Fatalf("GetHuntResults: %v", err)
 	}
@@ -158,9 +158,126 @@ func TestGRPCClientGetHuntResultsNotFound(t *testing.T) {
 	}
 	c := &grpcClient{hunts: huntSvc, timeout: time.Second, maxRows: 100}
 
-	_, err := c.GetHuntResults(context.Background(), "H.NOPE", 10, 1<<20)
+	_, err := c.GetHuntResults(context.Background(), "H.NOPE", "", 10, 1<<20)
 	if !errors.Is(err, ErrHuntNotFound) {
 		t.Errorf("err = %v, want ErrHuntNotFound", err)
+	}
+}
+
+// TestGRPCClientGetHuntResultsNamedSourceRequiresSelection is the hunt
+// counterpart to TestGRPCClientGetFlowResultsNamedSourceRequiresSelection:
+// a hunt collecting a multi-named-source artifact must report
+// SourceRequired instead of silently returning zero rows. See
+// docs/live-validation-report-v0.10.2.md finding 2.
+func TestGRPCClientGetHuntResultsNamedSourceRequiresSelection(t *testing.T) {
+	huntSvc := &fakeHuntService{
+		getHunt: func(ctx context.Context, in *veloapi.GetHuntRequest) (*veloapi.Hunt, error) {
+			return &veloapi.Hunt{HuntId: "H.1", Artifacts: []string{"Generic.Client.Info"}}, nil
+		},
+		getHuntResults: func(ctx context.Context, in *veloapi.GetHuntResultsRequest) (*veloapi.GetTableResponse, error) {
+			t.Fatal("GetHuntResults RPC should not be called when a source must first be selected")
+			return nil, nil
+		},
+	}
+	artifacts := &fakeArtifactCatalog{
+		resp: &veloapi.ArtifactDescriptors{
+			Items: []*veloapi.Artifact{{
+				Name: "Generic.Client.Info",
+				Sources: []*veloapi.ArtifactSource{
+					{Name: "BasicInformation"},
+					{Name: "DetailedInfo"},
+					{Name: "LinuxInfo"},
+				},
+			}},
+		},
+	}
+	c := &grpcClient{hunts: huntSvc, artifacts: artifacts, timeout: time.Second, maxRows: 100}
+
+	page, err := c.GetHuntResults(context.Background(), "H.1", "", 10, 1<<20)
+	if err != nil {
+		t.Fatalf("GetHuntResults: %v", err)
+	}
+	if !page.SourceRequired {
+		t.Fatal("SourceRequired = false, want true for a multi-source artifact with no source selected")
+	}
+	want := []string{"BasicInformation", "DetailedInfo", "LinuxInfo"}
+	if len(page.AvailableSources) != len(want) {
+		t.Fatalf("AvailableSources = %v, want %v", page.AvailableSources, want)
+	}
+}
+
+// TestGRPCClientGetHuntResultsNamedSourceSelected proves the fix: an
+// explicit source produces the source-qualified "Artifact/Source" name
+// the real GetHuntResults RPC expects (confirmed against upstream's
+// vql/server/hunts.HuntResultsPlugin.GetAvailableArtifacts, which builds
+// its own valid-name list the identical way).
+func TestGRPCClientGetHuntResultsNamedSourceSelected(t *testing.T) {
+	huntSvc := &fakeHuntService{
+		getHunt: func(ctx context.Context, in *veloapi.GetHuntRequest) (*veloapi.Hunt, error) {
+			return &veloapi.Hunt{HuntId: "H.1", Artifacts: []string{"Generic.Client.Info"}}, nil
+		},
+		getHuntResults: func(ctx context.Context, in *veloapi.GetHuntResultsRequest) (*veloapi.GetTableResponse, error) {
+			if in.Artifact != "Generic.Client.Info/BasicInformation" {
+				t.Errorf("Artifact = %q, want source-qualified %q", in.Artifact, "Generic.Client.Info/BasicInformation")
+			}
+			return &veloapi.GetTableResponse{
+				Columns:   []string{"Hostname"},
+				Rows:      []*veloapi.Row{jsonRow(t, "mcp-lab-linux-01")},
+				TotalRows: 1,
+			}, nil
+		},
+	}
+	artifacts := &fakeArtifactCatalog{
+		resp: &veloapi.ArtifactDescriptors{
+			Items: []*veloapi.Artifact{{
+				Name: "Generic.Client.Info",
+				Sources: []*veloapi.ArtifactSource{
+					{Name: "BasicInformation"},
+					{Name: "DetailedInfo"},
+				},
+			}},
+		},
+	}
+	c := &grpcClient{hunts: huntSvc, artifacts: artifacts, timeout: time.Second, maxRows: 100}
+
+	page, err := c.GetHuntResults(context.Background(), "H.1", "BasicInformation", 10, 1<<20)
+	if err != nil {
+		t.Fatalf("GetHuntResults: %v", err)
+	}
+	if page.SourceRequired {
+		t.Fatal("SourceRequired = true, want false when an explicit source was given")
+	}
+	if len(page.Rows) != 1 || page.Rows[0]["Hostname"] != "mcp-lab-linux-01" {
+		t.Errorf("Rows = %+v", page.Rows)
+	}
+}
+
+// TestGRPCClientGetHuntResultsUnknownSourceRejected confirms an invalid
+// caller-supplied source is rejected rather than silently querying a
+// nonexistent table.
+func TestGRPCClientGetHuntResultsUnknownSourceRejected(t *testing.T) {
+	huntSvc := &fakeHuntService{
+		getHunt: func(ctx context.Context, in *veloapi.GetHuntRequest) (*veloapi.Hunt, error) {
+			return &veloapi.Hunt{HuntId: "H.1", Artifacts: []string{"Generic.Client.Info"}}, nil
+		},
+		getHuntResults: func(ctx context.Context, in *veloapi.GetHuntResultsRequest) (*veloapi.GetTableResponse, error) {
+			t.Fatal("GetHuntResults RPC should not be called for an unknown source")
+			return nil, nil
+		},
+	}
+	artifacts := &fakeArtifactCatalog{
+		resp: &veloapi.ArtifactDescriptors{
+			Items: []*veloapi.Artifact{{
+				Name:    "Generic.Client.Info",
+				Sources: []*veloapi.ArtifactSource{{Name: "BasicInformation"}},
+			}},
+		},
+	}
+	c := &grpcClient{hunts: huntSvc, artifacts: artifacts, timeout: time.Second, maxRows: 100}
+
+	_, err := c.GetHuntResults(context.Background(), "H.1", "NotARealSource", 10, 1<<20)
+	if !errors.Is(err, ErrUnknownResultSource) {
+		t.Errorf("err = %v, want wrapping ErrUnknownResultSource", err)
 	}
 }
 

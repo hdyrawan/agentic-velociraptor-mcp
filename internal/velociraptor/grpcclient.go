@@ -440,6 +440,102 @@ func (c *grpcClient) GetArtifactDetails(ctx context.Context, name string) (Artif
 	}, nil
 }
 
+// resolveArtifactSourceNames returns the *named* (non-default) result
+// sources a real Velociraptor artifact declares, via the same
+// GetArtifacts RPC GetArtifactDetails uses. Only names are read —
+// veloapi.ArtifactSource has no field for a source's query body (see
+// visibility.proto) — so this can never surface VQL text.
+//
+// A source with no explicit name (the common single-source case, e.g.
+// Linux.Sys.Pslist) is deliberately excluded: Velociraptor's own
+// compiler treats an unnamed source as the artifact's sole, default
+// result table, addressed by the bare artifact name with no "/source"
+// suffix (confirmed against upstream's paths.SplitFullSourceName and
+// vql/server/hunts.HuntResultsPlugin.GetAvailableArtifacts, both of
+// which only append "/"+source.Name when source.Name != ""). Callers
+// use an empty return here to mean "no disambiguation needed."
+//
+// GetFlowResults/GetHuntResults treat a failure from this helper as
+// non-fatal and fall back to the bare artifact name (the pre-v0.10.3
+// behavior) rather than failing the whole results call — source
+// discovery is a best-effort enhancement, not a new hard dependency for
+// every result read.
+func (c *grpcClient) resolveArtifactSourceNames(ctx context.Context, artifact string) ([]string, error) {
+	if c.artifacts == nil {
+		return nil, nil
+	}
+
+	resp, err := c.artifacts.GetArtifacts(ctx, &veloapi.GetArtifactsRequest{
+		Names: []string{artifact},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("velociraptor: resolve artifact sources: %w", sanitizeTLSError(err))
+	}
+
+	items := resp.GetItems()
+	if len(items) == 0 {
+		return nil, nil
+	}
+
+	var names []string
+	for _, s := range items[0].GetSources() {
+		if name := s.GetName(); name != "" {
+			names = append(names, name)
+		}
+	}
+	return names, nil
+}
+
+// resolveResultArtifact combines a bare artifact name with an optional
+// caller-requested source into the single source-qualified string
+// (`Artifact` or `Artifact/Source`) Velociraptor's GetTable and
+// GetHuntResults RPCs expect, per docs/live-validation-report-v0.10.2.md
+// finding 2 and this project's live confirmation of upstream's
+// paths.SplitFullSourceName/HuntResultsPlugin.GetAvailableArtifacts
+// behavior:
+//
+//   - An explicit, non-empty requestedSource is validated against the
+//     artifact's real declared source names (when they could be resolved)
+//     and rejected with ErrUnknownResultSource if it doesn't match one —
+//     never silently substituted or passed through unchecked.
+//   - With no requestedSource and exactly one named source, that source
+//     is selected automatically (transparent, backward-compatible fix for
+//     artifacts like Generic.Client.Info that previously always returned
+//     an empty result).
+//   - With no requestedSource and more than one named source, sourceRequired
+//     is true and the caller must return a StatusSourceRequired response
+//     listing availableSources rather than calling GetTable/GetHuntResults
+//     at all (which would otherwise just silently return zero rows).
+//   - With no named sources at all (the artifact has a single unnamed
+//     default source, or source discovery failed), the bare artifact name
+//     is returned unchanged — identical to pre-v0.10.3 behavior.
+func resolveResultArtifact(artifact, requestedSource string, sources []string) (qualified string, sourceRequired bool, availableSources []string, err error) {
+	if requestedSource != "" {
+		if len(sources) > 0 && !containsString(sources, requestedSource) {
+			return "", false, sources, fmt.Errorf("velociraptor: %w: %q (available: %s)", ErrUnknownResultSource, requestedSource, strings.Join(sources, ", "))
+		}
+		return artifact + "/" + requestedSource, false, nil, nil
+	}
+
+	switch len(sources) {
+	case 0:
+		return artifact, false, nil, nil
+	case 1:
+		return artifact + "/" + sources[0], false, nil, nil
+	default:
+		return "", true, sources, nil
+	}
+}
+
+func containsString(items []string, target string) bool {
+	for _, item := range items {
+		if item == target {
+			return true
+		}
+	}
+	return false
+}
+
 // sanitizeTLSError is a defense-in-depth guard: TLS/x509/gRPC error
 // strings from the standard library and google.golang.org/grpc never
 // legitimately embed PEM key material, but this strips anything

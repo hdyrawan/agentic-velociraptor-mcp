@@ -71,7 +71,7 @@ a later, valid retry instead of burning it. See
 |------|------|-------------|-------------------|-------------|
 | `velo_list_flows` | RO | List flows for a client, bounded by `max_rows` with cursor pagination. | v0.1.0 / v0.5.0 backfill | **yes (mock, or real via `GetClientFlows`)** |
 | `velo_get_flow_status` | RO | State of one flow. `client_id` and `flow_id` are validated before any call. | v0.1.0 / v0.5.0 backfill | **yes (mock, or real via `GetFlowDetails`)** |
-| `velo_get_flow_results` | RO | Result rows for one flow, bounded by `max_rows` and `max_result_bytes`; reports `truncated`, `returned_rows`, `byte_count`, and optional `next_cursor`. | v0.1.0 / v0.5.0 backfill | **yes (mock, or real via `GetTable`)** |
+| `velo_get_flow_results` | RO | Result rows for one flow, bounded by `max_rows` and `max_result_bytes`; reports `truncated`, `returned_rows`, `byte_count`, and optional `next_cursor`. Optional `source` input selects a named Velociraptor result source (see below). | v0.1.0 / v0.5.0 backfill | **yes (mock, or real via `GetTable`)** |
 | `velo_list_flow_uploads` | RO | List uploads attached to a flow via `Deps.ReadClient`; same mock/real convention as the visibility tools. | v0.4.0 | **yes (mock or real)** |
 | `velo_get_flow_upload_metadata` | RO | Size/hash metadata for one upload; `status: "not_found"` via `velociraptor.ErrUploadNotFound` for an unknown upload. | v0.4.0 | **yes (mock or real)** |
 | `velo_download_flow_upload_with_approval` | Approval | Download upload bytes (bounded by `max_upload_bytes`) and write them to a local `velociraptor.download_dir` file; the MCP response never carries raw bytes, only `local_path`/`size_bytes`/`sha256`. Requires `velociraptor.download_dir` configured in addition to the standard write-pilot gate. | v0.4.0 | **yes (mock, or real via `VFSGetBuffer`)** |
@@ -96,6 +96,40 @@ row payload size by `velociraptor.max_result_bytes`. Partial responses
 set `truncated: true` and include `next_cursor` when another page can be
 requested. Audit events include `client_id`, `flow_id`, `row_count`, and
 `byte_count`.
+
+### Named result sources (v0.10.3)
+
+Some Velociraptor artifacts compile to more than one named result
+source — most notably **`Generic.Client.Info`** (`BasicInformation`/
+`DetailedInfo`/`LinuxInfo`), used by nearly every DFIR profile. Real
+Velociraptor's `GetTable`/`GetHuntResults` RPCs need a *source-qualified*
+name (`ArtifactName/SourceName`) to read such an artifact's result table
+— the bare artifact name only ever addresses a table for an artifact
+whose single source has no explicit name (e.g. `Linux.Sys.Pslist`,
+`Windows.System.Pslist`).
+
+Before v0.10.3, `velo_get_flow_results`/`velo_get_hunt_results` always
+queried the bare name, so any multi-source artifact silently returned
+zero rows even though the collection succeeded and real data existed —
+see docs/live-validation-report-v0.10.2.md finding 2. As of v0.10.3:
+
+- **Single-source artifacts are unaffected** — no input change needed;
+  results are retrieved exactly as before.
+- **Single *named*-source artifacts** (a source with an explicit name,
+  but only one such source) have that source selected automatically,
+  transparently fixing the previously-silent-empty case.
+- **Multi-source artifacts with no `source` specified** return
+  `status: "source_required"` with a real `available_sources` array
+  (fetched from Velociraptor's own `GetArtifacts` RPC) instead of an
+  empty result — a normal, actionable structured response, not an error.
+- **An explicit `source` input** (both tools accept an optional
+  `source` string) is validated against the artifact's real declared
+  source names; an unrecognized source is rejected with a clear error
+  rather than silently querying a nonexistent table.
+
+This is backwards-compatible: no existing caller that never set `source`
+and only ever collected single-source artifacts sees any behavior
+change.
 
 ## Collection tools (`tools_collection.go`)
 
@@ -123,7 +157,7 @@ approval — see `internal/mcpserver/server.go`'s `backendOperationReady`.
 | `velo_start_dfir_hunt_with_approval` | Approval | Start a hunt for a DFIR profile's artifacts. Enforces profile allowlist, artifact allowlist, DFIR profile validation. | v0.6.0 | **yes** (mock, or real via `CreateHunt`; explicit `client_ids` unsupported in real mode — see below) |
 | `velo_list_hunts` | RO | List hunts with cursor pagination. | v0.6.0 | **yes** (mock, or real via `ListHunts`) |
 | `velo_get_hunt_status` | RO | State/client count of one hunt. Returns `not_found` for unknown hunt IDs. | v0.6.0 | **yes** (mock, or real via `GetHunt`) |
-| `velo_get_hunt_results` | RO | Result rows for one hunt, bounded by `max_rows`/`max_result_bytes`, with cursor pagination. | v0.6.0 | **yes** (mock, or real via `GetHuntResults`) |
+| `velo_get_hunt_results` | RO | Result rows for one hunt, bounded by `max_rows`/`max_result_bytes`, with cursor pagination. Optional `source` input selects a named Velociraptor result source — same behavior as `velo_get_flow_results`; see "Named result sources" above. | v0.6.0 | **yes** (mock, or real via `GetHuntResults`) |
 | `velo_cancel_hunt_with_approval` | Approval | Stop a running hunt. | v0.6.0 | **yes** (mock, or real via `ModifyHunt`) |
 
 ### Known real-mode limitation: explicit `client_ids` hunt scope
@@ -241,7 +275,7 @@ Example:
 
 | Tool | Kind | Description | Target milestone | Implemented |
 |------|------|-------------|-------------------|-------------|
-| `velo_hunt_ioc_with_approval` | Approval | Hunt for a validated `hash`/`ip`/`domain`/`process`/`path` indicator using a fixed template, across a bounded scope. Enforces `max_hunt_clients`, artifact allowlist (on the template's resolved artifact), scope validation, `target_all` policy. | v0.7.0 | **yes** (approval/safety gates active and fingerprint-checked, template→artifact/parameter mapping is real, starts a real hunt via `CreateHunt` in real mode; explicit `client_ids` unsupported in real mode — see above) |
+| `velo_hunt_ioc_with_approval` | Approval | Hunt for a validated `hash`/`ip`/`domain`/`process`/`path` indicator using a fixed template, across a bounded scope. Enforces `max_hunt_clients`, artifact allowlist (on the template's resolved artifact), scope validation, `target_all` policy. As of v0.10.3, only `kind: "hash"` resolves to a real artifact — see below. | v0.7.0 | **partially** — see "IOC kind support status (v0.10.3)" below |
 
 Input: `case_id`, `reason`, `requester`, `approval_id` (all required, same
 as every other approval-gated tool), `kind` (one of `hash`, `ip`,
@@ -261,6 +295,37 @@ Output embeds `status`/`message` plus `mode`, `hunt_id`, `kind`,
 indicator value/scope, called for another) returns `status: "error"`
 mentioning "does not match" with `status` unchanged by a Go-level error
 (same convention as every other `verifyApproval/consumeApproval`-gated tool).
+
+### IOC kind support status (v0.10.3)
+
+v0.10.2's live-lab validation found that all five pre-v0.10.3 IOC
+artifact mappings (`System.Hash.Hunt`/`System.IP.Hunt`/
+`System.Domain.Hunt`/`System.Process.Hunt`/`System.Path.Hunt`) were
+illustrative placeholders that do not exist in any real Velociraptor
+catalog — a real `CreateHunt` call for any of them failed with
+`Unknown artifact ...` (see docs/live-validation-report-v0.10.2.md
+finding 3). v0.10.3 replaces this with real, catalog-verified coverage
+where one exists, and an honest, pre-approval-consumption failure where
+it doesn't:
+
+| Kind | Status | Detail |
+|------|--------|--------|
+| `hash` | **Supported** | Resolves to `Generic.Detection.HashHunter` (confirmed present in a real Velociraptor 0.76.3 catalog and via a real `CreateHunt` call), with the indicator bound to whichever of its `MD5List`/`SHA1List`/`SHA256List` parameters matches the hash's own algorithm. |
+| `ip` | **Unsupported** | No real, catalog-verified, cross-platform "hunt by IP" artifact was found that fits this project's one-artifact-per-template model. |
+| `domain` | **Unsupported** | Same reasoning as `ip`. |
+| `process` | **Unsupported** | Real process-listing artifacts (`Windows.System.Pslist`, `Linux.Sys.Pslist`, ...) take no process-name filter parameter; binding an indicator to one would silently return every process, not a real hunt for it. |
+| `path` | **Unsupported** | Real per-OS FileFinder artifacts exist and do accept a path/glob parameter, but this project's model has no per-client-OS artifact selection, so a single choice would silently miss every other OS's clients. |
+
+An unsupported kind fails with a clear error — naming that curated
+artifacts are not yet installed for it — from `internal/vql.Bind`
+(`ErrTemplateUnsupported`), called from `BuildHuntIOCApprovalRequest`
+*before* the tool ever looks up or consumes an approval reference. This
+means: an approval created (via the `approve` CLI) for an unsupported
+kind cannot even be constructed — `BuildHuntIOCApprovalRequest` is the
+same path both the CLI and the tool handler use — and an unsupported
+call against an *existing* approval leaves it completely untouched
+(`consumed: false`), auditable as `blocked`, never reaching the artifact
+allowlist or write backend.
 
 ## Explicitly not in the stable core
 

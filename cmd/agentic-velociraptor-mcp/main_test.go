@@ -395,11 +395,11 @@ func TestRunApproveCreatesHuntIOCRequest(t *testing.T) {
 	if status.Request.Operation != approval.OperationHuntIOC {
 		t.Errorf("Operation = %q, want %q", status.Request.Operation, approval.OperationHuntIOC)
 	}
-	if status.Request.Artifact != "System.Hash.Hunt" {
-		t.Errorf("Artifact = %q, want System.Hash.Hunt (resolved from the hash template, not caller-chosen)", status.Request.Artifact)
+	if status.Request.Artifact != "Generic.Detection.HashHunter" {
+		t.Errorf("Artifact = %q, want Generic.Detection.HashHunter (resolved from the hash template, not caller-chosen)", status.Request.Artifact)
 	}
-	if got := status.Request.Parameters["HashValue"]; got != "d41d8cd98f00b204e9800998ecf8427e" {
-		t.Errorf("Parameters[HashValue] = %q, want the approved hash", got)
+	if got := status.Request.Parameters["MD5List"]; got != "d41d8cd98f00b204e9800998ecf8427e" {
+		t.Errorf("Parameters[MD5List] = %q, want the approved hash", got)
 	}
 	if status.Request.Label != "windows" {
 		t.Errorf("Label = %q, want windows", status.Request.Label)

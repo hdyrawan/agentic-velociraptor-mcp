@@ -1,8 +1,48 @@
 # Project state
 
-Last updated: 2026-07-07 (v0.10.2, live-lab validation of the collection/flow/hunt/IOC RPC groups).
+Last updated: 2026-07-07 (v0.10.3, fixes for the 2 live-found correctness bugs from v0.10.2).
 
 ## Current milestone
+
+**v0.10.3 — Fix v0.10.2's 2 live-found correctness bugs.** No new/removed
+MCP tool (still exactly 28), no raw VQL/generic query, no new write
+path, no weakened approval/policy/audit control. See
+[docs/tool-reference.md](docs/tool-reference.md)'s "Named result
+sources" and "IOC kind support status" sections for full behavior.
+
+- **Fixed: named-source result retrieval.** `velo_get_flow_results`/
+  `velo_get_hunt_results` gained an optional `source` input.
+  Single-source artifacts are unaffected; a single *named* source is now
+  auto-selected (fixing `Generic.Client.Info` and similar artifacts
+  transparently); a multi-source artifact with no `source` given returns
+  a new `status: "source_required"` response listing the real
+  `available_sources` (via Velociraptor's own `GetArtifacts` RPC) instead
+  of silently reporting empty. An invalid explicit `source` is rejected
+  with a clear error. `internal/velociraptor/veloapi`'s `Artifact`
+  message gained a `sources` field (names only, matching upstream's real
+  field number 4 — never a query body, so VQL text still cannot reach
+  this project's generated types even by accident).
+- **Fixed: IOC hunt artifact mapping.** `internal/vql.Bind` no longer
+  maps any IOC kind to an invented artifact name. `kind: "hash"` now
+  resolves to `Generic.Detection.HashHunter` — confirmed present in a
+  real Velociraptor 0.76.3 catalog *and* confirmed to actually work via
+  a real `CreateHunt` call in this pass's verification lab — with the
+  indicator bound to whichever of `MD5List`/`SHA1List`/`SHA256List`
+  matches the hash's own algorithm. `ip`/`domain`/`process`/`path` now
+  fail closed with a clear "unsupported until curated IOC artifacts are
+  installed" error (`vql.ErrTemplateUnsupported`), raised from
+  `BuildHuntIOCApprovalRequest` *before* any approval is looked up or
+  consumed — an approval for an unsupported kind cannot even be created
+  via the `approve` CLI (which shares this same path), and a call against
+  an existing approval for one of these kinds leaves it completely
+  untouched (`consumed: false`).
+- Reconfirmed unchanged: 28-tool inventory, no raw VQL/generic query
+  tool, approval fingerprinting/one-shot consumption, the
+  explicit-`client_ids` hunt-scope pre-consume gate, and every policy
+  gate — full `go test ./...` pass plus a live-lab smoke test of the new
+  hash-hunt mapping (real `CreateHunt` succeeded).
+
+## Previous milestone
 
 **v0.10.2 — Live-lab validation.** Validation-only: still exactly 28
 tools, no raw VQL/generic query, no new write path, no weakened approval
@@ -110,7 +150,7 @@ control only — runtime collection is still gated solely by
 `policy.allowed_artifacts`. See docs/dfir-profiles.md and CHANGELOG.md's
 v0.10.0 entry.
 
-## Backend wiring status (as of v0.10.2)
+## Backend wiring status (as of v0.10.3)
 
 Every RPC group used by the 28 tools now has a reviewed typed gRPC
 binding and unit tests against fake gRPC service stubs. Nothing here
@@ -120,21 +160,23 @@ unchanged.
 | Group | Status |
 |---|---|
 | Visibility (`health`, client search/info, artifact list/details) | Real gRPC; live-validated 2026-07-06. |
-| Flow list/status/results | Real gRPC; live-validated 2026-07-07 for list/status and for default-source artifacts; **confirmed gap** for named-source artifacts (e.g. `Generic.Client.Info`) — see docs/live-validation-report-v0.10.2.md finding 2. |
+| Flow list/status/results | Real gRPC; live-validated 2026-07-07 for list/status and default-source artifacts; **named-source gap fixed in v0.10.3** — optional `source` input, auto-selection for single-named-source artifacts, `status: "source_required"` for multi-source artifacts (e.g. `Generic.Client.Info`). |
 | Collection start / DFIR profile collection / flow cancel | Real gRPC; backend capability checked before consuming approval; collection start live-validated 2026-07-07 (real `CollectArtifact`); flow cancel not yet live-validated. |
 | Flow uploads list/metadata/download | Real gRPC; download backend capability checked before consuming approval; list confirmed honest-empty 2026-07-07 (no allowlisted artifact in that pass produced an upload); metadata/download not yet exercised against a real upload. |
-| Hunts list/status/results/preview | Real gRPC; explicit `client_ids` scope refused before consuming approval (no typed RPC support); list/status/preview/all-clients-results live-validated 2026-07-07 end-to-end (real client scheduled and executed); label-scope matching not confirmed (lab-tooling limitation, not a code defect) and same named-source result gap as flow results. |
-| Approved hunt start/cancel and IOC hunt | Real gRPC; same `client_ids` limitation; start (all-clients)/cancel live-validated 2026-07-07; **IOC hunt confirmed non-functional** against a real server — its artifact mapping (`System.Hash.Hunt`/etc.) does not exist in any real catalog. |
+| Hunts list/status/results/preview | Real gRPC; explicit `client_ids` scope refused before consuming approval (no typed RPC support); list/status/preview/all-clients-results live-validated 2026-07-07 end-to-end (real client scheduled and executed); label-scope matching not confirmed (lab-tooling limitation, not a code defect); results gained the same named-source fix as flow results. |
+| Approved hunt start/cancel and IOC hunt | Real gRPC; same `client_ids` limitation; start (all-clients)/cancel live-validated 2026-07-07. **IOC hunt mapping fixed in v0.10.3**: `kind: "hash"` resolves to real, catalog-verified `Generic.Detection.HashHunter` (confirmed via a real `CreateHunt` call); `ip`/`domain`/`process`/`path` fail closed with a clear pre-approval-consumption error rather than an invented artifact name. |
 
 See [docs/live-validation-report-v0.10.2.md](docs/live-validation-report-v0.10.2.md)
-for the full pass/fail detail behind this table.
+for the v0.10.2 pass/fail detail that found these two gaps, and
+[docs/tool-reference.md](docs/tool-reference.md) for the current, fixed
+behavior.
 
-Required follow-up before production: fix the named-source result-retrieval
-gap and the IOC-hunt artifact mapping above, confirm label-based scoping
+Required follow-up before production: confirm label-based scoping
 against a genuinely labeled client, validate against a Windows client and
-a real file-producing upload, and keep `max_rows`, `max_result_bytes`,
-`max_upload_bytes`, `max_hunt_clients`, `target_all`, cursor, audit, and
-no-raw-VQL
+a real file-producing upload, consider curated artifacts for the
+remaining unsupported IOC kinds (`ip`/`domain`/`process`/`path`) if
+needed, and keep `max_rows`, `max_result_bytes`, `max_upload_bytes`,
+`max_hunt_clients`, `target_all`, cursor, audit, and no-raw-VQL
 invariants under test throughout.
 
 ## Previous milestone
@@ -626,27 +668,24 @@ validation and a small number of deliberately out-of-scope items:
 
 ## Immediate next step
 
-The 28-tool stable-core target is complete (PROJECT_PLAN.md), and v0.10.2
-(see "Current milestone" above and
-docs/live-validation-report-v0.10.2.md) live-validated the collection and
-hunt RPC groups end-to-end against a disposable lab. The next steps are:
+The 28-tool stable-core target is complete (PROJECT_PLAN.md). v0.10.2
+live-validated the collection and hunt RPC groups end-to-end against a
+disposable lab and found two correctness bugs; v0.10.3 (this milestone)
+fixed both — see "Current milestone" above,
+docs/live-validation-report-v0.10.2.md (the findings), and
+docs/tool-reference.md (the fixed behavior). The next steps are:
 
-1. **Fix the named-source result-retrieval gap** — `velo_get_flow_results`/
-   `velo_get_hunt_results` cannot currently retrieve rows for
-   `Generic.Client.Info` or any other multi-source artifact (v0.10.2
-   finding 2). Requires adding source-name (not query-body) metadata to
-   `veloapi.Artifact` and threading it through both RPC call sites.
-2. **Replace the IOC-hunt artifact mapping** — `System.Hash.Hunt`/etc.
-   confirmed not to exist in any real Velociraptor catalog (v0.10.2
-   finding 3); `internal/vql.Bind`'s template targets need real,
-   catalog-verified replacements before `velo_hunt_ioc_with_approval` can
-   work against a real server.
-3. Confirm label-based hunt/collection scoping against a client with a
+1. Confirm label-based hunt/collection scoping against a client with a
    verified, persistent label (not demonstrated in v0.10.2 — see its
    "Limitations" section), validate against a Windows client, and
    exercise the upload/download path against a real file-producing
    collection.
-4. The remaining unchecked items in docs/lab-validation-plan.md (Phase
+2. Consider curated, real artifacts for the still-unsupported IOC kinds
+   (`ip`/`domain`/`process`/`path`) if a real workflow needs them —
+   v0.10.3 deliberately left these failing closed rather than forcing a
+   mismatched or OS-ambiguous mapping; see docs/tool-reference.md's "IOC
+   kind support status" section for what was considered and why.
+3. The remaining unchecked items in docs/lab-validation-plan.md (Phase
    5's `velo_cancel_flow_with_approval`; Phase 8's adversarial testing).
 
 Do not point this project at a production Velociraptor deployment until

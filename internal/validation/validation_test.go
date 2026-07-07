@@ -34,6 +34,22 @@ func TestArtifactName(t *testing.T) {
 	}
 }
 
+func TestResultSourceName(t *testing.T) {
+	valid := []string{"BasicInformation", "DetailedInfo", "LinuxInfo", "A"}
+	invalid := []string{"", "Basic Information", "Basic.Information", "Basic/Information", "../etc/passwd", "Basic'Information"}
+
+	for _, n := range valid {
+		if err := ResultSourceName(n); err != nil {
+			t.Errorf("ResultSourceName(%q) = %v, want nil", n, err)
+		}
+	}
+	for _, n := range invalid {
+		if err := ResultSourceName(n); err == nil {
+			t.Errorf("ResultSourceName(%q) = nil, want error", n)
+		}
+	}
+}
+
 func TestHash(t *testing.T) {
 	cases := []struct {
 		in       string

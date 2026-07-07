@@ -11,18 +11,24 @@
 //   - api/proto/clients.proto (SearchClientsRequest,
 //     SearchClientsResponse, GetClientRequest, ApiClient,
 //     AgentInformation, Uname)
-//   - artifacts/proto/artifact.proto (Artifact, ArtifactParameter)
+//   - artifacts/proto/artifact.proto (Artifact, ArtifactParameter,
+//     ArtifactSource)
 //   - api/proto/artifacts.proto (GetArtifactsRequest, ArtifactDescriptors)
 //
 // Each message here is intentionally a narrow subset of its upstream
-// counterpart: only the fields these four tools actually read are
-// declared. Fields are omitted by field number, not renumbered, so the
-// wire format still matches upstream exactly; a server populating a
-// field this project doesn't declare (e.g. Artifact.sources, which
-// carries the artifact's raw VQL body) simply arrives as an ignored
-// unknown field — this project's generated Go types have no field to
-// decode it into, so artifact VQL text can never reach a tool response
-// even by accident. See docs/security-model.md.
+// counterpart: only the fields these tools actually read are declared.
+// Fields are omitted by field number, not renumbered, so the wire
+// format still matches upstream exactly. As of v0.10.3, `Artifact`
+// declares `sources` (field 4) as a minimal `ArtifactSource` carrying
+// only `name` (field 3) — needed to resolve a multi-source artifact's
+// result table (internal/velociraptor/grpcclient_flows.go's
+// GetFlowResults) — but every field carrying an actual VQL query body
+// (`ArtifactSource.query`/`queries`/`precondition`) remains
+// permanently undeclared: a server populating those fields simply
+// arrives as an ignored unknown field — this project's generated Go
+// types have no field to decode them into, so artifact VQL text can
+// never reach a tool response even by accident. See
+// docs/security-model.md.
 //
 // Regenerate with (from the repository root):
 //   buf generate internal/velociraptor/veloapi
@@ -465,23 +471,78 @@ func (x *ArtifactParameter) GetType() string {
 	return ""
 }
 
-// Artifact deliberately omits `sources` (field 4, repeated
-// ArtifactSource) and every other field carrying VQL text, tool
-// definitions, or precondition expressions: this project's artifact
-// catalog tools return name/description/parameter metadata only, never
-// a VQL body. See the file-level comment above.
+// ArtifactSource mirrors upstream's artifacts/proto/artifact.proto
+// ArtifactSource message, declaring only `name` (field 3) — the field
+// this project needs to resolve a named-source artifact's per-source
+// result table (see internal/velociraptor/grpcclient_flows.go's
+// GetFlowResults doc comment). Every other field on the real message
+// (`precondition`, `queries`, `query` — the actual VQL body — and
+// `notebook`) is deliberately omitted so this project's generated Go
+// types have no field to decode VQL text into, even if a real server's
+// response carries it.
+type ArtifactSource struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ArtifactSource) Reset() {
+	*x = ArtifactSource{}
+	mi := &file_visibility_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ArtifactSource) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ArtifactSource) ProtoMessage() {}
+
+func (x *ArtifactSource) ProtoReflect() protoreflect.Message {
+	mi := &file_visibility_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ArtifactSource.ProtoReflect.Descriptor instead.
+func (*ArtifactSource) Descriptor() ([]byte, []int) {
+	return file_visibility_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *ArtifactSource) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+// Artifact declares `sources` (field 4, matching upstream's field
+// number exactly) as `ArtifactSource` — source *names* only, never a
+// query body (see ArtifactSource above). Every other field carrying VQL
+// text, tool definitions, or precondition expressions remains omitted:
+// this project's artifact catalog tools return name/description/
+// parameter/source-name metadata only, never a VQL body.
 type Artifact struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
 	Description   string                 `protobuf:"bytes,2,opt,name=description,proto3" json:"description,omitempty"`
 	Parameters    []*ArtifactParameter   `protobuf:"bytes,3,rep,name=parameters,proto3" json:"parameters,omitempty"`
+	Sources       []*ArtifactSource      `protobuf:"bytes,4,rep,name=sources,proto3" json:"sources,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Artifact) Reset() {
 	*x = Artifact{}
-	mi := &file_visibility_proto_msgTypes[7]
+	mi := &file_visibility_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -493,7 +554,7 @@ func (x *Artifact) String() string {
 func (*Artifact) ProtoMessage() {}
 
 func (x *Artifact) ProtoReflect() protoreflect.Message {
-	mi := &file_visibility_proto_msgTypes[7]
+	mi := &file_visibility_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -506,7 +567,7 @@ func (x *Artifact) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Artifact.ProtoReflect.Descriptor instead.
 func (*Artifact) Descriptor() ([]byte, []int) {
-	return file_visibility_proto_rawDescGZIP(), []int{7}
+	return file_visibility_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *Artifact) GetName() string {
@@ -530,6 +591,13 @@ func (x *Artifact) GetParameters() []*ArtifactParameter {
 	return nil
 }
 
+func (x *Artifact) GetSources() []*ArtifactSource {
+	if x != nil {
+		return x.Sources
+	}
+	return nil
+}
+
 type GetArtifactsRequest struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	SearchTerm      string                 `protobuf:"bytes,3,opt,name=search_term,json=searchTerm,proto3" json:"search_term,omitempty"`
@@ -541,7 +609,7 @@ type GetArtifactsRequest struct {
 
 func (x *GetArtifactsRequest) Reset() {
 	*x = GetArtifactsRequest{}
-	mi := &file_visibility_proto_msgTypes[8]
+	mi := &file_visibility_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -553,7 +621,7 @@ func (x *GetArtifactsRequest) String() string {
 func (*GetArtifactsRequest) ProtoMessage() {}
 
 func (x *GetArtifactsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_visibility_proto_msgTypes[8]
+	mi := &file_visibility_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -566,7 +634,7 @@ func (x *GetArtifactsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetArtifactsRequest.ProtoReflect.Descriptor instead.
 func (*GetArtifactsRequest) Descriptor() ([]byte, []int) {
-	return file_visibility_proto_rawDescGZIP(), []int{8}
+	return file_visibility_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *GetArtifactsRequest) GetSearchTerm() string {
@@ -599,7 +667,7 @@ type ArtifactDescriptors struct {
 
 func (x *ArtifactDescriptors) Reset() {
 	*x = ArtifactDescriptors{}
-	mi := &file_visibility_proto_msgTypes[9]
+	mi := &file_visibility_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -611,7 +679,7 @@ func (x *ArtifactDescriptors) String() string {
 func (*ArtifactDescriptors) ProtoMessage() {}
 
 func (x *ArtifactDescriptors) ProtoReflect() protoreflect.Message {
-	mi := &file_visibility_proto_msgTypes[9]
+	mi := &file_visibility_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -624,7 +692,7 @@ func (x *ArtifactDescriptors) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ArtifactDescriptors.ProtoReflect.Descriptor instead.
 func (*ArtifactDescriptors) Descriptor() ([]byte, []int) {
-	return file_visibility_proto_rawDescGZIP(), []int{9}
+	return file_visibility_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *ArtifactDescriptors) GetItems() []*Artifact {
@@ -666,13 +734,16 @@ const file_visibility_proto_rawDesc = "" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x18\n" +
 	"\adefault\x18\x02 \x01(\tR\adefault\x12 \n" +
 	"\vdescription\x18\x03 \x01(\tR\vdescription\x12\x12\n" +
-	"\x04type\x18\x04 \x01(\tR\x04type\"z\n" +
+	"\x04type\x18\x04 \x01(\tR\x04type\"$\n" +
+	"\x0eArtifactSource\x12\x12\n" +
+	"\x04name\x18\x03 \x01(\tR\x04name\"\xab\x01\n" +
 	"\bArtifact\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12 \n" +
 	"\vdescription\x18\x02 \x01(\tR\vdescription\x128\n" +
 	"\n" +
 	"parameters\x18\x03 \x03(\v2\x18.proto.ArtifactParameterR\n" +
-	"parameters\"x\n" +
+	"parameters\x12/\n" +
+	"\asources\x18\x04 \x03(\v2\x15.proto.ArtifactSourceR\asources\"x\n" +
 	"\x13GetArtifactsRequest\x12\x1f\n" +
 	"\vsearch_term\x18\x03 \x01(\tR\n" +
 	"searchTerm\x12*\n" +
@@ -693,7 +764,7 @@ func file_visibility_proto_rawDescGZIP() []byte {
 	return file_visibility_proto_rawDescData
 }
 
-var file_visibility_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
+var file_visibility_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
 var file_visibility_proto_goTypes = []any{
 	(*SearchClientsRequest)(nil),  // 0: proto.SearchClientsRequest
 	(*SearchClientsResponse)(nil), // 1: proto.SearchClientsResponse
@@ -702,21 +773,23 @@ var file_visibility_proto_goTypes = []any{
 	(*Uname)(nil),                 // 4: proto.Uname
 	(*ApiClient)(nil),             // 5: proto.ApiClient
 	(*ArtifactParameter)(nil),     // 6: proto.ArtifactParameter
-	(*Artifact)(nil),              // 7: proto.Artifact
-	(*GetArtifactsRequest)(nil),   // 8: proto.GetArtifactsRequest
-	(*ArtifactDescriptors)(nil),   // 9: proto.ArtifactDescriptors
+	(*ArtifactSource)(nil),        // 7: proto.ArtifactSource
+	(*Artifact)(nil),              // 8: proto.Artifact
+	(*GetArtifactsRequest)(nil),   // 9: proto.GetArtifactsRequest
+	(*ArtifactDescriptors)(nil),   // 10: proto.ArtifactDescriptors
 }
 var file_visibility_proto_depIdxs = []int32{
 	5, // 0: proto.SearchClientsResponse.items:type_name -> proto.ApiClient
 	3, // 1: proto.ApiClient.agent_information:type_name -> proto.AgentInformation
 	4, // 2: proto.ApiClient.os_info:type_name -> proto.Uname
 	6, // 3: proto.Artifact.parameters:type_name -> proto.ArtifactParameter
-	7, // 4: proto.ArtifactDescriptors.items:type_name -> proto.Artifact
-	5, // [5:5] is the sub-list for method output_type
-	5, // [5:5] is the sub-list for method input_type
-	5, // [5:5] is the sub-list for extension type_name
-	5, // [5:5] is the sub-list for extension extendee
-	0, // [0:5] is the sub-list for field type_name
+	7, // 4: proto.Artifact.sources:type_name -> proto.ArtifactSource
+	8, // 5: proto.ArtifactDescriptors.items:type_name -> proto.Artifact
+	6, // [6:6] is the sub-list for method output_type
+	6, // [6:6] is the sub-list for method input_type
+	6, // [6:6] is the sub-list for extension type_name
+	6, // [6:6] is the sub-list for extension extendee
+	0, // [0:6] is the sub-list for field type_name
 }
 
 func init() { file_visibility_proto_init() }
@@ -730,7 +803,7 @@ func file_visibility_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_visibility_proto_rawDesc), len(file_visibility_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   10,
+			NumMessages:   11,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
