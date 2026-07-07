@@ -204,16 +204,11 @@ remains legal; it is not fingerprinted).
 ## Known limitations (v0.4.0/v0.6.0/v0.7.0)
 
 - **Single-analyst pilot, not a multi-writer system.** `FileStore`
-  re-reads and rewrites the whole file on every call under an in-process
-  mutex; it does not use OS-level file locking, so two operators (or the
-  `approve` CLI and the MCP server) writing at the exact same instant
-  could in principle race. Acceptable for a controlled pilot; revisit
-  before wider rollout.
-- **No RPC wiring yet.** Even a fully-approved, fully-verified request
-  currently fails at the last step (`velociraptor.ErrNotImplemented`)
-  against a real (non-mock) write client, since the hand-authored
-  `veloapi` proto mirror doesn't wire real `CollectArtifact`/
-  `CancelFlow`/upload/hunt RPCs yet. See PROJECT_PLAN.md's v0.8.0 entry.
+  re-reads and rewrites the whole file on every call, guarded by an
+  in-process mutex plus an OS-level `flock` for cross-process safety
+  (added post-v0.8.0; see CHANGELOG). That protects correctness, not
+  throughput — don't script concurrent bulk approvals; the posture is
+  one human operator.
 - **No revocation.** A pending, undecided request cannot currently be
   withdrawn by the requester; it simply expires via `ttl_seconds` if
   never decided.
@@ -239,17 +234,18 @@ remains legal; it is not fingerprinted).
   different targets — see "Fingerprinting" and `Store.Consume` above.
 
 
-## v0.8.0 backend wiring status
+## Current backend wiring status
 
-v0.8.0 is a backend-wiring review milestone that preserves the v0.7.0 28-tool MCP inventory. The hand-authored `internal/velociraptor/veloapi` mirror currently exposes only `Check`, `ListClients`, `GetClient`, and `GetArtifacts`; it does not include reviewed typed RPC bindings for flow enumeration/results, collection execution, flow cancel, uploads, hunt execution/cancel, hunt results, or IOC hunt execution. Implementing those by exposing a generic VQL query path would violate the stable-core raw-VQL rule, so they remain scaffolded with structured errors.
+Every RPC group behind the 28 tools has a reviewed, typed gRPC binding
+and was live-validated in v0.10.2 (with the two found bugs fixed in
+v0.10.3); see the table in
+[PROJECT_STATE.md](../PROJECT_STATE.md#backend-wiring-status-as-of-v0103)
+— that table is the single source of truth; this document's earlier
+copy of the v0.8.0 "scaffolded" status is superseded.
 
-| Group | v0.8.0 status |
-|---|---|
-| Visibility (`health`, client search/info, artifact list/details) | Real gRPC already implemented and unchanged. |
-| Flow list/status/results | Handler contracts, validation, limits, pagination, audit unchanged; real gRPC remains scaffolded (`backend_not_implemented`/`error`, no panic). |
-| Collection start / DFIR profile collection / flow cancel | Approval/policy/input/allowlist gates unchanged; backend capability is now checked before consuming approval; real gRPC remains scaffolded. |
-| Flow uploads list/metadata/download | Read handlers and download file controls unchanged; download backend capability is now checked before consuming approval; real gRPC upload RPCs remain scaffolded. |
-| Hunts list/status/results/preview | Handler contracts, limits, target_all/max-client policy unchanged; real gRPC remains scaffolded. |
-| Approved hunt start/cancel and IOC hunt | Approval fingerprint/scope/template gates unchanged; backend capability is now checked before consuming approval; real gRPC hunt RPCs remain scaffolded. |
+## Day-to-day operation
 
-Live-lab validation remains pending for every scaffolded operation above. Required follow-up: add reviewed typed protobuf bindings for the specific Velociraptor RPCs, prove least-privilege read/write API permissions in a disposable lab, and keep `max_rows`, `max_result_bytes`, `max_upload_bytes`, `max_hunt_clients`, `target_all`, cursor, audit, and no-raw-VQL invariants under test.
+The operational procedure built on this workflow — creating approvals,
+store hygiene, audit review, and what to do when the audit sink blocks
+writes — lives in
+[runbooks/approval-and-audit.md](runbooks/approval-and-audit.md).

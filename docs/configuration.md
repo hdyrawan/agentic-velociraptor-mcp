@@ -201,17 +201,23 @@ entirely (exit code 1, no stdio transport ever started) rather than
 falling back to mock mode — see docs/lab-validation-plan.md's Phase 0.
 
 
-## v0.8.0 backend wiring status
+## Shipped example configs
 
-v0.8.0 is a backend-wiring review milestone that preserves the v0.7.0 28-tool MCP inventory. The hand-authored `internal/velociraptor/veloapi` mirror currently exposes only `Check`, `ListClients`, `GetClient`, and `GetArtifacts`; it does not include reviewed typed RPC bindings for flow enumeration/results, collection execution, flow cancel, uploads, hunt execution/cancel, hunt results, or IOC hunt execution. Implementing those by exposing a generic VQL query path would violate the stable-core raw-VQL rule, so they remain scaffolded with structured errors.
+Two production-oriented examples live in
+[examples/config/](../examples/config/):
+`config.readonly.example.yaml` (the recommended starting posture and
+the emergency fallback) and `config.controlled.example.yaml` (the
+controlled-pilot posture). Both are load-and-validate tested in CI
+(`internal/config/examples_test.go`), which also pins that no shipped
+example can drift into an unsafe posture (raw VQL, target-all,
+non-stdio transport, disabled audit, wildcard allowlist entries). A
+zero-setup mock-mode example remains at
+[examples/client-configs/config.read-only.example.yaml](../examples/client-configs/config.read-only.example.yaml).
 
-| Group | v0.8.0 status |
-|---|---|
-| Visibility (`health`, client search/info, artifact list/details) | Real gRPC already implemented and unchanged. |
-| Flow list/status/results | Handler contracts, validation, limits, pagination, audit unchanged; real gRPC remains scaffolded (`backend_not_implemented`/`error`, no panic). |
-| Collection start / DFIR profile collection / flow cancel | Approval/policy/input/allowlist gates unchanged; backend capability is now checked before consuming approval; real gRPC remains scaffolded. |
-| Flow uploads list/metadata/download | Read handlers and download file controls unchanged; download backend capability is now checked before consuming approval; real gRPC upload RPCs remain scaffolded. |
-| Hunts list/status/results/preview | Handler contracts, limits, target_all/max-client policy unchanged; real gRPC remains scaffolded. |
-| Approved hunt start/cancel and IOC hunt | Approval fingerprint/scope/template gates unchanged; backend capability is now checked before consuming approval; real gRPC hunt RPCs remain scaffolded. |
+## Current backend wiring status
 
-Live-lab validation remains pending for every scaffolded operation above. Required follow-up: add reviewed typed protobuf bindings for the specific Velociraptor RPCs, prove least-privilege read/write API permissions in a disposable lab, and keep `max_rows`, `max_result_bytes`, `max_upload_bytes`, `max_hunt_clients`, `target_all`, cursor, audit, and no-raw-VQL invariants under test.
+Every RPC group behind the 28 tools has a reviewed, typed gRPC binding;
+see the table in
+[PROJECT_STATE.md](../PROJECT_STATE.md#backend-wiring-status-as-of-v0103)
+— that table is the single source of truth; this document's earlier
+copy of the v0.8.0 "scaffolded" status is superseded.

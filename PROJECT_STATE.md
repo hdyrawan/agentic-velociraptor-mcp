@@ -1,8 +1,58 @@
 # Project state
 
-Last updated: 2026-07-07 (v0.10.3, fixes for the 2 live-found correctness bugs from v0.10.2).
+Last updated: 2026-07-07 (v0.10.4, production-readiness hardening for the controlled pilot).
 
 ## Current milestone
+
+**v0.10.4 — Production-readiness hardening.** Docs/examples/tests-only:
+still exactly 28 tools, no raw VQL/generic query, no new write path, no
+weakened approval/policy/audit control, no Go production-code changes.
+Not a feature release — it makes the project operationally ready for
+the **next milestone, v1.0.0-rc.1: a controlled pilot (not GA)**. See
+CHANGELOG.md's v0.10.4 entry for the full list; highlights:
+
+- Production-safe config examples in
+  [examples/config/](examples/config/) (read-only posture and
+  controlled-pilot posture), CI-tested by
+  `internal/config/examples_test.go` so no shipped example can drift
+  into an unsafe posture.
+- Operational runbooks in [docs/runbooks/](docs/runbooks/):
+  approval-and-audit (incl. the fail-closed audit-failure procedure),
+  rollback/containment (emergency `read_only`, disabling client
+  access, identity revocation, image-pin rollback), and the staged
+  controlled-pilot plan with v1.0.0-rc.1 exit criteria.
+- Deployment hardening in
+  [docs/production-deployment.md](docs/production-deployment.md)
+  (stdio-only/no ports, non-root, hardened container flags, tag/digest
+  pinning, read-only secret mounts, SBOM/scan) and MCP client
+  integration + Inspector smoke checklist in
+  [docs/mcp-client-integration.md](docs/mcp-client-integration.md).
+- Pre-RC gate:
+  [docs/security-review-checklist-v0.10.4.md](docs/security-review-checklist-v0.10.4.md).
+- Least-privilege identity guidance hardened
+  ([docs/velociraptor-permissions.md](docs/velociraptor-permissions.md)),
+  including a "no arbitrary VQL path through MCP" validation checklist;
+  stale v0.8.0 "scaffolded backend" doc sections superseded.
+
+**Remaining production assumptions/gaps** (the pilot is designed around
+these; see docs/runbooks/controlled-pilot.md "Known gaps"):
+
+1. Label-scoped hunts not yet live-validated against a client with a
+   verified persistent label.
+2. No Windows client exercised live yet.
+3. Upload/download not yet exercised against a real file-producing
+   collection.
+4. Explicit `client_ids` hunt scope unsupported in real mode (no typed
+   RPC; refused before approval consumption).
+5. `ip`/`domain`/`process`/`path` IOC kinds unsupported (fail closed)
+   until a curated artifact set exists for them.
+6. The `approve` CLI does not enforce requester ≠ approver (procedural
+   control during the pilot).
+7. This project assumes an already-operated, already-secured
+   Velociraptor deployment; Velociraptor-side ACLs remain the primary
+   boundary.
+
+## Previous milestone
 
 **v0.10.3 — Fix v0.10.2's 2 live-found correctness bugs.** No new/removed
 MCP tool (still exactly 28), no raw VQL/generic query, no new write
@@ -668,18 +718,21 @@ validation and a small number of deliberately out-of-scope items:
 
 ## Immediate next step
 
-The 28-tool stable-core target is complete (PROJECT_PLAN.md). v0.10.2
-live-validated the collection and hunt RPC groups end-to-end against a
-disposable lab and found two correctness bugs; v0.10.3 (this milestone)
-fixed both — see "Current milestone" above,
-docs/live-validation-report-v0.10.2.md (the findings), and
-docs/tool-reference.md (the fixed behavior). The next steps are:
+The 28-tool stable-core target is complete (PROJECT_PLAN.md); v0.10.2
+live-validated the collection/hunt RPC groups, v0.10.3 fixed the two
+bugs that validation found, and v0.10.4 (this milestone) added the
+operational material — config examples, runbooks, deployment
+hardening, integration notes, and the pre-RC security checklist. The
+next milestone is **v1.0.0-rc.1: the controlled pilot** (not GA), run
+per [docs/runbooks/controlled-pilot.md](docs/runbooks/controlled-pilot.md)
+after completing
+[docs/security-review-checklist-v0.10.4.md](docs/security-review-checklist-v0.10.4.md).
+During (or before) that pilot:
 
-1. Confirm label-based hunt/collection scoping against a client with a
-   verified, persistent label (not demonstrated in v0.10.2 — see its
-   "Limitations" section), validate against a Windows client, and
-   exercise the upload/download path against a real file-producing
-   collection.
+1. Close validation gaps 1–3 from "Remaining production
+   assumptions/gaps" above (label-scoped hunt against a genuinely
+   labeled client; Windows client; real file-producing
+   upload/download) — the pilot runbook stages these deliberately.
 2. Consider curated, real artifacts for the still-unsupported IOC kinds
    (`ip`/`domain`/`process`/`path`) if a real workflow needs them —
    v0.10.3 deliberately left these failing closed rather than forcing a
@@ -688,5 +741,6 @@ docs/tool-reference.md (the fixed behavior). The next steps are:
 3. The remaining unchecked items in docs/lab-validation-plan.md (Phase
    5's `velo_cancel_flow_with_approval`; Phase 8's adversarial testing).
 
-Do not point this project at a production Velociraptor deployment until
-that validation is complete — see docs/production-deployment.md.
+Do not point this project at a production Velociraptor deployment
+except through the staged pilot procedure above — see
+docs/production-deployment.md.

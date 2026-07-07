@@ -7,7 +7,8 @@ collection flows/results, reviewed DFIR investigation profiles, a
 controlled, approval-gated single-client collection pilot, hunt
 management, and a fixed-template IOC hunting helper.
 
-**Status: v0.10.3**, 28 callable MCP tools: 14 read-only (visibility,
+**Status: v0.10.4** (production-readiness hardening; next milestone is
+**v1.0.0-rc.1, a controlled pilot — not GA**), 28 callable MCP tools: 14 read-only (visibility,
 DFIR profiles, workflow helpers, flows/results), plus 6 approval-gated
 write tools implementing a controlled single-client collection pilot
 (collect artifact/profile, cancel flow, list/get/download flow uploads),
@@ -50,10 +51,22 @@ invented artifact name — see
 [docs/tool-reference.md](docs/tool-reference.md) for the full behavior.
 Uploads/downloads and Windows-client/label-scoped-hunt paths remain
 unvalidated live — see
-[docs/lab-validation-plan.md](docs/lab-validation-plan.md). Do not point
-this at a production Velociraptor deployment until that validation is
-complete. See [PROJECT_STATE.md](PROJECT_STATE.md) for the current
-inventory and [PROJECT_PLAN.md](PROJECT_PLAN.md) for the roadmap.
+[docs/lab-validation-plan.md](docs/lab-validation-plan.md).
+
+**v0.10.4 adds the operational material for a controlled pilot**:
+production-safe config examples ([examples/config/](examples/config/)),
+operational runbooks ([docs/runbooks/](docs/runbooks/) — approvals &
+audit, rollback/containment, and the staged pilot plan), deployment
+hardening ([docs/production-deployment.md](docs/production-deployment.md)),
+MCP client integration notes with an Inspector smoke checklist
+([docs/mcp-client-integration.md](docs/mcp-client-integration.md)), and
+a pre-RC security checklist
+([docs/security-review-checklist-v0.10.4.md](docs/security-review-checklist-v0.10.4.md)).
+Do not point this at a production Velociraptor deployment except
+through that staged pilot procedure; the remaining production
+assumptions/gaps are listed in [PROJECT_STATE.md](PROJECT_STATE.md)
+(current inventory) — see [PROJECT_PLAN.md](PROJECT_PLAN.md) for the
+roadmap.
 
 ## Contents
 
@@ -489,6 +502,11 @@ for the 46 available DFIR profiles.
 - [docs/velociraptor-permissions.md](docs/velociraptor-permissions.md)
 - [docs/lab-validation-plan.md](docs/lab-validation-plan.md)
 - [docs/production-deployment.md](docs/production-deployment.md)
+- [docs/mcp-client-integration.md](docs/mcp-client-integration.md)
+- [docs/security-review-checklist-v0.10.4.md](docs/security-review-checklist-v0.10.4.md)
+- Runbooks: [approvals & audit](docs/runbooks/approval-and-audit.md) ·
+  [rollback/containment](docs/runbooks/rollback.md) ·
+  [controlled pilot](docs/runbooks/controlled-pilot.md)
 
 ## License
 

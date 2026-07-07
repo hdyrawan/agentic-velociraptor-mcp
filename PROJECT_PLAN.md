@@ -23,7 +23,7 @@ This is the authoritative roadmap for `agentic-velociraptor-mcp`. For
 - stdio MCP transport first; HTTP/SSE/streamable HTTP only if/when
   explicitly requested.
 
-## Stable core target: 28 tools (complete as of v0.7.0, preserved through v0.10.1)
+## Stable core target: 28 tools (complete as of v0.7.0, preserved through v0.10.4)
 
 See [docs/tool-reference.md](docs/tool-reference.md) for the full table.
 Groups: visibility (5), flow/results (6), collection (3), hunts (7),
@@ -65,6 +65,21 @@ from investigation case to profile.
 - Closed a real approval-consumption gap: the three hunt/IOC-hunt-start tools now refuse an explicit `client_ids` scope in real mode before consuming the approval, instead of only failing (after consuming it) inside `WriteClient.StartHunt`.
 - Fixed README/PROJECT_STATE/PROJECT_PLAN/docs/CLI-help drift left over from the undocumented GLM 5.2 pass and v0.10.0 (stale "20 tools"/"scaffolded backend"/`v0.8.0` language).
 - Added `.github/workflows/ci.yml`.
+
+### v0.10.2 — Live-lab validation (complete)
+
+- Ran the full 28-tool build against a disposable Velociraptor 0.76.3 lab over a real stdio MCP transport; first live confirmation of the collection and hunt RPC groups. See docs/live-validation-report-v0.10.2.md.
+- Found (and documented) two correctness bugs: named-source result retrieval silently empty, and the IOC-hunt artifact mapping pointing at nonexistent artifacts.
+
+### v0.10.3 — Live-found correctness fixes (complete)
+
+- Fixed named-source result retrieval (`velo_get_flow_results`/`velo_get_hunt_results` gained an optional `source` input, single-named-source auto-selection, and an honest `status: "source_required"` response) and re-mapped `kind: "hash"` IOC hunts to the real, catalog-verified `Generic.Detection.HashHunter`; `ip`/`domain`/`process`/`path` fail closed before approval lookup. Still exactly 28 tools; tagged and released as v0.10.3.
+
+### v0.10.4 — Production-readiness hardening for the controlled pilot (complete)
+
+- Not a feature release: docs/examples/tests only, no Go production-code changes, still exactly 28 tools, no raw VQL, no weakened approval/policy/audit control.
+- Added production-safe config examples (`examples/config/`, CI-tested for safe posture), operational runbooks (`docs/runbooks/`: approval-and-audit, rollback, controlled-pilot), deployment hardening (pinned images, non-root, read-only secret mounts, SBOM/scan guidance), MCP client integration notes with an Inspector smoke checklist, the pre-RC security checklist (docs/security-review-checklist-v0.10.4.md), and hardened least-privilege identity guidance with a no-arbitrary-VQL validation checklist.
+- Remaining production assumptions/gaps are listed in PROJECT_STATE.md's "Current milestone" section and staged into the pilot plan.
 
 ### v0.0.x — Project foundation (this run)
 
@@ -326,7 +341,7 @@ paths for anything safe/clear to implement for real.
 - Callable tool inventory increases from 27 to 28 (the full stable-core
   target).
 
-### Remaining production-hardening items (not yet started)
+### Remaining production-hardening items (mostly complete; see v0.10.4)
 
 This was originally planned as "v0.8.0 — Production hardening"; the
 version number was used instead for the backend-wiring-review milestone
@@ -350,13 +365,23 @@ pass and v0.10.1's approval-gate fix. What remains:
   (GLM 5.2 pass); **live-lab validation against a real Velociraptor lab
   remains pending.**
 
-### v1.0.0 — Stable release (not yet started)
+### v1.0.0-rc.1 — Controlled pilot (next milestone, not GA)
 
-- All 28 core tools implemented.
+- Run the staged controlled pilot per docs/runbooks/controlled-pilot.md,
+  gated by docs/security-review-checklist-v0.10.4.md.
+- Close the live-validation gaps during the pilot: label-scoped hunt
+  against a genuinely labeled client, Windows client, real
+  file-producing upload/download.
+- Re-triage known open review items (e.g. the `approve` CLI accepting
+  requester == approver) — fix or formally accept for the RC.
+
+### v1.0.0 — Stable release (after a successful rc.1 pilot)
+
+- All 28 core tools implemented. — **done**
 - Stable schemas.
-- Full documentation.
-- Lab validation report.
-- Production deployment guide.
+- Full documentation. — largely done; upgrade/log-shipping topics remain (see docs/production-deployment.md).
+- Lab validation report. — **done** (docs/live-validation-report-v0.10.2.md); pilot report to be added by rc.1.
+- Production deployment guide. — **done** (docs/production-deployment.md + docs/runbooks/).
 - Versioned release; changelog updated.
 
 ## Explicitly out of scope (for now, or permanently)
