@@ -1,26 +1,96 @@
 # Project state
 
-Last updated: 2026-07-06 (v0.8.0, backend wiring review with 28-tool inventory preserved).
+Last updated: 2026-07-07 (v0.10.1, stabilization: docs/version drift fix, hunt-scope approval gate, CI).
 
 ## Current milestone
 
-**v0.8.0 — Real backend wiring review.** Preserves the v0.7.0 28-tool inventory and adds a reviewed backend-capability gate before approval consumption. No new real flow/collection/upload/hunt/IOC Velociraptor RPCs were wired because the current `veloapi` mirror only exposes `Check`, `ListClients`, `GetClient`, and `GetArtifacts`; wiring the remaining paths via generic/raw VQL would violate the stable-core safety model. Scaffolded paths return structured errors and do not consume approvals.
+**v0.10.1 — Stabilization: accurate docs, hunt-scope approval gate, CI.**
+Preserves the 28-tool inventory, 46-profile curated DFIR catalog, and
+every approval/policy/audit control unchanged. This milestone does not
+add or remove any MCP tool, artifact, or capability; it corrects
+documentation that had drifted behind the code (README/PROJECT_STATE/
+PROJECT_PLAN/docs previously described v0.8.0-era "scaffolded" backend
+paths and a 20-tool inventory, both stale since the GLM 5.2 hardening
+pass and v0.10.0 below), closes a real approval-consumption gap in the
+hunt-scope backend check, and adds CI. See CHANGELOG.md's `[Unreleased]`
+v0.10.1 entry for the full list.
 
+- **Pre-consume hunt-scope gate**: `velo_start_hunt_with_approval`,
+  `velo_start_dfir_hunt_with_approval`, and `velo_hunt_ioc_with_approval`
+  now refuse an explicit `client_ids` hunt scope in real backend mode
+  *before* `gateAuditForWrite`/`consumeApproval`, not after. Previously,
+  such a request passed every gate, consumed its one-shot approval, and
+  only then failed inside `WriteClient.StartHunt` (real Velociraptor's
+  typed hunt RPCs have no field for an explicit client-ID list — see
+  `velociraptor.ErrHuntScopeClientIDsUnsupported`) — burning a human
+  approval for a request that could never succeed. New
+  `huntScopeBackendReady` (`internal/mcpserver/tools_hunts.go`) closes
+  this; label- and all-clients-scoped hunts are unaffected.
+- Docs (README, this file, PROJECT_PLAN.md, docs/tool-reference.md,
+  docs/security-model.md, docs/lab-validation-plan.md) now describe the
+  real gRPC backend wiring, 28-tool inventory, 46-profile catalog, and
+  the client_ids limitation above accurately.
+- Added `.github/workflows/ci.yml` (`go build`, `go vet`, `go test`,
+  `gofmt` check, `git diff --check`); no secrets, no live Velociraptor
+  dependency.
 
-## v0.8.0 backend wiring status
+## Previous milestone (undocumented until now): GLM 5.2 hardening
 
-v0.8.0 is a backend-wiring review milestone that preserves the v0.7.0 28-tool MCP inventory. The hand-authored `internal/velociraptor/veloapi` mirror currently exposes only `Check`, `ListClients`, `GetClient`, and `GetArtifacts`; it does not include reviewed typed RPC bindings for flow enumeration/results, collection execution, flow cancel, uploads, hunt execution/cancel, hunt results, or IOC hunt execution. Implementing those by exposing a generic VQL query path would violate the stable-core raw-VQL rule, so they remain scaffolded with structured errors.
+Landed between the v0.8.0 tag and the v0.10.0 commit but never given its
+own changelog/PROJECT_STATE entry — v0.10.1 above backfills that
+documentation gap. Wired real typed gRPC RPCs for every remaining tool
+group: flow list/status/results and collection/cancel
+(`internal/velociraptor/grpcclient_flows.go`), flow uploads/download
+(`grpcclient_uploads.go`), and hunt list/status/results/preview/start/
+cancel (`grpcclient_hunts.go`), against a `veloapi` proto mirror extended
+with typed flow/hunt/table/VFS/VQL message bindings. Also hardened the
+approval store with a cross-process `flock` (fixing a race where a
+concurrent `approve` CLI `Create` could resurrect a consumed approval),
+made the audit sanitizer recurse into nested maps/slices/structs/pointers
+instead of only a flat top-level map, and added audit log rotation
+(`AuditConfig.MaxSizeBytes`/`MaxFiles`). This pass is also where
+`velociraptor.ErrHuntScopeClientIDsUnsupported` was discovered and
+documented: real Velociraptor's `HuntCondition` proto has no field for an
+explicit client-ID list, only a label filter or "all clients" — the gap
+v0.10.1's pre-consume gate above closes at the MCP-handler level. None of
+this has been live-lab validated yet — see docs/lab-validation-plan.md.
 
-| Group | v0.8.0 status |
+## Previous milestone: v0.10.0 curated artifact catalog and DFIR profile expansion
+
+Expanded curated DFIR coverage without touching the runtime execution
+model: still exactly 28 MCP tools, no raw VQL, no arbitrary/agent-supplied
+artifact names, no wildcard/prefix matching. Added `catalog/artifacts.yaml`
+(the reviewed registry every profile artifact must appear in) and
+`internal/dfir/catalog.go` (`LoadCatalog`, `ValidateProfileAgainstCatalog`,
+enforced at `go test` time). Added 31 new catalog-verified profiles (46
+total), every artifact confirmed present in a real Velociraptor lab
+catalog (433 artifacts, 2026-07-07). The catalog is an authoring/test-time
+control only — runtime collection is still gated solely by
+`policy.allowed_artifacts`. See docs/dfir-profiles.md and CHANGELOG.md's
+v0.10.0 entry.
+
+## Backend wiring status (as of v0.10.1)
+
+Every RPC group used by the 28 tools now has a reviewed typed gRPC
+binding and unit tests against fake gRPC service stubs. Nothing here
+exposes a generic VQL query path — the stable-core raw-VQL rule is
+unchanged.
+
+| Group | Status |
 |---|---|
-| Visibility (`health`, client search/info, artifact list/details) | Real gRPC already implemented and unchanged. |
-| Flow list/status/results | Handler contracts, validation, limits, pagination, audit unchanged; real gRPC remains scaffolded (`backend_not_implemented`/`error`, no panic). |
-| Collection start / DFIR profile collection / flow cancel | Approval/policy/input/allowlist gates unchanged; backend capability is now checked before consuming approval; real gRPC remains scaffolded. |
-| Flow uploads list/metadata/download | Read handlers and download file controls unchanged; download backend capability is now checked before consuming approval; real gRPC upload RPCs remain scaffolded. |
-| Hunts list/status/results/preview | Handler contracts, limits, target_all/max-client policy unchanged; real gRPC remains scaffolded. |
-| Approved hunt start/cancel and IOC hunt | Approval fingerprint/scope/template gates unchanged; backend capability is now checked before consuming approval; real gRPC hunt RPCs remain scaffolded. |
+| Visibility (`health`, client search/info, artifact list/details) | Real gRPC; live-validated 2026-07-06. |
+| Flow list/status/results | Real gRPC; not yet live-validated. |
+| Collection start / DFIR profile collection / flow cancel | Real gRPC; backend capability checked before consuming approval; not yet live-validated. |
+| Flow uploads list/metadata/download | Real gRPC; download backend capability checked before consuming approval; not yet live-validated. |
+| Hunts list/status/results/preview | Real gRPC; explicit `client_ids` scope refused before consuming approval (no typed RPC support); not yet live-validated. |
+| Approved hunt start/cancel and IOC hunt | Real gRPC; same `client_ids` limitation; not yet live-validated. |
 
-Live-lab validation remains pending for every scaffolded operation above. Required follow-up: add reviewed typed protobuf bindings for the specific Velociraptor RPCs, prove least-privilege read/write API permissions in a disposable lab, and keep `max_rows`, `max_result_bytes`, `max_upload_bytes`, `max_hunt_clients`, `target_all`, cursor, audit, and no-raw-VQL invariants under test.
+Required follow-up before production: live-lab validation of every "not
+yet live-validated" row above (docs/lab-validation-plan.md Phases 4-7),
+prove least-privilege read/write API permissions in a disposable lab, and
+keep `max_rows`, `max_result_bytes`, `max_upload_bytes`,
+`max_hunt_clients`, `target_all`, cursor, audit, and no-raw-VQL
+invariants under test throughout.
 
 ## Previous milestone
 
@@ -431,49 +501,37 @@ binary), not just unit tests against fakes.
 
 ## What does not exist yet
 
-- Real gRPC wiring for `CollectArtifact`/`CancelFlow`/upload RPCs — the
-  six v0.4.0 tools exist and are fully policy/approval/audit-gated, but
-  `grpcClient` still delegates these to the embedded placeholder
-  (`ErrNotImplemented`) for a real (non-mock) write client; see v0.4.0's
-  "known limitation" above and PROJECT_PLAN.md's v0.8.0 entry. All
-  current test coverage for these tools uses fake `velociraptor.Client`
-  implementations.
-- Real gRPC wiring for `ListFlows`/`GetFlowStatus`/`GetFlowResults` on
-  the read side (v0.5.0's tools exist and are fully validated/audited,
-  but `grpcClient` still delegates these to the embedded placeholder).
-- Real hunt (and IOC hunt) management via gRPC: `WriteClient`'s
-  `HuntWriter` methods (`PreviewHuntScope`, `StartHunt`, `ListHunts`,
-  `GetHuntStatus`, `GetHuntResults`, `CancelHunt`) all return
-  `ErrNotImplemented` on `grpcClient`. The v0.6.0 hunt tools and
-  v0.7.0's `velo_hunt_ioc_with_approval` are callable MCP tools — full
-  policy/approval/audit control-flow works, including v0.7.0's
-  fingerprint-matched approval fix and its `vql.Bind` template →
-  artifact/parameter mapping — but the real-mode `StartHunt`/`CancelHunt`
-  call itself reports "not yet available" — configured write API paths
-  are not loaded, and no gRPC hunt RPCs are implemented. This was a
-  deliberate v0.7.0 scope decision: implementing real hunt-start RPCs
-  without a live Velociraptor lab to confirm the actual artifact
-  catalog/parameter names was judged unclear/risky rather than
-  safe/clear, so it stays scaffolded.
-- The write API client (`write_api_config_path`) is not read by any code
-  for collection/cancel/upload or hunt/IOC operations.
+As of v0.10.1, every RPC group below has a real typed gRPC binding (see
+"Backend wiring status" above) — the gaps that remain are live-lab
+validation and a small number of deliberately out-of-scope items:
+
+- **Live-lab validation of collection/flow/upload/hunt/IOC RPCs against a
+  real Velociraptor server.** All of it is unit-tested against fake gRPC
+  service stubs, not yet exercised against a live deployment with
+  enrolled endpoints. See docs/lab-validation-plan.md's unchecked Phase
+  4-7 items.
+- **Explicit `client_ids` hunt scope in real mode**, by design: real
+  Velociraptor's `HuntCondition` proto has no field for an explicit
+  client-ID list (only label or all-clients). `velo_preview_hunt_scope`,
+  `velo_start_hunt_with_approval`, `velo_start_dfir_hunt_with_approval`,
+  and `velo_hunt_ioc_with_approval` all refuse this scope in real mode
+  with a structured error (`velociraptor.ErrHuntScopeClientIDsUnsupported`),
+  and the three approval-gated ones do so before consuming the approval.
+  A workaround exists upstream (label the target clients, run a
+  label-scoped hunt, unlabel them) but was judged out of scope without
+  live-lab validation — it mutates client state beyond what a hunt-start
+  operation should do.
 - Confirmation that `System.Hash.Hunt`/`System.IP.Hunt`/
   `System.Domain.Hunt`/`System.Process.Hunt`/`System.Path.Hunt` (the
   artifact names `vql.Bind` resolves IOC templates to) exist in any real
   Velociraptor artifact catalog — illustrative/unverified, same caveat
   as the pre-existing IOC DFIR profiles; see docs/dfir-profiles.md and
   docs/lab-validation-plan.md.
-- Any RPC beyond `Check`/`ListClients`/`GetClient`/`GetArtifacts` — no
-  `Query`.
-- Any audit sanitizer implementation beyond a flat top-level map
-  redactor.
+- Any raw/generic VQL query RPC — intentionally, permanently out of
+  scope for the stable core (see docs/security-model.md).
 - HTTP/SSE/streamable HTTP transport — intentionally out of scope.
-- Real-server validation against enrolled endpoint clients for all tool
-  groups (visibility field-value correctness, flow/hunt/IOC results, and
-  write-capable tool execution against a live Velociraptor server) —
-  see docs/lab-validation-plan.md's unchecked items.
 - Docker image hardening, rate limiting, further integration tests (see
-  PROJECT_PLAN.md's v0.8.0 production-hardening entry).
+  PROJECT_PLAN.md's production-hardening entry).
 
 ## Known assumptions to revisit
 
@@ -523,20 +581,18 @@ binary), not just unit tests against fakes.
 
 ## Immediate next step
 
-v0.7.0 completes the 28-tool stable-core target (PROJECT_PLAN.md). The
-next step (v0.8.0, production hardening) is to implement real gRPC
-wiring for all four remaining tool groups (collection/cancel/upload
-RPCs, flow listing/status/results, hunt management RPCs, and IOC hunt
-RPCs — the last two share the same `HuntWriter`/`HuntReader` interface),
-so that all 28 callable tools can execute against a live Velociraptor
-server instead of returning `ErrNotImplemented` in real mode. Doing this
-for real (not just scaffolded) requires first confirming the actual
-artifact/parameter names against a live Velociraptor artifact catalog —
-`vql.Bind`'s illustrative `System.*.Hunt` names are unverified.
+The 28-tool stable-core target is complete (PROJECT_PLAN.md), and real
+gRPC wiring now exists for every tool group (see "Backend wiring status"
+above) — the collection/cancel/upload/hunt RPCs that v0.8.0 still
+described as scaffolded are implemented. The next step is **live-lab
+validation**, not further backend wiring: docs/lab-validation-plan.md's
+unchecked Phase 4-7 items (flow/collection/upload/hunt/IOC execution
+against a disposable lab with enrolled endpoints), confirming the actual
+`vql.Bind` IOC artifact/parameter names (`System.*.Hunt`, still
+illustrative/unverified) against a live artifact catalog, and — if the
+explicit-`client_ids` hunt-scope gap matters for a real workflow —
+evaluating the label/unlabel workaround PROJECT_STATE.md's "What does not
+exist yet" section describes, with its own live-lab validation.
 
-Meanwhile, live-lab validation of all tool groups (Phases 2, 5, 6, and 7
-in docs/lab-validation-plan.md) requires access to a disposable lab with
-enrolled endpoints — see docs/lab-validation-plan.md for the unchecked
-items, which include per-client field-value verification of visibility
-tools, write-capable tool execution, hunt management validation, and IOC
-hunt validation.
+Do not point this project at a production Velociraptor deployment until
+that validation is complete — see docs/production-deployment.md.

@@ -7,6 +7,105 @@ releases begin.
 
 ## [Unreleased]
 
+### Fixed — v0.10.1 stabilization: docs/version drift, hunt-scope approval gate, CI
+
+Stabilizes the current codebase (post-v0.10.0) as v0.10.1: no new/removed
+MCP tools (still exactly 28), no raw VQL, no weakened approval/policy/
+audit controls.
+
+- **Pre-consume hunt-scope gate.** `velo_start_hunt_with_approval`,
+  `velo_start_dfir_hunt_with_approval`, and `velo_hunt_ioc_with_approval`
+  now check, before `gateAuditForWrite`/`consumeApproval`, whether the
+  requested hunt scope is one the configured write backend can actually
+  enact. In real (non-mock) backend mode, an explicit `client_ids` hunt
+  scope has no typed Velociraptor RPC support (`CreateHunt`/`EstimateHunt`
+  only accept a label filter or "all clients" —see
+  `velociraptor.ErrHuntScopeClientIDsUnsupported`), so previously a caller
+  requesting that scope would pass every other gate, burn their one-shot
+  approval in `consumeApproval`, and only then discover the call could
+  never succeed. New `huntScopeBackendReady`
+  (`internal/mcpserver/tools_hunts.go`) refuses this case up front and
+  leaves the approval unconsumed, audited `blocked`. Label- and
+  all-clients-scoped hunts are unaffected. Regression tests:
+  `TestStartHuntRealModeExplicitClientIDsPreservesApproval`,
+  `TestStartDFIRHuntRealModeExplicitClientIDsPreservesApproval`,
+  `TestHuntIOCRealModeExplicitClientIDsPreservesApproval`.
+- **Docs/version drift fixed.** README, PROJECT_STATE.md,
+  PROJECT_PLAN.md, docs/tool-reference.md, docs/security-model.md, and
+  docs/lab-validation-plan.md previously described the codebase as it was
+  at v0.8.0 (backend paths "scaffolded", 20 tools, no hunts) even though
+  the unreleased GLM 5.2 hardening pass (see entry below) and v0.10.0 had
+  already landed real gRPC wiring for flow/collection/upload/hunt RPCs, a
+  curated 46-profile DFIR catalog, and the 28-tool stable-core target.
+  All now describe the current, real backend status accurately, including
+  the client_ids hunt-scope limitation above.
+- `cmd/agentic-velociraptor-mcp/main.go`'s `version` var and `--help`
+  text updated from stale `0.8.0`/"20 tools"/"no hunts" language to
+  `0.10.1-dev` and an accurate 28-tool, real-backend description.
+- README quickstart rewritten for a new operator: default read-only/mock
+  mode, controlled mode + approval flow, and a "Common workflows" section
+  covering health check, list clients, an approved artifact collection,
+  an approved DFIR profile hunt, an approved IOC hunt, and reviewing/
+  downloading flow results.
+- Added `.github/workflows/ci.yml`: `go build`, `go vet`, `go test ./...`,
+  `gofmt -l` check, and `git diff --check`, with no secrets and no live
+  Velociraptor dependency.
+
+### Added — GLM 5.2 hardening: real gRPC backend wiring + approval/audit hardening
+
+Landed after v0.8.0's backend-wiring gate review and before v0.10.0, but
+not previously given its own changelog entry. Preserves the 28-tool
+inventory, approval gates, policy allowlists, and no-raw-VQL invariant
+throughout.
+
+- **Real gRPC RPCs wired for every remaining tool group.** New
+  `internal/velociraptor/grpcclient_flows.go` (`ListFlows`,
+  `GetFlowStatus`, `GetFlowResults`, `CollectArtifact`, `CancelFlow` via
+  `GetClientFlows`/`GetFlowDetails`/`GetTable`/`CollectArtifact`/
+  `CancelFlow`), `grpcclient_uploads.go` (`ListFlowUploads`,
+  `GetFlowUploadMetadata`, `DownloadFlowUpload` via `GetTable`/
+  `VFSGetBuffer`), and `grpcclient_hunts.go` (`ListHunts`,
+  `GetHuntStatus`, `GetHuntResults`, `PreviewHuntScope`, `StartHunt`,
+  `CancelHunt` via `ListHunts`/`GetHunt`/`GetHuntResults`/
+  `EstimateHunt`/`CreateHunt`/`ModifyHunt`). Extended
+  `internal/velociraptor/veloapi` with typed proto bindings for flows,
+  hunts, tables, VFS, and VQL messages. `grpcClient.SupportsBackendOperation`
+  now reports `true` for `collect_artifact`/`cancel_flow`/
+  `download_flow_upload`/`start_hunt`/`cancel_hunt`, so
+  `backendOperationReady` lets these proceed instead of reporting
+  `backend_not_implemented`.
+- **Discovered and documented the `client_ids` hunt-scope gap.** Real
+  Velociraptor's `HuntCondition` proto supports only a label filter or
+  "all clients" — there is no field for an explicit client-ID list.
+  `huntConditionFromScope` returns the new
+  `velociraptor.ErrHuntScopeClientIDsUnsupported` sentinel for that one
+  scope mode rather than attempting an RPC that cannot express it (see
+  v0.10.1 above for the follow-up pre-consume-approval gate this exposed
+  the need for).
+- **Approval store hardened against cross-process races.** `FileStore`
+  now takes an OS-level `flock` (via `github.com/gofrs/flock`) on a
+  sibling `<path>.lock` file around every operation, closing a gap where
+  a concurrent `approve` CLI `Create` could race a running MCP server's
+  `Consume` and silently resurrect a consumed approval. New
+  `internal/approval/filestore_race_test.go`.
+- **Audit sanitizer now recursive.** `internal/audit/sanitize.go`'s
+  `Sanitizer` walks nested maps/slices/structs/pointers (not just a flat
+  top-level map), redacting by key name and by PEM-block content so a
+  secret embedded at any depth or under an unexpected key cannot leak
+  into `audit.jsonl`. New `internal/audit/sanitize_test.go`.
+- **Audit log rotation.** New `AuditConfig.MaxSizeBytes`/`MaxFiles`
+  fields (defaults 100 MiB / 10 files) and
+  `audit.NewJSONLWriterWithRotation`, so a long-running server's audit
+  log cannot grow unbounded.
+- `policy.Engine.RequiresApproval` documented as unused/deprecated: no
+  handler consults it (every approval-gated tool calls `verifyApproval`
+  unconditionally), so editing `policy.require_approval_for` has no
+  effect on whether approval is required — use `policy.mode: read_only`
+  to disable write-capable tools instead.
+- `internal/mcpserver/server.go` gained `backendOperationReady`,
+  formalizing the "check the concrete backend before consuming a
+  one-shot approval" pattern used by every write-capable handler.
+
 ### Added — v0.10.0 curated artifact catalog and DFIR profile expansion
 
 Expands curated DFIR coverage without touching the runtime execution

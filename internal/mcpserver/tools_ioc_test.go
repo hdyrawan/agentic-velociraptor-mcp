@@ -446,6 +446,66 @@ func TestHuntIOCApprovedFakePath(t *testing.T) {
 	}
 }
 
+// TestHuntIOCRealModeExplicitClientIDsPreservesApproval proves that in
+// real backend mode, an explicit client_ids hunt scope is refused before
+// gateAuditForWrite/consumeApproval, not after — so the one-shot approval
+// survives a request Velociraptor's typed hunt RPCs can never actually
+// enact (see velociraptor.ErrHuntScopeClientIDsUnsupported).
+// WriteClient.StartHunt must never be called for this case.
+func TestHuntIOCRealModeExplicitClientIDsPreservesApproval(t *testing.T) {
+	deps, sink, store := testIOCDeps(t)
+	deps.WriteClient = &fakeHuntClient{
+		Client: velociraptor.NewClient(),
+		startHunt: func(_ context.Context, req velociraptor.HuntRequest) (velociraptor.HuntSummary, error) {
+			t.Fatal("StartHunt must not be called for an explicit client_ids scope in real mode")
+			return velociraptor.HuntSummary{}, nil
+		},
+	}
+	deps.VelociraptorWriteMode = VelociraptorModeReal
+
+	ref := approveRequest(t, store, approval.Request{
+		ID:        "ref-ioc-clientids",
+		Operation: approval.OperationHuntIOC,
+		CaseID:    "CASE-IOC-CLIENTIDS",
+		Reason:    "explicit client ids regression",
+		Requester: "tester",
+		Artifact:  "System.Domain.Hunt",
+		Parameters: map[string]string{
+			"Domain": "evil.example.com",
+		},
+		ClientIDs: []string{"C.1234abcd5678ef90"},
+	})
+
+	handler := newHuntIOCHandler(deps)
+	_, out, err := handler(context.Background(), nil, HuntIOCInput{
+		CaseID:     "CASE-IOC-CLIENTIDS",
+		Reason:     "explicit client ids regression",
+		Requester:  "tester",
+		ApprovalID: ref,
+		Kind:       "domain",
+		Value:      "evil.example.com",
+		ClientIDs:  []string{"C.1234abcd5678ef90"},
+	})
+	if err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	if out.Status != response.StatusError || !strings.Contains(out.Message, "client_ids") {
+		t.Fatalf("out = %+v, want an error mentioning client_ids", out)
+	}
+
+	status, err := store.Get(context.Background(), ref)
+	if err != nil {
+		t.Fatalf("store.Get: %v", err)
+	}
+	if status.Consumed {
+		t.Error("approval must remain unconsumed when explicit client_ids scope is unsupported")
+	}
+	evt, ok := sink.last()
+	if !ok || evt.Outcome != audit.OutcomeBlocked {
+		t.Errorf("audit event outcome = %q, want blocked", evt.Outcome)
+	}
+}
+
 // TestHuntIOCScaffoldedRealModeReturnsHonestError confirms that when
 // WriteClient is a real (non-mock) client without hunt RPCs implemented
 // (placeholderClient, embedded by grpcClient), the tool reports the

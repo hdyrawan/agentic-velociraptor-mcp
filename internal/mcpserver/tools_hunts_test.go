@@ -535,6 +535,72 @@ func TestStartDFIRHuntApprovedFakePath(t *testing.T) {
 	}
 }
 
+// TestStartDFIRHuntRealModeExplicitClientIDsPreservesApproval proves that
+// in real backend mode, an explicit client_ids hunt scope is refused
+// before gateAuditForWrite/consumeApproval, not after — so the one-shot
+// approval survives a request Velociraptor's typed hunt RPCs can never
+// actually enact (see velociraptor.ErrHuntScopeClientIDsUnsupported).
+// WriteClient.StartHunt must never be called for this case.
+func TestStartDFIRHuntRealModeExplicitClientIDsPreservesApproval(t *testing.T) {
+	deps, sink, store := testHuntDeps(t)
+	reg, err := dfir.LoadDir("../../profiles")
+	if err != nil {
+		t.Fatalf("dfir.LoadDir: %v", err)
+	}
+	deps.Profiles = reg
+	deps.Policy = policy.NewEngine(config.PolicyConfig{
+		Mode:             config.PolicyModeControlled,
+		MaxHuntClients:   50,
+		AllowedArtifacts: []string{"Generic.Client.Info", "Windows.System.Pslist", "Windows.Network.Netstat"},
+		AllowedProfiles:  []string{"windows_basic_triage"},
+	})
+	deps.WriteClient = &fakeHuntClient{
+		Client: velociraptor.NewClient(),
+		startHunt: func(_ context.Context, req velociraptor.HuntRequest) (velociraptor.HuntSummary, error) {
+			t.Fatal("StartHunt must not be called for an explicit client_ids scope in real mode")
+			return velociraptor.HuntSummary{}, nil
+		},
+	}
+	deps.VelociraptorWriteMode = VelociraptorModeReal
+
+	ref := approveRequest(t, store, approval.Request{
+		ID:        "ref-dfir-clientids",
+		Operation: approval.OperationStartDFIRHunt,
+		CaseID:    "CASE-DFIR-CLIENTIDS",
+		Reason:    "explicit client ids regression",
+		Requester: "tester",
+		Profile:   "windows_basic_triage",
+		ClientIDs: []string{"C.1234abcd5678ef90"},
+	})
+
+	handler := newStartDFIRHuntHandler(deps)
+	_, out, err := handler(context.Background(), nil, StartDFIRHuntInput{
+		CaseID:     "CASE-DFIR-CLIENTIDS",
+		Reason:     "explicit client ids regression",
+		Requester:  "tester",
+		ApprovalID: ref,
+		Profile:    "windows_basic_triage",
+		ClientIDs:  []string{"C.1234abcd5678ef90"},
+	})
+	if err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	if out.Status != response.StatusError || !strings.Contains(out.Message, "client_ids") {
+		t.Fatalf("out = %+v, want an error mentioning client_ids", out)
+	}
+	status, err := store.Get(context.Background(), ref)
+	if err != nil {
+		t.Fatalf("store.Get: %v", err)
+	}
+	if status.Consumed {
+		t.Error("approval must remain unconsumed when explicit client_ids scope is unsupported")
+	}
+	evt, ok := sink.last()
+	if !ok || evt.Outcome != audit.OutcomeBlocked {
+		t.Errorf("audit event outcome = %q, want blocked", evt.Outcome)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // velo_list_hunts
 // ---------------------------------------------------------------------------
@@ -1043,6 +1109,61 @@ func TestStartHuntApprovedFakePath(t *testing.T) {
 	evt, ok := sink.last()
 	if !ok || evt.Outcome != audit.OutcomeSuccess {
 		t.Errorf("audit event outcome = %q, want success", evt.Outcome)
+	}
+}
+
+// TestStartHuntRealModeExplicitClientIDsPreservesApproval proves that in
+// real backend mode, an explicit client_ids hunt scope is refused before
+// gateAuditForWrite/consumeApproval, not after — so the one-shot approval
+// survives a request Velociraptor's typed hunt RPCs can never actually
+// enact (see velociraptor.ErrHuntScopeClientIDsUnsupported).
+// WriteClient.StartHunt must never be called for this case.
+func TestStartHuntRealModeExplicitClientIDsPreservesApproval(t *testing.T) {
+	deps, sink, store := testHuntDeps(t)
+	deps.WriteClient = &fakeHuntClient{
+		Client: velociraptor.NewClient(),
+		startHunt: func(_ context.Context, req velociraptor.HuntRequest) (velociraptor.HuntSummary, error) {
+			t.Fatal("StartHunt must not be called for an explicit client_ids scope in real mode")
+			return velociraptor.HuntSummary{}, nil
+		},
+	}
+	deps.VelociraptorWriteMode = VelociraptorModeReal
+
+	ref := approveRequest(t, store, approval.Request{
+		ID:        "ref-start-clientids",
+		Operation: approval.OperationStartHunt,
+		CaseID:    "CASE-START-CLIENTIDS",
+		Reason:    "explicit client ids regression",
+		Requester: "tester",
+		Artifact:  "Generic.Client.Info",
+		ClientIDs: []string{"C.1234abcd5678ef90"},
+	})
+
+	handler := newStartHuntHandler(deps)
+	_, out, err := handler(context.Background(), nil, StartHuntInput{
+		CaseID:     "CASE-START-CLIENTIDS",
+		Reason:     "explicit client ids regression",
+		Requester:  "tester",
+		ApprovalID: ref,
+		Artifact:   "Generic.Client.Info",
+		ClientIDs:  []string{"C.1234abcd5678ef90"},
+	})
+	if err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	if out.Status != response.StatusError || !strings.Contains(out.Message, "client_ids") {
+		t.Fatalf("out = %+v, want an error mentioning client_ids", out)
+	}
+	status, err := store.Get(context.Background(), ref)
+	if err != nil {
+		t.Fatalf("store.Get: %v", err)
+	}
+	if status.Consumed {
+		t.Error("approval must remain unconsumed when explicit client_ids scope is unsupported")
+	}
+	evt, ok := sink.last()
+	if !ok || evt.Outcome != audit.OutcomeBlocked {
+		t.Errorf("audit event outcome = %q, want blocked", evt.Outcome)
 	}
 }
 
